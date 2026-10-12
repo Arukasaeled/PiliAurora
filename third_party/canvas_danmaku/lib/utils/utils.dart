@@ -78,6 +78,7 @@ abstract final class DmUtils {
     required double fontSize,
     required int fontWeight,
   }) {
+    fontSize *= content.fontSizeScale;
     final builder = ui.ParagraphBuilder(ui.ParagraphStyle(
       textAlign: TextAlign.left,
       fontWeight: FontWeight.values[fontWeight],
@@ -110,6 +111,7 @@ abstract final class DmUtils {
     required int fontWeight,
     required double strokeWidth,
   }) {
+    fontSize *= content.fontSizeScale;
     double w = contentParagraph.maxIntrinsicWidth + strokeWidth;
     double h = contentParagraph.height + strokeWidth;
 

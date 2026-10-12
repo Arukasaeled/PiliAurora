@@ -1,6 +1,6 @@
 # canvas_danmaku 本地版本
 
-- 本地版本：`0.2.6+piliaurora.2`；来源包版本：`0.2.6`。
+- 本地版本：`0.2.6+piliaurora.3`；来源包版本：`0.2.6`。
 - 来源仓库：https://github.com/bggRGjQaUbCoE/canvas_danmaku.git
 - 来源提交：`275046d8647a6a26cba1d0dadb9e28688cb3dbf1`。
 - 来源子目录：`.`。
@@ -13,3 +13,5 @@
 更新流程见 `../README.md`，来源登记见 `../dependencies.json`。
 
 弹幕屏幕支持帧率上限。共用 `FrameRateTicker` 延迟请求下一帧，保留 vsync 时间戳、暂停及 TickerMode 行为；默认随屏幕刷新。应用的 Windows 绘制器复用该调度器。
+
+普通弹幕新增 `fontSizeScale`，默认倍率为 1。段落布局与描边绘制共用该倍率，用于应用的合并弹幕字号放大；高级弹幕保持原字号逻辑。

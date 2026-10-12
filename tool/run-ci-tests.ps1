@@ -34,6 +34,8 @@ $ciTests = @(
     "test/services/diagnostics/process_metrics_test.dart",
     "test/pages/about/diagnostics_page_test.dart",
     "test/pages/setting/settings_navigation_test.dart",
+    "test/pages/danmaku/merge_test.dart",
+    "test/pages/danmaku/merge_render_test.dart",
     "test/pages/video/playback_source_test.dart",
     "test/plugin/pl_player/video_output/video_output_resizer_test.dart",
     "test/plugin/pl_player/android/android_video_output_test.dart",

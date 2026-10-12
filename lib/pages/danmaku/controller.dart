@@ -5,6 +5,7 @@ import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
+import 'package:pili_aurora/pages/danmaku/merge.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/utils/accounts.dart';
@@ -82,8 +83,7 @@ class PlDanmakuController {
 
   void handleDanmaku(List<DanmakuElem> elems, {int? segmentIndex}) {
     if (_disposed) return;
-    // 只有启用合并时才需要按内容去重；普通模式避免为每个分段分配哈希表。
-    final uniques = _mergeDanmaku ? HashMap<String, DanmakuElem>() : null;
+    final filtered = <DanmakuElem>[];
     final retained = _isFileSource ? <DanmakuElem>[] : null;
     final segmentBuckets = segmentIndex == null
         ? null
@@ -93,44 +93,28 @@ class PlDanmakuController {
     final filters = _plPlayerController.filters;
     final shouldFilter = filters.count != 0;
     for (final element in elems) {
-      final bucketIndex = element.progress ~/ 100;
       if (!_isFileSource &&
           (segmentIndex == null ||
               DmUtils.calcSegment(element.progress) != segmentIndex)) {
         continue;
       }
-      if (!_isFileSource &&
-          (segmentBuckets![bucketIndex]?.length ?? 0) >= maxElementsPerBucket) {
-        if (uniques case final uniqueMap?) {
-          uniqueMap[element.content]?.count++;
-        }
-        continue;
-      }
-
       if (_isLogin) {
         element.isSelf = element.midHash == _plPlayerController.midHash;
       }
 
-      if (!element.isSelf) {
-        if (uniques case final uniqueMap?) {
-          final elem = uniqueMap[element.content];
-          if (elem == null) {
-            uniqueMap[element.content] = element..count = 1;
-          } else {
-            elem.count++;
-            continue;
-          }
-        }
-
-        if (shouldFilter && filters.remove(element)) {
-          continue;
-        }
-      }
-
+      if (!element.isSelf && shouldFilter && filters.remove(element)) continue;
+      filtered.add(element);
+    }
+    final processed = _mergeDanmaku
+        ? DanmakuMerger().merge(filtered)
+        : filtered;
+    for (final element in processed) {
       if (_isFileSource) {
         retained!.add(element);
       } else {
-        (segmentBuckets![bucketIndex] ??= <DanmakuElem>[]).add(element);
+        final bucketIndex = element.progress ~/ 100;
+        final bucket = segmentBuckets![bucketIndex] ??= <DanmakuElem>[];
+        if (bucket.length < maxElementsPerBucket) bucket.add(element);
       }
     }
     if (_isFileSource) {

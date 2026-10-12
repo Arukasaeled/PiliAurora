@@ -3,7 +3,7 @@ import 'dart:ui' as ui;
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:canvas_danmaku/utils/utils.dart' as canvas_danmaku;
 
-typedef DanmakuRasterKey = (String, int, bool, bool, int?);
+typedef DanmakuRasterKey = (String, int, bool, bool, int?, double);
 
 class DanmakuRaster {
   DanmakuRaster(this.width, this.height, this.bytes, this.paragraph);
@@ -68,6 +68,7 @@ class DanmakuRasterCache {
     content.isColorful,
     content.selfSend,
     content.count,
+    content.fontSizeScale,
   );
 
   ui.Image? rasterize(DanmakuContentItem content, DanmakuRaster entry) {

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/controller.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
+import 'package:pili_aurora/pages/danmaku/merge.dart';
 import 'package:pili_aurora/pages/danmaku/render_guard.dart';
 import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
 import 'package:pili_aurora/pages/danmaku/windows_screen.dart';
@@ -88,6 +89,8 @@ class _PlDanmakuState extends State<PlDanmaku> {
         !DanmakuOptions.sameFontScale) {
       _controller?.updateOption(
         DanmakuOptions.get(
+          mergedFontScale:
+              playerController.mergeDanmaku && Pref.mergeDanmakuScale,
           notFullscreen: widget.notFullscreen,
           speed: playerController.playbackSpeed,
         ),
@@ -211,6 +214,12 @@ class _PlDanmakuState extends State<PlDanmaku> {
             playerController.showVipDanmaku &&
             element.colorful == DmColorfulType.VipGradualColor,
         count: element.count > 1 ? element.count : null,
+        fontSizeScale: mergedDanmakuFontScale(
+          element.count,
+          enabled: playerController.mergeDanmaku && Pref.mergeDanmakuScale,
+          threshold: Pref.mergeDanmakuThreshold,
+          logBase: Pref.mergeDanmakuLogBase,
+        ),
         selfSend: element.isSelf,
         extra: VideoDanmaku(
           id: element.id.toInt(),
@@ -265,6 +274,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
   @override
   Widget build(BuildContext context) {
     final option = DanmakuOptions.get(
+      mergedFontScale: playerController.mergeDanmaku && Pref.mergeDanmakuScale,
       notFullscreen: widget.notFullscreen,
       speed: playerController.playbackSpeed,
     );

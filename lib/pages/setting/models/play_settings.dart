@@ -536,10 +536,32 @@ List<SettingsModel> get danmakuExtraSettings => [
   ),
   const SwitchModel(
     title: '合并弹幕',
-    subtitle: '合并一段时间内获取到的相同弹幕',
+    subtitle: '合并20秒内相同或相似的弹幕；重新打开播放器生效',
     leading: Icon(Icons.merge),
     setKey: SettingBoxKey.mergeDanmaku,
     defaultVal: false,
+  ),
+  const SwitchModel(
+    title: '合并弹幕字号放大',
+    subtitle: '按重复数量放大，最高两倍；重新打开播放器生效',
+    leading: Icon(Icons.format_size),
+    setKey: SettingBoxKey.mergeDanmakuScale,
+    defaultVal: true,
+  ),
+  NormalModel(
+    title: '合并弹幕放大阈值',
+    getSubtitle: () => '重复数量超过${Pref.mergeDanmakuThreshold}条时放大',
+    leading: const Icon(Icons.filter_7_outlined),
+    onTap: (context, setState) =>
+        _showMergeScaleDialog(context, setState, threshold: true),
+  ),
+  NormalModel(
+    title: '合并弹幕放大速度',
+    getSubtitle: () =>
+        '对数底数 ${Pref.mergeDanmakuLogBase.toStringAsFixed(1)}，越小放大越快',
+    leading: const Icon(Icons.speed),
+    onTap: (context, setState) =>
+        _showMergeScaleDialog(context, setState, threshold: false),
   ),
 ];
 
@@ -557,6 +579,34 @@ List<SettingsModel> get playGestureExtraSettings => [
     defaultVal: false,
   ),
 ];
+
+Future<void> _showMergeScaleDialog(
+  BuildContext context,
+  VoidCallback setState, {
+  required bool threshold,
+}) async {
+  final value = await showDialog<double>(
+    context: context,
+    builder: (_) => SliderDialog(
+      title: Text(threshold ? '合并弹幕放大阈值' : '合并弹幕放大速度（越小越快）'),
+      value: threshold
+          ? Pref.mergeDanmakuThreshold.toDouble()
+          : Pref.mergeDanmakuLogBase,
+      min: 2,
+      max: threshold ? 50 : 20,
+      divisions: threshold ? 48 : 36,
+      precise: threshold ? 0 : 1,
+    ),
+  );
+  if (value == null) return;
+  await GStorage.setting.put(
+    threshold
+        ? SettingBoxKey.mergeDanmakuThreshold
+        : SettingBoxKey.mergeDanmakuLogBase,
+    threshold ? value.round() : value,
+  );
+  if (context.mounted) setState();
+}
 
 List<SettingsModel> get playProgressExtraSettings => [
   const SwitchModel(

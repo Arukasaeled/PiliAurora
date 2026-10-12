@@ -494,6 +494,19 @@ abstract final class Pref {
   static bool get mergeDanmaku =>
       _setting.get(SettingBoxKey.mergeDanmaku, defaultValue: false);
 
+  static bool get mergeDanmakuScale =>
+      _setting.get(SettingBoxKey.mergeDanmakuScale, defaultValue: true);
+
+  static int get mergeDanmakuThreshold => (_setting.get(
+    SettingBoxKey.mergeDanmakuThreshold,
+    defaultValue: 7,
+  ) as int).clamp(2, 50);
+
+  static double get mergeDanmakuLogBase => (_setting.get(
+    SettingBoxKey.mergeDanmakuLogBase,
+    defaultValue: 7.0,
+  ) as num).toDouble().clamp(2.0, 20.0);
+
   static bool get showHotRcmd =>
       _setting.get(SettingBoxKey.showHotRcmd, defaultValue: false);
 

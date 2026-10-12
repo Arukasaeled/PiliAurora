@@ -39,6 +39,9 @@ class DanmakuContentItem<T> {
   /// 弹幕数量
   final int? count;
 
+  /// 单条普通弹幕的字号倍率，布局与描边共用。
+  final double fontSizeScale;
+
   final T? extra;
 
   final List<DanmakuInlineImage> inlineImages;
@@ -51,6 +54,7 @@ class DanmakuContentItem<T> {
     this.selfSend = false,
     this.isColorful = false,
     this.count,
+    this.fontSizeScale = 1,
     this.extra,
     this.inlineImages = const [],
   });
