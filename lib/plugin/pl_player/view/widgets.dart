@@ -247,7 +247,7 @@ class _VideoShotImageState extends State<VideoShotImage> {
       _initSize();
     } else {
       final cacheGeneration = widget.imageCache.generation;
-      _getImg(url).then((image) {
+      widget.imageCache.acquireOrLoad(url, () => _getImg(url)).then((image) {
         if (!mounted ||
             widget.imageCache.generation != cacheGeneration ||
             loadGeneration != _loadGeneration ||
@@ -259,8 +259,7 @@ class _VideoShotImageState extends State<VideoShotImage> {
           return;
         }
         // 超出缓存上限的预览仍可显示，由当前组件独占，关闭时释放。
-        _replaceImage(image.clone());
-        widget.imageCache.put(url, image);
+        _replaceImage(image);
         if (_image != null) {
           _initSize();
           setState(() {});

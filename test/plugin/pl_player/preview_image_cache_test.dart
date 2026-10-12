@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:pili_aurora/plugin/pl_player/utils/preview_image_cache.dart';
@@ -14,6 +15,62 @@ Future<ui.Image> _image(int size) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'concurrent preview requests decode once and own separate handles',
+    () async {
+      final cache = PreviewImageCache(maxBytes: 1);
+      final gate = Completer<ui.Image?>();
+      var loads = 0;
+      Future<ui.Image?> load() {
+        loads++;
+        return gate.future;
+      }
+
+      final requests = List.generate(
+        20,
+        (_) => cache.acquireOrLoad('same', load),
+      );
+      expect(loads, 1);
+      final original = await _image(8);
+      gate.complete(original);
+      final images = await Future.wait(requests);
+      expect(original.debugDisposed, isTrue);
+      expect(cache.sizeBytes, 0);
+      for (final image in images) {
+        expect(image!.debugDisposed, isFalse);
+        image.dispose();
+      }
+      cache.clear();
+    },
+  );
+
+  test('clearing pending previews prevents stale cache writes', () async {
+    final cache = PreviewImageCache();
+    final gate = Completer<ui.Image?>();
+    final old = cache.acquireOrLoad('same', () => gate.future);
+    cache.clear();
+    final current = await cache.acquireOrLoad('same', () => _image(8));
+    final stale = await _image(16);
+    gate.complete(stale);
+    expect(await old, isNull);
+    expect(stale.debugDisposed, isTrue);
+    expect(cache.sizeBytes, 8 * 8 * 4);
+    current!.dispose();
+    cache.clear();
+  });
+
+  test('failed preview loads allow retry', () async {
+    final cache = PreviewImageCache();
+    await expectLater(
+      cache.acquireOrLoad('same', () => throw StateError('decode')),
+      throwsStateError,
+    );
+    final image = await cache.acquireOrLoad('same', () => _image(8));
+    expect(image, isNotNull);
+    image!.dispose();
+    cache.clear();
+  });
 
   test('preview cache limits bytes as well as entry count', () async {
     final cache = PreviewImageCache(maxBytes: 24 * 1024);
