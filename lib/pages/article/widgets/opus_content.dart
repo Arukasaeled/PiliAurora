@@ -311,7 +311,7 @@ class OpusContent extends StatelessWidget {
               } else {
                 return const Divider();
               }
-            case 5 when (element.list?.items?.isNotEmpty == true):
+            case 5 || 6 when (element.list?.items?.isNotEmpty == true):
               return Text.rich(
                 TextSpan(
                   children: element.list!.items!.mapIndexed((i, entry) {
@@ -356,11 +356,18 @@ class OpusContent extends StatelessWidget {
                 ),
               );
             case 6:
-              final type = element.linkCard!.card!.type;
+              final card = element.linkCard?.card;
+              if (card == null) {
+                return Text(
+                  '链接卡片暂不可用',
+                  style: TextStyle(color: colorScheme.outline),
+                );
+              }
+              final type = card.type;
               Widget child;
               switch (type) {
                 case 'LINK_CARD_TYPE_UGC':
-                  final ugc = element.linkCard!.card!.ugc!;
+                  final ugc = card.ugc!;
                   child = Row(
                     spacing: 10,
                     children: [
@@ -390,12 +397,12 @@ class OpusContent extends StatelessWidget {
                     ],
                   );
                 case 'LINK_CARD_TYPE_ITEM_NULL':
-                  final itemNull = element.linkCard?.card?.itemNull;
+                  final itemNull = card.itemNull;
                   child = Text(
-                    ' ${itemNull?.text}: ${element.linkCard?.card?.oid}',
+                    ' ${itemNull?.text}: ${card.oid}',
                   );
                 case 'LINK_CARD_TYPE_COMMON':
-                  final common = element.linkCard!.card!.common!;
+                  final common = card.common!;
                   child = Row(
                     spacing: 10,
                     children: [
@@ -434,7 +441,7 @@ class OpusContent extends StatelessWidget {
                     ],
                   );
                 case 'LINK_CARD_TYPE_LIVE':
-                  final live = element.linkCard!.card!.live!;
+                  final live = card.live!;
                   child = Row(
                     spacing: 10,
                     children: [
@@ -473,7 +480,7 @@ class OpusContent extends StatelessWidget {
                     ],
                   );
                 case 'LINK_CARD_TYPE_OPUS':
-                  final opus = element.linkCard!.card!.opus!;
+                  final opus = card.opus!;
                   child = Row(
                     spacing: 10,
                     children: [
@@ -501,7 +508,7 @@ class OpusContent extends StatelessWidget {
                     ],
                   );
                 case 'LINK_CARD_TYPE_VOTE':
-                  final vote = element.linkCard!.card!.vote!;
+                  final vote = card.vote!;
                   child = Row(
                     spacing: 10,
                     children: [
@@ -536,7 +543,7 @@ class OpusContent extends StatelessWidget {
                     ],
                   );
                 case 'LINK_CARD_TYPE_MUSIC':
-                  final music = element.linkCard!.card!.music!;
+                  final music = card.music!;
                   child = Row(
                     spacing: 10,
                     children: [
@@ -567,7 +574,7 @@ class OpusContent extends StatelessWidget {
                     ],
                   );
                 case 'LINK_CARD_TYPE_GOODS':
-                  final goods = element.linkCard!.card!.goods!;
+                  final goods = card.goods!;
                   child = Column(
                     children: goods.items!.map((e) {
                       return GestureDetector(
@@ -629,7 +636,6 @@ class OpusContent extends StatelessWidget {
                       ? null
                       : () {
                           try {
-                            final card = element.linkCard!.card!;
                             if (type == 'LINK_CARD_TYPE_VOTE') {
                               showVoteDialog(
                                 context,

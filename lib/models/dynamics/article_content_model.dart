@@ -396,7 +396,10 @@ class L1st {
   int? style;
 
   L1st.fromJson(Map<String, dynamic> json) {
-    items = (json['items'] as List?)?.map((e) => Item.fromJson(e)).toList();
+    final entries = json['items'] as List?;
+    items = (entries?.isNotEmpty == true ? entries : json['children'] as List?)
+        ?.map((e) => Item.fromJson(e))
+        .toList();
     style = json['style'];
   }
 }
@@ -409,7 +412,14 @@ class Item {
   Item.fromJson(Map<String, dynamic> json) {
     level = json['level'];
     order = json['order'];
-    nodes = (json['nodes'] as List?)?.map((e) => Node.fromJson(e)).toList();
+    final content =
+        json['nodes'] as List? ??
+        (json['children'] as List?)
+            ?.expand(
+              (paragraph) => (paragraph['text']?['nodes'] as List?) ?? const [],
+            )
+            .toList();
+    nodes = content?.map((e) => Node.fromJson(e)).toList();
   }
 }
 
