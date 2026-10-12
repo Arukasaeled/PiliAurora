@@ -1,9 +1,15 @@
 import 'package:pili_aurora/models/common/super_chat_type.dart';
 import 'package:pili_aurora/models/remote/live/live_danmaku/danmaku_msg.dart';
 import 'package:pili_aurora/models/remote/live/live_danmaku/live_emote.dart';
+import 'package:pili_aurora/models/remote/live/live_superchat/item.dart';
+import 'package:pili_aurora/models/remote/live/live_superchat/user_info.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
+import 'package:pili_aurora/common/widgets/keep_alive_wrapper.dart';
+import 'package:pili_aurora/common/widgets/scroll_physics.dart';
+import 'package:pili_aurora/common/widgets/gesture/horizontal_drag_gesture_recognizer.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
+import 'package:pili_aurora/pages/live_room/superchat/superchat_panel.dart';
 import 'package:pili_aurora/pages/live_room/widgets/chat_panel.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
@@ -11,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:hive_ce/hive.dart';
+import 'package:material_ui/material_ui.dart' as ui;
 
 class _TestController extends LiveRoomController {
   _TestController() : super('chat-test');
@@ -76,6 +83,95 @@ void main() {
     addTearDown(controller.onDelete.call);
     return controller;
   }
+
+  testWidgets('进入 SC 页面后最后一条过期，仍可返回聊天', (tester) async {
+    await GStorage.setting.put(
+      SettingBoxKey.superChatType,
+      SuperChatType.valid.index,
+    );
+    addTearDown(
+      () => GStorage.setting.put(
+        SettingBoxKey.superChatType,
+        SuperChatType.disable.index,
+      ),
+    );
+    final controller = createController()..addDm(_message(1));
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    controller.superChatMsg.add(
+      SuperChatItem(
+        id: 1,
+        uid: 1,
+        price: 30,
+        backgroundColor: '#EDF5FF',
+        backgroundBottomColor: '#2A60B2',
+        backgroundPriceColor: '#7497CD',
+        messageFontColor: '#FFFFFF',
+        startSime: now,
+        endTime: now + 30,
+        message: '即将过期的 SC',
+        token: '',
+        ts: now,
+        userInfo: UserInfo(
+          face: '',
+          faceFrame: null,
+          uname: '测试用户',
+          nameColor: '#666666',
+        ),
+        roomid: 1,
+      ),
+    );
+    await tester.pumpWidget(
+      ui.MaterialApp(
+        home: ui.Scaffold(
+          body: SizedBox(
+            width: 360,
+            height: 300,
+            child: PageView(
+              controller: controller.pageController,
+              physics: tabBarScrollPhysics,
+              onPageChanged: controller.pageIndex.call,
+              horizontalDragGestureRecognizer:
+                  CustomHorizontalDragGestureRecognizer.new,
+              children: [
+                KeepAliveWrapper(
+                  child: LiveRoomChatPanel(
+                    liveRoomController: controller,
+                    isPP: false,
+                  ),
+                ),
+                SuperChatPanel(controller: controller),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.textContaining('SC(1)', findRichText: true));
+    await tester.pumpAndSettle();
+    expect(controller.pageIndex.value, 1);
+    expect(find.text('即将过期的 SC'), findsOneWidget);
+    expect(find.text('返回聊天'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 31));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(controller.superChatMsg, isEmpty);
+    expect(find.text('即将过期的 SC'), findsNothing);
+    expect(find.text('暂无 SC'), findsOneWidget);
+    await tester.drag(find.byType(PageView), const Offset(300, 0));
+    await tester.pumpAndSettle();
+    expect(controller.pageIndex.value, 0);
+    controller.pageController!.jumpToPage(1);
+    await tester.pumpAndSettle();
+    expect(find.text('返回聊天'), findsOneWidget);
+    await tester.tap(find.text('返回聊天'));
+    await tester.pumpAndSettle();
+    expect(controller.pageIndex.value, 0);
+    expect(find.textContaining('消息 1', findRichText: true), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.onDelete();
+  });
 
   for (final ratio in [1.0, 1.5, 2.0]) {
     for (final (unique, inline, natural, expected) in [
