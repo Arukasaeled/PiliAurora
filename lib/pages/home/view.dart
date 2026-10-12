@@ -1,3 +1,5 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:pili_aurora/services/messaging/overview.dart';
 import 'package:pili_aurora/common/style.dart';
 import 'package:pili_aurora/common/widgets/custom_height_widget.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
@@ -270,31 +272,44 @@ Widget userAvatar({
 }
 
 Widget msgBadge(MainController mainController) {
-  return Obx(
-    () {
-      if (mainController.accountService.isLogin.value) {
-        final count = mainController.msgUnReadCount.value;
-        final isNumBadge = mainController.msgBadgeMode == .number;
-        return IconButton(
-          tooltip: '消息',
-          onPressed: () {
-            mainController
-              ..clearUnreadMsg()
-              ..lastCheckUnreadAt = DateTime.now().millisecondsSinceEpoch;
-            Get.toNamed('/whisper');
-          },
-          icon: Badge(
-            isLabelVisible:
-                mainController.msgBadgeMode != .hidden && count != null,
-            alignment: isNumBadge
-                ? const Alignment(0.0, -0.85)
-                : const Alignment(1.0, -0.85),
-            label: isNumBadge && count != null ? Text(count) : null,
-            child: const Icon(Icons.notifications_none),
-          ),
-        );
-      }
-      return const SizedBox.shrink();
+  return Consumer(
+    builder: (context, ref, child) {
+      final unread = ref.watch(overviewProvider);
+      return Obx(
+        () {
+          mainController.msgBadgeRevision.value;
+          if (mainController.accountService.isLogin.value) {
+            final total = unread.total(
+              mainController.msgUnReadTypes,
+              disableLike: mainController.disableLikeMsg,
+            );
+            final count = total == null || total == 0
+                ? null
+                : total > 99
+                ? '99+'
+                : '$total';
+            final isNumBadge = mainController.msgBadgeMode == .number;
+            return IconButton(
+              tooltip: '消息',
+              onPressed: () {
+                mainController.lastCheckUnreadAt =
+                    DateTime.now().millisecondsSinceEpoch;
+                Get.toNamed('/whisper');
+              },
+              icon: Badge(
+                isLabelVisible:
+                    mainController.msgBadgeMode != .hidden && count != null,
+                alignment: isNumBadge
+                    ? const Alignment(0.0, -0.85)
+                    : const Alignment(1.0, -0.85),
+                label: isNumBadge && count != null ? Text(count) : null,
+                child: const Icon(Icons.notifications_none),
+              ),
+            );
+          }
+          return const SizedBox.shrink();
+        },
+      );
     },
   );
 }

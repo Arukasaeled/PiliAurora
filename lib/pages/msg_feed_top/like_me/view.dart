@@ -6,7 +6,6 @@ import 'package:pili_aurora/common/widgets/flutter/list_tile.dart';
 import 'package:pili_aurora/common/widgets/flutter/refresh_indicator.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/common/widgets/loading_widget/http_error.dart';
-import 'package:pili_aurora/common/widgets/pair.dart';
 import 'package:pili_aurora/common/widgets/scaffold/simple_scaffold.dart';
 import 'package:pili_aurora/grpc/bilibili/app/im/v1.pbenum.dart'
     show IMSettingType;
@@ -15,25 +14,28 @@ import 'package:pili_aurora/models/common/image_type.dart';
 import 'package:pili_aurora/models/remote/msg/msg_like/item.dart';
 import 'package:pili_aurora/pages/msg_feed_top/like_me/controller.dart';
 import 'package:pili_aurora/pages/whisper_settings/view.dart';
+import 'package:pili_aurora/services/messaging/feed.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart' hide ListTile;
 
-class LikeMePage extends StatefulWidget {
+class LikeMePage extends ConsumerStatefulWidget {
   const LikeMePage({super.key});
 
   @override
-  State<LikeMePage> createState() => _LikeMePageState();
+  ConsumerState<LikeMePage> createState() => _LikeMePageState();
 }
 
-class _LikeMePageState extends State<LikeMePage> {
-  final LikeMeController _likeMeController = Get.put(LikeMeController());
-
+class _LikeMePageState extends ConsumerState<LikeMePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final feed = ref.watch(likeMeFeedProvider);
+    final controller = ref.read(likeMeFeedProvider.notifier);
     return SimpleScaffold(
       appBar: AppBar(
         title: const Text('收到的赞'),
@@ -54,7 +56,7 @@ class _LikeMePageState extends State<LikeMePage> {
         ],
       ),
       body: refreshIndicator(
-        onRefresh: _likeMeController.onRefresh,
+        onRefresh: controller.refresh,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -62,9 +64,7 @@ class _LikeMePageState extends State<LikeMePage> {
               padding: EdgeInsets.only(
                 bottom: MediaQuery.viewPaddingOf(context).bottom + 100,
               ),
-              sliver: Obx(
-                () => _buildBody(theme, _likeMeController.loadingState.value),
-              ),
+              sliver: _buildBody(theme, feed.loadingState, controller),
             ),
           ],
         ),
@@ -72,7 +72,11 @@ class _LikeMePageState extends State<LikeMePage> {
     );
   }
 
-  Widget _buildBody(ThemeData theme, LoadingState loadingState) {
+  Widget _buildBody(
+    ThemeData theme,
+    LoadingState<PairLikeItems> loadingState,
+    LikeMeFeedNotifier controller,
+  ) {
     switch (loadingState) {
       case Loading():
         return const SliverPrototypeExtentList(
@@ -91,9 +95,8 @@ class _LikeMePageState extends State<LikeMePage> {
         );
         return Builder(
           builder: (context) {
-            Pair<List<MsgLikeItem>, List<MsgLikeItem>> pair = response;
-            List<MsgLikeItem> latest = pair.first;
-            List<MsgLikeItem> total = pair.second;
+            List<MsgLikeItem> latest = response.latest;
+            List<MsgLikeItem> total = response.total;
             if (latest.isNotEmpty || total.isNotEmpty) {
               return SliverMainAxisGroup(
                 slivers: [
@@ -102,11 +105,14 @@ class _LikeMePageState extends State<LikeMePage> {
                     SliverList.separated(
                       itemBuilder: (context, index) {
                         if (total.isEmpty && index == latest.length - 1) {
-                          _likeMeController.onLoadMore();
+                          controller.loadMore();
                         }
-                        return _buildItem(theme, latest[index], (id) {
-                          _likeMeController.onRemove(id, index, true);
-                        });
+                        return _buildItem(
+                          theme,
+                          latest[index],
+                          (id) => _removeLike(controller, id, latest: true),
+                          controller,
+                        );
                       },
                       itemCount: latest.length,
                       separatorBuilder: (context, index) => divider,
@@ -117,11 +123,14 @@ class _LikeMePageState extends State<LikeMePage> {
                     SliverList.separated(
                       itemBuilder: (context, index) {
                         if (index == total.length - 1) {
-                          _likeMeController.onLoadMore();
+                          controller.loadMore();
                         }
-                        return _buildItem(theme, total[index], (id) {
-                          _likeMeController.onRemove(id, index, false);
-                        });
+                        return _buildItem(
+                          theme,
+                          total[index],
+                          (id) => _removeLike(controller, id, latest: false),
+                          controller,
+                        );
                       },
                       itemCount: total.length,
                       separatorBuilder: (context, index) => divider,
@@ -130,13 +139,13 @@ class _LikeMePageState extends State<LikeMePage> {
                 ],
               );
             }
-            return HttpError(onReload: _likeMeController.onReload);
+            return HttpError(onReload: controller.refresh);
           },
         );
       case Error(:final errMsg):
         return HttpError(
           errMsg: errMsg,
-          onReload: _likeMeController.onReload,
+          onReload: controller.refresh,
         );
     }
   }
@@ -159,10 +168,25 @@ class _LikeMePageState extends State<LikeMePage> {
     );
   }
 
+  Future<void> _removeLike(
+    LikeMeFeedNotifier controller,
+    int? id, {
+    required bool latest,
+  }) async {
+    if (id == null) return;
+    final result = await controller.remove(id, latest: latest);
+    if (result.isSuccess) {
+      SmartDialog.showToast('删除成功');
+    } else {
+      result.toast();
+    }
+  }
+
   Widget _buildItem(
     ThemeData theme,
     MsgLikeItem item,
     ValueChanged<int?> onRemove,
+    LikeMeFeedNotifier controller,
   ) {
     final firstUser = item.users!.first;
     Widget avatar;
@@ -227,11 +251,10 @@ class _LikeMePageState extends State<LikeMePage> {
                     context: context,
                     title: const Text('不再通知'),
                     content: const Text('这条内容的点赞将不再通知，但仍可在列表内查看，是否继续？'),
-                    onConfirm: () =>
-                        _likeMeController.onSetNotice(item, isNotice),
+                    onConfirm: () => _setNotice(controller, item, isNotice),
                   );
                 } else {
-                  _likeMeController.onSetNotice(item, isNotice);
+                  _setNotice(controller, item, isNotice);
                 }
               },
               child: Text(
@@ -344,5 +367,20 @@ class _LikeMePageState extends State<LikeMePage> {
         ],
       ),
     );
+  }
+
+  Future<void> _setNotice(
+    LikeMeFeedNotifier controller,
+    MsgLikeItem item,
+    bool isNotice,
+  ) async {
+    final id = item.id;
+    if (id == null) return;
+    final result = await controller.setNotice(id, isNotice);
+    if (result.isSuccess) {
+      SmartDialog.showToast('设置成功');
+    } else {
+      result.toast();
+    }
   }
 }

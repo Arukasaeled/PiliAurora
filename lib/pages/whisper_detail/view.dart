@@ -10,35 +10,32 @@ import 'package:pili_aurora/common/widgets/loading_widget/loading_widget.dart';
 import 'package:pili_aurora/common/widgets/scaffold/simple_scaffold.dart';
 import 'package:pili_aurora/common/widgets/scroll_physics.dart'
     show platformAlwaysClampingPhysics;
-import 'package:pili_aurora/grpc/bilibili/im/type.pb.dart' show Msg;
 import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/http/msg.dart';
 import 'package:pili_aurora/models/common/image_type.dart';
 import 'package:pili_aurora/pages/common/publish/common_rich_text_pub_page.dart';
 import 'package:pili_aurora/pages/emote/view.dart';
-import 'package:pili_aurora/pages/whisper_detail/controller.dart';
 import 'package:pili_aurora/pages/whisper_detail/widget/chat_item.dart';
 import 'package:pili_aurora/pages/whisper_link_setting/view.dart';
+import 'package:pili_aurora/services/messaging/conversation.dart';
+import 'package:pili_aurora/services/messaging/conversation_providers.dart';
+import 'package:pili_aurora/services/messaging/message_models.dart';
+import 'package:pili_aurora/services/messaging/providers.dart';
 import 'package:pili_aurora/utils/extension/file_ext.dart';
 import 'package:pili_aurora/utils/extension/num_ext.dart';
 import 'package:pili_aurora/utils/feed_back.dart';
 import 'package:pili_aurora/utils/page_utils.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
-import 'package:pili_aurora/utils/utils.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:material_ui/material_ui.dart' hide TextField;
-import 'package:mime/mime.dart';
 
 const _kMaxExtent = 625.0;
 const _kConstraints = BoxConstraints(maxWidth: _kMaxExtent);
 
 class WhisperDetailPage extends CommonRichTextPubPage {
-  const WhisperDetailPage({
-    super.key,
-    super.autofocus = false,
-  });
+  const WhisperDetailPage({super.key, super.autofocus = false});
 
   @override
   State<WhisperDetailPage> createState() => _WhisperDetailPageState();
@@ -46,153 +43,222 @@ class WhisperDetailPage extends CommonRichTextPubPage {
 
 class _WhisperDetailPageState
     extends CommonRichTextPubPageState<WhisperDetailPage> {
-  final _whisperDetailController = Get.put(
-    WhisperDetailController(),
-    tag: Utils.makeHeroTag(Get.parameters['talkerId']),
-  );
+  final ScrollController _scrollController = ScrollController();
+  late final int talkerId;
+  late final String name;
+  late final String face;
+  late final int? mid;
+  late final bool isLive;
+  late final ConversationTarget _target;
 
   @override
-  Widget build(BuildContext context) {
-    final padding = MediaQuery.viewPaddingOf(context);
-    late final containerColor = ElevationOverlay.colorWithOverlay(
-      theme.colorScheme.surface,
-      theme.hoverColor,
-      1,
-    );
-    return SimpleScaffold(
-      appBar: AppBar(
-        title: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            if (_whisperDetailController.mid != null) {
-              feedBack();
-              Get.toNamed('/member?mid=${_whisperDetailController.mid}');
-            }
-          },
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              NetworkImgLayer(
-                width: 34,
-                height: 34,
-                type: ImageType.avatar,
-                src: _whisperDetailController.face,
+  void initState() {
+    super.initState();
+    final args = Get.arguments is Map ? Get.arguments as Map : const {};
+    talkerId =
+        _asInt(args['talkerId']) ?? _asInt(Get.parameters['talkerId']) ?? 0;
+    name = args['name'] as String? ?? '';
+    face = args['face'] as String? ?? '';
+    mid = _asInt(args['mid']);
+    isLive = args['isLive'] as bool? ?? false;
+    _target = ConversationTarget(talkerId: talkerId);
+  }
+
+  int? _asInt(Object? value) => switch (value) {
+    int value => value,
+    String value => int.tryParse(value),
+    _ => null,
+  };
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Consumer(
+    builder: (context, ref, _) {
+      final session = ref.watch(messagingSessionProvider);
+      final conversation = ref.read(conversationProvider(_target));
+      final timeline = ref.watch(conversationSnapshotProvider(_target));
+      final padding = MediaQuery.viewPaddingOf(context);
+      final containerColor = ElevationOverlay.colorWithOverlay(
+        theme.colorScheme.surface,
+        theme.hoverColor,
+        1,
+      );
+      return SimpleScaffold(
+        appBar: AppBar(
+          title: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: mid == null
+                ? null
+                : () {
+                    feedBack();
+                    Get.toNamed('/member?mid=$mid');
+                  },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                NetworkImgLayer(
+                  width: 34,
+                  height: 34,
+                  type: ImageType.avatar,
+                  src: face,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(height: 1, fontSize: 16),
+                    strutStyle: const StrutStyle(
+                      leading: 0,
+                      height: 1,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                if (isLive) ...[
+                  const SizedBox(width: 10),
+                  Image.asset(
+                    Assets.livingRect,
+                    height: 16,
+                    cacheHeight: 16.cacheSize(context),
+                    filterQuality: FilterQuality.low,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            IconButton(
+              tooltip: '设置',
+              onPressed: () =>
+                  Get.to(WhisperLinkSettingPage(talkerUid: talkerId)),
+              icon: Icon(
+                size: 22,
+                Icons.settings,
+                color: theme.colorScheme.onSurfaceVariant.withValues(
+                  alpha: 0.8,
+                ),
               ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  _whisperDetailController.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(height: 1, fontSize: 16),
-                  strutStyle: const StrutStyle(
-                    leading: 0,
-                    height: 1,
-                    fontSize: 16,
+            ),
+            const SizedBox(width: 5),
+          ],
+        ),
+        body: Padding(
+          padding: EdgeInsets.only(left: padding.left, right: padding.right),
+          child: Column(
+            children: [
+              Expanded(
+                child: Listener(
+                  onPointerDown: hidePanel,
+                  behavior: .opaque,
+                  child: _buildBody(
+                    timeline,
+                    conversation,
+                    session.account.mid,
+                    session.isActive,
                   ),
                 ),
               ),
-              if (_whisperDetailController.isLive) ...[
-                const SizedBox(width: 10),
-                Image.asset(
-                  Assets.livingRect,
-                  height: 16,
-                  cacheHeight: 16.cacheSize(context),
-                  filterQuality: FilterQuality.low,
+              if (session.isActive && talkerId > 0) ...[
+                ConstrainedBox(
+                  constraints: _kConstraints,
+                  child: _buildInputView(containerColor, conversation),
                 ),
-              ],
+                ConstrainedBox(
+                  constraints: _kConstraints,
+                  child: buildPanelContainer(containerColor),
+                ),
+              ] else
+                SizedBox(height: padding.bottom),
             ],
           ),
         ),
-        actions: [
-          IconButton(
-            tooltip: '设置',
-            onPressed: () => Get.to(
-              WhisperLinkSettingPage(
-                talkerUid: _whisperDetailController.talkerId,
+      );
+    },
+  );
+
+  Widget _buildBody(
+    AsyncValue<ConversationSnapshot> timeline,
+    Conversation conversation,
+    int ownerId,
+    bool isActive,
+  ) {
+    if (!isActive) {
+      return scrollErrorWidget(
+        errMsg: '请先登录',
+        onReload: conversation.refresh,
+      );
+    }
+    return timeline.when(
+      data: (snapshot) {
+        if (snapshot.messages.isEmpty) {
+          if (snapshot.phase == ConversationPhase.loading ||
+              snapshot.phase == ConversationPhase.initial) {
+            return m3eLoading;
+          }
+          return scrollErrorWidget(
+            errMsg: snapshot.error,
+            onReload: conversation.refresh,
+          );
+        }
+        return ChatListView.separated(
+          maxExtent: _kMaxExtent,
+          itemCount: snapshot.messages.length,
+          padding: const .all(kChatListPadding),
+          physics: platformAlwaysClampingPhysics,
+          controller: _scrollController,
+          itemBuilder: (context, int index) {
+            if (index == snapshot.messages.length - 1 && snapshot.hasOlder) {
+              unawaited(conversation.loadOlder());
+            }
+            final message = snapshot.messages[index];
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) conversation.markRendered(message);
+            });
+            final isOwner = message.senderId == ownerId;
+            return ChatItem(
+              key: ValueKey(message.id),
+              item: message,
+              eInfos: snapshot.emotions,
+              onLongPress: () => _showMessageActions(
+                message,
+                isOwner,
+                conversation,
               ),
-            ),
-            icon: Icon(
-              size: 22,
-              Icons.settings,
-              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
-            ),
-          ),
-          const SizedBox(width: 5),
-        ],
+              onSecondaryTapUp: PlatformUtils.isDesktop
+                  ? (event) => _showMenu(
+                      event.globalPosition,
+                      message,
+                      isOwner,
+                      conversation,
+                    )
+                  : null,
+              isOwner: isOwner,
+            );
+          },
+          separatorBuilder: (context, index) => const SizedBox(height: 12),
+        );
+      },
+      error: (error, _) => scrollErrorWidget(
+        errMsg: error.toString(),
+        onReload: conversation.refresh,
       ),
-      body: Padding(
-        padding: EdgeInsets.only(left: padding.left, right: padding.right),
-        child: Column(
-          children: [
-            Expanded(
-              child: Listener(
-                onPointerDown: hidePanel,
-                behavior: .opaque,
-                child: Obx(
-                  () => _buildBody(_whisperDetailController.loadingState.value),
-                ),
-              ),
-            ),
-            if (_whisperDetailController.mid != null) ...[
-              ConstrainedBox(
-                constraints: _kConstraints,
-                child: _buildInputView(containerColor),
-              ),
-              ConstrainedBox(
-                constraints: _kConstraints,
-                child: buildPanelContainer(containerColor),
-              ),
-            ] else
-              SizedBox(height: padding.bottom),
-          ],
-        ),
-      ),
+      loading: () => m3eLoading,
     );
   }
 
-  Widget _buildBody(LoadingState<List<Msg>?> loadingState) {
-    return switch (loadingState) {
-      Loading() => m3eLoading,
-      Success(:final response) =>
-        response != null && response.isNotEmpty
-            ? ChatListView.separated(
-                maxExtent: _kMaxExtent,
-                itemCount: response.length,
-                padding: const .all(kChatListPadding),
-                physics: platformAlwaysClampingPhysics,
-                controller: _whisperDetailController.scrollController,
-                itemBuilder: (context, int index) {
-                  if (index == response.length - 1) {
-                    _whisperDetailController.onLoadMore();
-                  }
-                  final item = response[index];
-                  final isOwner =
-                      item.senderUid.toInt() ==
-                      _whisperDetailController.account.mid;
-                  return ChatItem(
-                    item: item,
-                    eInfos: _whisperDetailController.eInfos,
-                    onLongPress: () => onLongPress(index, item, isOwner),
-                    onSecondaryTapUp: PlatformUtils.isDesktop
-                        ? (e) =>
-                              _showMenu(e.globalPosition, index, item, isOwner)
-                        : null,
-                    isOwner: isOwner,
-                  );
-                },
-                separatorBuilder: (context, index) =>
-                    const SizedBox(height: 12),
-              )
-            : scrollErrorWidget(onReload: _whisperDetailController.onReload),
-      Error(:final errMsg) => scrollErrorWidget(
-        errMsg: errMsg,
-        onReload: _whisperDetailController.onReload,
-      ),
-    };
-  }
-
-  void _showMenu(Offset offset, int index, Msg item, bool isOwner) {
+  void _showMenu(
+    Offset offset,
+    Message message,
+    bool isOwner,
+    Conversation conversation,
+  ) {
     showMenu(
       context: context,
       position: PageUtils.menuPosition(offset),
@@ -200,38 +266,24 @@ class _WhisperDetailPageState
         if (isOwner)
           PopupMenuItem(
             height: 42,
-            onTap: () => _whisperDetailController.sendMsg(
-              message: '${item.msgKey}',
-              onClearText: editController.clear,
-              msgType: .EN_MSG_TYPE_DRAW_BACK,
-              index: index,
-            ),
+            onTap: () => _recall(message, conversation),
             child: const Text('撤回', style: TextStyle(fontSize: 14)),
           )
         else
           PopupMenuItem(
             height: 42,
-            onTap: () => onReport(item),
+            onTap: () => _onReport(message, conversation),
             child: const Text('举报', style: TextStyle(fontSize: 14)),
           ),
       ],
     );
   }
 
-  void onReport(Msg item) {
-    autoWrapReportDialog(
-      context,
-      ban: false,
-      ReportOptions.imMsgReport,
-      (reasonType, reasonDesc, banUid) => _whisperDetailController.onReport(
-        item,
-        reasonType,
-        reasonDesc ?? ReportOptions.imMsgReport['']![reasonType]!,
-      ),
-    );
-  }
-
-  void onLongPress(int index, Msg item, bool isOwner) {
+  void _showMessageActions(
+    Message message,
+    bool isOwner,
+    Conversation conversation,
+  ) {
     Feedback.forLongPress(context);
     showDialog(
       context: context,
@@ -242,12 +294,7 @@ class _WhisperDetailPageState
             ? ListTile(
                 onTap: () {
                   Get.back();
-                  _whisperDetailController.sendMsg(
-                    message: '${item.msgKey}',
-                    onClearText: editController.clear,
-                    msgType: .EN_MSG_TYPE_DRAW_BACK,
-                    index: index,
-                  );
+                  _recall(message, conversation);
                 },
                 dense: true,
                 title: const Text('撤回', style: TextStyle(fontSize: 14)),
@@ -255,7 +302,7 @@ class _WhisperDetailPageState
             : ListTile(
                 onTap: () {
                   Get.back();
-                  onReport(item);
+                  _onReport(message, conversation);
                 },
                 dense: true,
                 title: const Text('举报', style: TextStyle(fontSize: 14)),
@@ -264,7 +311,43 @@ class _WhisperDetailPageState
     );
   }
 
-  Widget _buildInputView(Color containerColor) {
+  Future<void> _recall(Message message, Conversation conversation) async {
+    final result = await conversation.recall(message);
+    if (!mounted || !conversation.session.isActive) return;
+    if (!result.isSuccess) {
+      SmartDialog.showToast(result.message ?? '撤回失败');
+    } else {
+      SmartDialog.showToast('撤回成功');
+    }
+  }
+
+  void _onReport(Message message, Conversation conversation) {
+    autoWrapReportDialog(
+      context,
+      ReportOptions.imMsgReport,
+      (reasonType, reasonDescription, _) async {
+        final result = await conversation.report(
+          message,
+          reasonType,
+          reasonDescription ?? ReportOptions.imMsgReport['']![reasonType]!,
+        );
+        if (!mounted || !conversation.session.isActive) {
+          if (mounted && context.mounted) Get.back();
+          return const Error(null);
+        }
+        return switch (result.status) {
+          OperationStatus.success => const Success(null),
+          OperationStatus.unknown => Error(
+            result.message ?? '举报结果待确认',
+          ),
+          _ => Error(result.message ?? '举报失败'),
+        };
+      },
+      ban: false,
+    );
+  }
+
+  Widget _buildInputView(Color containerColor, Conversation conversation) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
@@ -303,94 +386,88 @@ class _WhisperDetailPageState
                   ),
                   contentPadding: const EdgeInsets.all(10),
                 ),
-                // inputFormatters: [LengthLimitingTextInputFormatter(500)],
               ),
             ),
           ),
-          Obx(
-            () {
-              final enablePublish = this.enablePublish.value;
-              return IconButton(
-                onPressed: () async {
-                  if (enablePublish) {
-                    _whisperDetailController.sendMsg(
-                      message: editController.rawText,
-                      onClearText: () {
-                        editController.clear();
-                        this.enablePublish.value = false;
-                      },
-                    );
-                  } else {
-                    try {
-                      final pickedFile = await imagePicker.pickImage(
-                        source: ImageSource.gallery,
-                        imageQuality: 100,
-                        requestFullMetadata: false,
-                      );
-                      if (pickedFile != null) {
-                        final path = pickedFile.path;
-                        SmartDialog.showLoading(msg: '正在上传图片');
-                        final result = await MsgHttp.uploadBfs(
-                          path: path,
-                          biz: 'im',
-                        );
-                        if (result case Success(:final response)) {
-                          final mimeType =
-                              lookupMimeType(
-                                path,
-                              )?.split('/').elementAtOrNull(1) ??
-                              'jpg';
-                          final picMsg = {
-                            'url': response.imageUrl,
-                            'height': response.imageHeight,
-                            'width': response.imageWidth,
-                            'imageType': mimeType,
-                            'original': 1,
-                            'size': response.imgSize,
-                          };
-                          SmartDialog.showLoading(msg: '正在发送');
-                          await _whisperDetailController
-                              .sendMsg(
-                                picMsg: picMsg,
-                                onClearText: editController.clear,
-                              )
-                              .whenComplete(() {
-                                if (PlatformUtils.isMobile) {
-                                  File(path).tryDel();
-                                }
-                              });
-                        } else {
-                          SmartDialog.dismiss();
-                          result.toast();
-                          return;
-                        }
-                      }
-                    } catch (e) {
-                      SmartDialog.showToast(e.toString());
-                    }
-                  }
-                },
-                icon: Icon(
-                  enablePublish
-                      ? Icons.send
-                      : Icons.add_photo_alternate_outlined,
-                ),
-                tooltip: enablePublish ? '发送' : '图片',
-              );
-            },
-          ),
+          Obx(() {
+            final enablePublish = this.enablePublish.value;
+            return IconButton(
+              onPressed: enablePublish
+                  ? () => _sendText(conversation)
+                  : () => _pickAndSendImage(conversation),
+              icon: Icon(
+                enablePublish ? Icons.send : Icons.add_photo_alternate_outlined,
+              ),
+              tooltip: enablePublish ? '发送' : '图片',
+            );
+          }),
         ],
       ),
     );
+  }
+
+  Future<void> _sendText(Conversation conversation) async {
+    final submittedText = editController.rawText;
+    if (submittedText.isEmpty) return;
+    feedBack();
+    SmartDialog.dismiss();
+    final result = await conversation.sendText(submittedText);
+    if (!mounted || !conversation.session.isActive) return;
+    if (result.isSuccess) {
+      if (editController.rawText == submittedText) {
+        editController.clear();
+        enablePublish.value = false;
+      }
+      unawaited(conversation.refresh(retryFailedAcknowledgement: false));
+      SmartDialog.showToast('发送成功');
+    } else if (result.status == OperationStatus.unknown) {
+      SmartDialog.showToast('发送状态待确认，请核对聊天记录后再操作');
+    } else {
+      SmartDialog.showToast(result.message ?? '发送失败');
+    }
+  }
+
+  Future<void> _pickAndSendImage(Conversation conversation) async {
+    try {
+      final pickedFile = await imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 100,
+        requestFullMetadata: false,
+      );
+      if (pickedFile == null) return;
+      final path = pickedFile.path;
+      if (!mounted || !conversation.session.isActive) {
+        if (PlatformUtils.isMobile) File(path).tryDel();
+        return;
+      }
+      SmartDialog.showLoading(msg: '正在上传并发送图片');
+      OperationResult result;
+      try {
+        result = await conversation.sendImage(path);
+      } finally {
+        SmartDialog.dismiss();
+        if (PlatformUtils.isMobile) File(path).tryDel();
+      }
+      if (!mounted || !conversation.session.isActive) return;
+      if (result.isSuccess) {
+        SmartDialog.showToast('发送成功');
+        unawaited(conversation.refresh(retryFailedAcknowledgement: false));
+      } else if (result.status == OperationStatus.unknown) {
+        SmartDialog.showToast('发送状态待确认，请核对聊天记录后再操作');
+      } else {
+        SmartDialog.showToast(result.message ?? '图片发送失败');
+      }
+    } catch (error) {
+      SmartDialog.dismiss();
+      SmartDialog.showToast(error.toString());
+    }
   }
 
   @override
   Widget? get customPanel => EmotePanel(onChoose: onChooseEmote);
 
   @override
-  Future<void> onCustomPublish({List? pictures}) {
-    throw UnimplementedError();
-  }
+  Future<void> onCustomPublish({List? pictures}) => throw UnimplementedError();
 
   @override
   Future<void>? onMention([bool fromClick = false]) => null;

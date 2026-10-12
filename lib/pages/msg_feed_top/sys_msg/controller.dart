@@ -1,54 +1,23 @@
-import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/http/msg.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/models/remote/msg/msg_sys/data.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
-import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:pili_aurora/services/messaging/feed.dart';
+import 'package:pili_aurora/services/messaging/feed_adapters.dart';
+import 'package:pili_aurora/services/messaging/feed_notifier.dart';
+import 'package:pili_aurora/services/messaging/session.dart';
 
-class SysMsgController
-    extends CommonListController<List<MsgSysItem>?, MsgSysItem> {
-  int? cursor;
+final systemMessageFeedProvider =
+    NotifierProvider<SystemMessageFeedNotifier, FeedSnapshot<MsgSysItem>>(
+      SystemMessageFeedNotifier.new,
+      isAutoDispose: true,
+    );
 
+class SystemMessageFeedNotifier extends FeedNotifier<MsgSysItem> {
   @override
-  void onInit() {
-    super.onInit();
-    queryData();
-  }
-
-  @override
-  void handleListResponse(List<MsgSysItem> dataList) {
-    if (cursor == null) {
-      msgSysUpdateCursor(dataList.first.cursor);
-    }
-    cursor = dataList.last.cursor;
-  }
-
-  void msgSysUpdateCursor(int? cursor) {
-    if (cursor != null) {
-      MsgHttp.msgSysUpdateCursor(cursor);
-    }
-  }
-
-  @override
-  Future<void> onRefresh() {
-    cursor = null;
-    return super.onRefresh();
-  }
-
-  Future<void> onRemove(dynamic id, int index) async {
-    try {
-      final res = await MsgHttp.delSysMsg(id);
-      if (res.isSuccess) {
-        loadingState
-          ..value.data!.removeAt(index)
-          ..refresh();
-        SmartDialog.showToast('删除成功');
-      } else {
-        res.toast();
-      }
-    } catch (_) {}
-  }
-
-  @override
-  Future<LoadingState<List<MsgSysItem>?>> customGetData() =>
-      MsgHttp.msgFeedNotify(cursor: cursor);
+  FeedHandle<MsgSysItem> createHandle(MessagingSession session) => FeedHandle(
+    session: session,
+    request: MessagingFeedAdapters.system,
+    idOf: (item) => item.id,
+    delete: MessagingFeedAdapters.deleteSystem,
+    notifyUnreadOnRefresh: true,
+  );
 }

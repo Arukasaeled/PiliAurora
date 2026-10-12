@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:pili_aurora/grpc/bilibili/app/im/v1.pb.dart'
     show SelectItem, Setting, SettingSwitch;
 import 'package:material_ui/material_ui.dart';
+import 'package:protobuf/protobuf.dart' show GeneratedMessageGenericExtensions;
 
 class ImSettingsItem extends StatelessWidget {
   const ImSettingsItem({
@@ -13,17 +14,11 @@ class ImSettingsItem extends StatelessWidget {
   });
 
   final Setting item;
-  final Future<bool> Function() onSet;
+  final Future<bool> Function(Setting setting) onSet;
   final VoidCallback onRedirect;
 
   @override
   Widget build(BuildContext context) {
-    void rebuild() {
-      if (context.mounted) {
-        (context as Element).markNeedsBuild();
-      }
-    }
-
     const titleStyle = TextStyle(fontSize: 14);
     final colorScheme = ColorScheme.of(context);
     final outline = colorScheme.outline;
@@ -31,12 +26,9 @@ class ImSettingsItem extends StatelessWidget {
 
     if (item.hasSwitch_1()) {
       Future<void> onChanged() async {
-        item.switch_1.switchOn = !item.switch_1.switchOn;
-        rebuild();
-        if (!await onSet()) {
-          item.switch_1.switchOn = !item.switch_1.switchOn;
-          rebuild();
-        }
+        final updated = item.deepCopy();
+        updated.switch_1.switchOn = !updated.switch_1.switchOn;
+        await onSet(updated);
       }
 
       return ListTile(
@@ -115,7 +107,6 @@ class ImSettingsItem extends StatelessWidget {
     }
 
     if (item.hasSelect()) {
-      String? selected;
       late final divider = Divider(
         height: 1,
         indent: 16,
@@ -131,28 +122,15 @@ class ImSettingsItem extends StatelessWidget {
               return divider;
             }
             final e = item.select.item[index ~/ 2];
-            if (e.selected) {
-              selected ??= e.text;
-            }
             return ListTile(
               dense: true,
               onTap: () async {
-                if (!e.selected) {
-                  for (final i in item.select.item) {
-                    i.selected = false;
-                  }
-                  e.selected = true;
-                  rebuild();
-
-                  if (await onSet()) {
-                    selected = e.text;
-                  } else {
-                    for (final i in item.select.item) {
-                      i.selected = i.text == selected;
-                    }
-                    rebuild();
-                  }
+                if (e.selected) return;
+                final updated = item.deepCopy();
+                for (final option in updated.select.item) {
+                  option.selected = option.text == e.text;
                 }
+                await onSet(updated);
               },
               title: Text(e.text, style: titleStyle),
               trailing: e.selected

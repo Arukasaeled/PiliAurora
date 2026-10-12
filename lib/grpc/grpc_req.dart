@@ -6,6 +6,7 @@ import 'package:pili_aurora/grpc/decode_policy.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/http/loading_state.dart';
+import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
@@ -58,12 +59,23 @@ abstract final class GrpcReq {
     GeneratedMessage request,
     T Function(Uint8List) grpcParser, {
     bool isolate = false,
+    Account? account,
+    bool retry = true,
   }) async {
-    final response = await Request().post<Uint8List>(
-      HttpString.appBaseUrl + url,
-      data: compressProtobuf(request.writeToBuffer()),
-      options: options,
-    );
+    final requestOptions = account == null
+        ? options
+        : options.copyWith(extra: {'account': account, 'noRetry': !retry});
+    final response = await (account == null
+        ? Request().post<Uint8List>(
+            HttpString.appBaseUrl + url,
+            data: compressProtobuf(request.writeToBuffer()),
+            options: requestOptions,
+          )
+        : Request.dio.post<Uint8List>(
+            HttpString.appBaseUrl + url,
+            data: compressProtobuf(request.writeToBuffer()),
+            options: requestOptions,
+          ));
 
     if (response.data case final Map map) {
       return Error(map['message']);

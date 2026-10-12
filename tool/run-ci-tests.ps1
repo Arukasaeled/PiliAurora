@@ -21,6 +21,7 @@ $ciTests = @(
     "test/services/diagnostics/catcher_logging_test.dart",
     "test/services/diagnostics/report_handler_test.dart",
     "test/services/settings/webdav_client_test.dart",
+    "test/services/messaging/messaging_test.dart",
     "test/architecture/dependency_rules_test.dart",
     "test/architecture/release_workflow_test.dart",
     "test/pages/common/common_controller_test.dart",

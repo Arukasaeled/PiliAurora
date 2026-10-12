@@ -1,3 +1,4 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/common/widgets/dialog/simple_dialog_option.dart';
 import 'package:pili_aurora/common/widgets/loading_widget/loading_widget.dart';
 import 'package:pili_aurora/common/widgets/scaffold/simple_scaffold.dart';
@@ -10,9 +11,10 @@ import 'package:pili_aurora/pages/whisper_settings/widgets/item.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:protobuf/protobuf.dart' show PbMap;
+import 'package:protobuf/protobuf.dart'
+    show GeneratedMessageGenericExtensions, PbMap;
 
-class WhisperSettingsPage extends StatefulWidget {
+class WhisperSettingsPage extends ConsumerStatefulWidget {
   const WhisperSettingsPage({
     super.key,
     required this.imSettingType,
@@ -23,59 +25,49 @@ class WhisperSettingsPage extends StatefulWidget {
   final ValueChanged<Map<int, Setting>>? onUpdate;
 
   @override
-  State<WhisperSettingsPage> createState() => _WhisperSettingsPageState();
+  ConsumerState<WhisperSettingsPage> createState() =>
+      _WhisperSettingsPageState();
 }
 
-class _WhisperSettingsPageState extends State<WhisperSettingsPage> {
-  late final WhisperSettingsController _controller;
-  @override
-  void initState() {
-    super.initState();
-    _controller = Get.put(
-      WhisperSettingsController(imSettingType: widget.imSettingType),
-      tag: widget.imSettingType.name,
-    );
-  }
-
+class _WhisperSettingsPageState extends ConsumerState<WhisperSettingsPage> {
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
+    final theme = Theme.of(context);
+    final settings = ref.watch(whisperSettingsProvider(widget.imSettingType));
+    final controller = ref.read(
+      whisperSettingsProvider(widget.imSettingType).notifier,
+    );
     return SimpleScaffold(
-      appBar: AppBar(
-        title: Obx(() => Text(_controller.title.value)),
-      ),
-      body: Obx(() => _buildBody(theme, _controller.loadingState.value)),
+      appBar: AppBar(title: Text(settings.title)),
+      body: _buildBody(theme, settings.loadingState, controller),
     );
   }
 
   Future<bool> onSet(
     int key,
-    PbMap<int, Setting> response,
     Setting item,
+    WhisperSettingsNotifier controller,
   ) async {
-    final settings = {key: item};
-    final res = await _controller.onSet(settings);
-    if (res) {
-      widget.onUpdate?.call(settings);
+    final result = await controller.setSetting(key, item);
+    if (result.isSuccess) {
+      widget.onUpdate?.call({key: item.deepCopy()});
+    } else {
+      result.toast();
     }
-    return res;
+    return result.isSuccess;
   }
 
   void onRedirect(
     ThemeData theme,
     int key,
-    PbMap<int, Setting> response,
     Setting item,
+    WhisperSettingsNotifier controller,
   ) {
     if (item.redirect.settingPage.hasParentSettingType()) {
       Get.to(
         WhisperSettingsPage(
           imSettingType: item.redirect.settingPage.parentSettingType,
-          onUpdate: (value) {
-            _controller.loadingState
-              ..value.data[key]?.redirect.settingPage.subSettings.addAll(value)
-              ..refresh();
-          },
+          onUpdate: (value) => controller.mergeSubSettings(key, value),
         ),
         preventDuplicates: false,
       );
@@ -87,36 +79,24 @@ class _WhisperSettingsPageState extends State<WhisperSettingsPage> {
           clipBehavior: Clip.hardEdge,
           contentPadding: const EdgeInsets.symmetric(vertical: 12),
           children: item.redirect.windowSelect.item.map(
-            (e) {
-              if (e.selected) {
-                selected ??= e.text;
-              }
+            (option) {
+              if (option.selected) selected ??= option.text;
               return DialogOption(
                 onPressed: () async {
-                  if (!e.selected) {
-                    Get.back();
-                    for (final j in item.redirect.windowSelect.item) {
-                      j.selected = false;
-                    }
-                    item.redirect.selectedSummary = e.text;
-                    e.selected = true;
-                    _controller.loadingState.refresh();
-                    final settings = {key: item};
-                    final res = await _controller.onSet(settings);
-                    if (!res) {
-                      for (final j in item.redirect.windowSelect.item) {
-                        j.selected = j.text == selected;
-                      }
-                      item.redirect.selectedSummary = selected!;
-                      _controller.loadingState.refresh();
-                    }
+                  if (option.selected) return;
+                  Get.back();
+                  final updated = item.deepCopy();
+                  for (final candidate in updated.redirect.windowSelect.item) {
+                    candidate.selected = candidate.text == option.text;
                   }
+                  updated.redirect.selectedSummary = option.text;
+                  await onSet(key, updated, controller);
                 },
                 child: Text(
-                  e.text,
+                  option.text,
                   style: TextStyle(
                     fontSize: 14,
-                    color: e.selected ? theme.colorScheme.primary : null,
+                    color: option.selected ? theme.colorScheme.primary : null,
                   ),
                 ),
               );
@@ -152,6 +132,7 @@ class _WhisperSettingsPageState extends State<WhisperSettingsPage> {
   Widget _buildBody(
     ThemeData theme,
     LoadingState<PbMap<int, Setting>> loadingState,
+    WhisperSettingsNotifier controller,
   ) {
     switch (loadingState) {
       case Loading():
@@ -174,8 +155,8 @@ class _WhisperSettingsPageState extends State<WhisperSettingsPage> {
                 final item = response[key]!;
                 return ImSettingsItem(
                   item: item,
-                  onSet: () => onSet(key, response, item),
-                  onRedirect: () => onRedirect(theme, key, response, item),
+                  onSet: (setting) => onSet(key, setting, controller),
+                  onRedirect: () => onRedirect(theme, key, item, controller),
                 );
               },
               separatorBuilder: (context, index) => divider,
@@ -185,7 +166,7 @@ class _WhisperSettingsPageState extends State<WhisperSettingsPage> {
       case Error(:final errMsg):
         return scrollErrorWidget(
           errMsg: errMsg,
-          onReload: _controller.onReload,
+          onReload: controller.onReload,
         );
     }
   }

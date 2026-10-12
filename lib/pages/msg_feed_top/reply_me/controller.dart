@@ -1,53 +1,23 @@
-import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/http/msg.dart';
-import 'package:pili_aurora/models/remote/msg/msg_reply/data.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/models/remote/msg/msg_reply/item.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
-import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:pili_aurora/services/messaging/feed.dart';
+import 'package:pili_aurora/services/messaging/feed_adapters.dart';
+import 'package:pili_aurora/services/messaging/feed_notifier.dart';
+import 'package:pili_aurora/services/messaging/session.dart';
 
-class ReplyMeController
-    extends CommonListController<MsgReplyData, MsgReplyItem> {
-  int? cursor;
-  int? cursorTime;
+final replyMeFeedProvider =
+    NotifierProvider<ReplyMeFeedNotifier, FeedSnapshot<MsgReplyItem>>(
+      ReplyMeFeedNotifier.new,
+      isAutoDispose: true,
+    );
 
+class ReplyMeFeedNotifier extends FeedNotifier<MsgReplyItem> {
   @override
-  void onInit() {
-    super.onInit();
-    queryData();
-  }
-
-  @override
-  List<MsgReplyItem>? getDataList(MsgReplyData response) {
-    if (response.cursor?.isEnd == true) {
-      isEnd = true;
-    }
-    cursor = response.cursor?.id;
-    cursorTime = response.cursor?.time;
-    return response.items;
-  }
-
-  @override
-  Future<void> onRefresh() {
-    cursor = null;
-    cursorTime = null;
-    return super.onRefresh();
-  }
-
-  @override
-  Future<LoadingState<MsgReplyData>> customGetData() =>
-      MsgHttp.msgFeedReplyMe(cursor: cursor, cursorTime: cursorTime);
-
-  Future<void> onRemove(dynamic id, int index) async {
-    try {
-      final res = await MsgHttp.delMsgfeed(1, id);
-      if (res.isSuccess) {
-        loadingState
-          ..value.data!.removeAt(index)
-          ..refresh();
-        SmartDialog.showToast('删除成功');
-      } else {
-        res.toast();
-      }
-    } catch (_) {}
-  }
+  FeedHandle<MsgReplyItem> createHandle(MessagingSession session) => FeedHandle(
+    session: session,
+    request: MessagingFeedAdapters.reply,
+    idOf: (item) => item.id,
+    delete: MessagingFeedAdapters.deleteReply,
+    notifyUnreadOnRefresh: true,
+  );
 }

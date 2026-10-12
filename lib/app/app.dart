@@ -14,6 +14,7 @@ import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/theme_utils.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 /// 提供应用主题、本地化、路由、全局对话框和导航观察器。
@@ -24,41 +25,43 @@ class PiliAuroraApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (light, dark) = ThemeUtils.getAllTheme();
-    return GetMaterialApp(
-      title: Constants.appName,
-      theme: light,
-      darkTheme: dark,
-      themeMode: ThemeUtils.themeMode = Pref.themeMode,
-      localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      locale: const Locale("zh", "CN"),
-      fallbackLocale: const Locale("zh", "CN"),
-      supportedLocales: const [Locale("zh", "CN"), Locale("en", "US")],
-      initialRoute: playbackRequest == null ? '/' : '/desktopPlayer',
-      getPages: [
-        ...Routes.getPages,
-        if (playbackRequest case final request?)
-          GetPage(
-            name: '/desktopPlayer',
-            page: () => DesktopPlaybackLaunch(request: request),
+    return ProviderScope(
+      child: GetMaterialApp(
+        title: Constants.appName,
+        theme: light,
+        darkTheme: dark,
+        themeMode: ThemeUtils.themeMode = Pref.themeMode,
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        locale: const Locale("zh", "CN"),
+        fallbackLocale: const Locale("zh", "CN"),
+        supportedLocales: const [Locale("zh", "CN"), Locale("en", "US")],
+        initialRoute: playbackRequest == null ? '/' : '/desktopPlayer',
+        getPages: [
+          ...Routes.getPages,
+          if (playbackRequest case final request?)
+            GetPage(
+              name: '/desktopPlayer',
+              page: () => DesktopPlaybackLaunch(request: request),
+            ),
+        ],
+        defaultTransition: Pref.pageTransition,
+        builder: FlutterSmartDialog.init(
+          toastBuilder: CustomToast.new,
+          loadingBuilder: LoadingWidget.new,
+          notifyStyle: const FlutterSmartNotifyStyle(
+            warningBuilder: NotifyWarning.new,
           ),
-      ],
-      defaultTransition: Pref.pageTransition,
-      builder: FlutterSmartDialog.init(
-        toastBuilder: CustomToast.new,
-        loadingBuilder: LoadingWidget.new,
-        notifyStyle: const FlutterSmartNotifyStyle(
-          warningBuilder: NotifyWarning.new,
+          builder: _builder,
         ),
-        builder: _builder,
+        navigatorObservers: [
+          DiagnosticRouteObserver(),
+          routeObserver,
+          FlutterSmartDialog.observer,
+        ],
+        scrollBehavior: PlatformUtils.isDesktop
+            ? const CustomScrollBehavior()
+            : null,
       ),
-      navigatorObservers: [
-        DiagnosticRouteObserver(),
-        routeObserver,
-        FlutterSmartDialog.observer,
-      ],
-      scrollBehavior: PlatformUtils.isDesktop
-          ? const CustomScrollBehavior()
-          : null,
     );
   }
 

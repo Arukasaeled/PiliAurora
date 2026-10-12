@@ -16,22 +16,24 @@ import 'package:pili_aurora/pages/whisper_settings/view.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart' hide ListTile;
 
-class ReplyMePage extends StatefulWidget {
+class ReplyMePage extends ConsumerStatefulWidget {
   const ReplyMePage({super.key});
 
   @override
-  State<ReplyMePage> createState() => _ReplyMePageState();
+  ConsumerState<ReplyMePage> createState() => _ReplyMePageState();
 }
 
-class _ReplyMePageState extends State<ReplyMePage> {
-  final _replyMeController = Get.put(ReplyMeController());
-
+class _ReplyMePageState extends ConsumerState<ReplyMePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final feed = ref.watch(replyMeFeedProvider);
+    final controller = ref.read(replyMeFeedProvider.notifier);
     return SimpleScaffold(
       appBar: AppBar(
         title: const Text('回复我的'),
@@ -52,7 +54,7 @@ class _ReplyMePageState extends State<ReplyMePage> {
         ],
       ),
       body: refreshIndicator(
-        onRefresh: _replyMeController.onRefresh,
+        onRefresh: controller.refresh,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -60,9 +62,7 @@ class _ReplyMePageState extends State<ReplyMePage> {
               padding: EdgeInsets.only(
                 bottom: MediaQuery.viewPaddingOf(context).bottom + 100,
               ),
-              sliver: Obx(
-                () => _buildBody(theme, _replyMeController.loadingState.value),
-              ),
+              sliver: _buildBody(theme, feed.loadingState, controller),
             ),
           ],
         ),
@@ -73,6 +73,7 @@ class _ReplyMePageState extends State<ReplyMePage> {
   Widget _buildBody(
     ThemeData theme,
     LoadingState<List<MsgReplyItem>?> loadingState,
+    ReplyMeFeedNotifier controller,
   ) {
     switch (loadingState) {
       case Loading():
@@ -95,7 +96,7 @@ class _ReplyMePageState extends State<ReplyMePage> {
             itemCount: response.length,
             itemBuilder: (context, int index) {
               if (index == response.length - 1) {
-                _replyMeController.onLoadMore();
+                controller.loadMore();
               }
 
               MsgReplyItem item = response[index];
@@ -103,7 +104,16 @@ class _ReplyMePageState extends State<ReplyMePage> {
               void onLongPress() => showConfirmDialog(
                 context: context,
                 title: const Text('确定删除该通知?'),
-                onConfirm: () => _replyMeController.onRemove(item.id, index),
+                onConfirm: () async {
+                  final id = item.id;
+                  if (id == null) return;
+                  final result = await controller.remove(id);
+                  if (result.isSuccess) {
+                    SmartDialog.showToast('删除成功');
+                  } else {
+                    result.toast();
+                  }
+                },
               );
 
               return ListTile(
@@ -202,11 +212,11 @@ class _ReplyMePageState extends State<ReplyMePage> {
             separatorBuilder: (context, index) => divider,
           );
         }
-        return HttpError(onReload: _replyMeController.onReload);
+        return HttpError(onReload: controller.refresh);
       case Error(:final errMsg):
         return HttpError(
           errMsg: errMsg,
-          onReload: _replyMeController.onReload,
+          onReload: controller.refresh,
         );
     }
   }

@@ -29,6 +29,7 @@ import 'package:pili_aurora/models/remote/video/video_play_info/data.dart';
 import 'package:pili_aurora/models/remote/video/video_relation/data.dart';
 import 'package:pili_aurora/models/remote/video/video_shot/data.dart';
 import 'package:pili_aurora/utils/accounts.dart';
+import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/utils/app_sign.dart';
 import 'package:pili_aurora/utils/extension/string_ext.dart';
 import 'package:pili_aurora/utils/global_data.dart';
@@ -614,10 +615,12 @@ abstract final class VideoHttp {
 
   // 操作用户关系
   static Future<LoadingState<void>> relationMod({
+    Account? account,
     required int mid,
     required int act,
     required int reSrc,
   }) async {
+    final requestAccount = account ?? Accounts.main;
     final res = await Request().post(
       Api.relationMod,
       queryParameters: {
@@ -636,9 +639,10 @@ abstract final class VideoHttp {
           "entity_id": mid,
           'fp': BrowserUa.pc,
         }),
-        'csrf': Accounts.main.csrf,
+        'csrf': requestAccount.csrf,
       },
       options: Options(
+        extra: {'account': ?account, if (account != null) 'noRetry': true},
         contentType: Headers.formUrlEncodedContentType,
         headers: {
           'origin': 'https://space.bilibili.com',
@@ -648,6 +652,9 @@ abstract final class VideoHttp {
       ),
     );
     if (res.data['code'] == 0) {
+      if (account != null && !identical(account, Accounts.main)) {
+        return const Error('账号已切换');
+      }
       if (act == 5) {
         // block
         Pref.setBlackMid(mid);

@@ -1,161 +1,50 @@
 import 'dart:async';
 
-import 'package:pili_aurora/common/widgets/dialog/dialog.dart';
-import 'package:pili_aurora/common/widgets/dialog/report_member.dart';
-import 'package:pili_aurora/grpc/bilibili/app/im/v1.pb.dart';
-import 'package:pili_aurora/grpc/im.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/http/msg.dart';
-import 'package:pili_aurora/http/video.dart';
-import 'package:pili_aurora/models/remote/msg/im_user_infos/datum.dart';
-import 'package:pili_aurora/models/remote/msg/msg_dnd/uid_setting.dart';
-import 'package:pili_aurora/models/remote/msg/session_ss/data.dart';
-import 'package:pili_aurora/utils/accounts.dart';
-import 'package:fixnum/fixnum.dart';
-import 'package:flutter/widgets.dart' show Text;
-import 'package:get/get.dart';
+import 'package:pili_aurora/services/messaging/providers.dart';
+import 'package:pili_aurora/services/messaging/settings.dart';
 
-class WhisperLinkSettingController extends GetxController {
-  WhisperLinkSettingController({
-    required this.talkerUid,
-  });
+final whisperLinkSettingsProvider =
+    NotifierProvider.family<
+      WhisperLinkSettingsNotifier,
+      ConversationSettingsSnapshot,
+      int
+    >(WhisperLinkSettingsNotifier.new, isAutoDispose: true);
+
+class WhisperLinkSettingsNotifier
+    extends Notifier<ConversationSettingsSnapshot> {
+  WhisperLinkSettingsNotifier(this.talkerUid);
 
   final int talkerUid;
-  RxBool isPinned = false.obs;
-  late final sessionId = SessionId(
-    privateId: PrivateId(talkerUid: Int64(talkerUid)),
-  );
+  late ConversationSettingsHandle _handle;
 
   @override
-  void onInit() {
-    super.onInit();
-    getUserInfo();
-    getSessionSs();
-    getMsgDnd();
-    getIsPinned();
-  }
-
-  final Rx<LoadingState<List<ImUserInfosData>?>> userState =
-      LoadingState<List<ImUserInfosData>?>.loading().obs;
-  final Rx<LoadingState<SessionSsData>> sessionSs =
-      LoadingState<SessionSsData>.loading().obs;
-  final Rx<LoadingState<List<UidSetting>?>> msgDnd =
-      LoadingState<List<UidSetting>?>.loading().obs;
-
-  Future<void> getUserInfo() async {
-    userState.value = await MsgHttp.imUserInfos(uids: talkerUid.toString());
-  }
-
-  Future<void> getSessionSs() async {
-    sessionSs.value = await MsgHttp.getSessionSs(talkerUid: talkerUid);
-  }
-
-  Future<void> getMsgDnd() async {
-    msgDnd.value = await MsgHttp.getMsgDnd(uidsStr: talkerUid);
-  }
-
-  Future<void> getIsPinned() async {
-    final res = await ImGrpc.sessionUpdate(sessionId: sessionId);
-    if (res case Success(:final response)) {
-      isPinned.value = response.session.isPinned;
-    }
-  }
-
-  void setPush(bool isPush) {
-    if (isPush) {
-      showConfirmDialog(
-        context: Get.context!,
-        title: const Text('确认关闭内容推送吗？'),
-        content: const Text('若关闭此开关，你将不再收到该账号的图文消息与稿件推送，但通知类消息不受影响'),
-        onConfirm: () => _setPush(isPush),
-      );
-      return;
-    }
-    _setPush(isPush);
-  }
-
-  Future<void> _setPush(bool isPush) async {
-    int setting = isPush ? 1 : 0;
-    final res = await MsgHttp.setPushSs(
-      setting: setting,
+  ConversationSettingsSnapshot build() {
+    final session = ref.watch(messagingSessionProvider);
+    final handle = ConversationSettingsHandle(
+      session: session,
       talkerUid: talkerUid,
     );
-    if (res.isSuccess) {
-      sessionSs
-        ..value.data.pushSetting = setting
-        ..refresh();
-    } else {
-      res.toast();
-    }
+    _handle = handle;
+    void changed() => state = handle.state.value;
+    handle.state.addListener(changed);
+    ref.onDispose(() {
+      handle.state.removeListener(changed);
+      handle.dispose();
+    });
+    unawaited(handle.refresh());
+    return handle.state.value;
   }
 
-  Future<void> setPin() async {
-    final res = isPinned.value
-        ? await ImGrpc.unpinSession(sessionId: sessionId)
-        : await ImGrpc.pinSession(sessionId: sessionId);
-    if (res.isSuccess) {
-      isPinned.toggle();
-    } else {
-      res.toast();
-    }
-  }
+  Future<void> getUserInfo() => _handle.getUserInfo();
+  Future<void> getSessionSs() => _handle.getSessionSs();
+  Future<void> getMsgDnd() => _handle.getMsgDnd();
 
-  Future<void> setMute(bool isMuted) async {
-    int setting = isMuted ? 0 : 1;
-    final res = await MsgHttp.setMsgDnd(
-      uid: Accounts.main.mid,
-      setting: setting,
-      dndUid: talkerUid,
-    );
-    if (res.isSuccess) {
-      msgDnd
-        ..value.data!.first.setting = setting
-        ..refresh();
-    } else {
-      res.toast();
-    }
-  }
-
-  Future<void> setBlock(bool isBlocked) async {
-    if (isBlocked) {
-      final res = await VideoHttp.relationMod(
-        mid: talkerUid,
-        act: 6,
-        reSrc: 11,
-      );
-      if (res.isSuccess) {
-        sessionSs
-          ..value.data.followStatus = null
-          ..refresh();
-      } else {
-        res.toast();
-      }
-    } else {
-      showConfirmDialog(
-        context: Get.context!,
-        title: const Text('确认拉黑该用户'),
-        content: const Text('加入黑名单后，将自动解除关注关系和对该用户的合集订阅关系，禁止该用户与我互动或查看我的空间'),
-        onConfirm: () async {
-          final res = await VideoHttp.relationMod(
-            mid: talkerUid,
-            act: 5,
-            reSrc: 11,
-          );
-          if (res.isSuccess) {
-            sessionSs
-              ..value.data.followStatus = 128
-              ..refresh();
-          } else {
-            res.toast();
-          }
-        },
-      );
-    }
-  }
-
-  void report() => showMemberReportDialog(
-    Get.context!,
-    name: userState.value.dataOrNull?.firstOrNull?.name,
-    mid: talkerUid,
-  );
+  Future<LoadingState<void>> setPush(bool receivesPush) =>
+      _handle.setPush(receivesPush);
+  Future<LoadingState<void>> setPin() => _handle.setPinned();
+  Future<LoadingState<void>> setMute(bool isMuted) => _handle.setMuted(isMuted);
+  Future<LoadingState<void>> setBlock(bool isBlocked) =>
+      _handle.setBlocked(isBlocked);
 }

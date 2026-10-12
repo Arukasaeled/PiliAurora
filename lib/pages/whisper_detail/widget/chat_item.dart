@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:pili_aurora/common/constants.dart';
@@ -10,11 +9,9 @@ import 'package:pili_aurora/common/widgets/image/cached_image.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/common/widgets/image_viewer/hero.dart';
 import 'package:pili_aurora/common/widgets/selection_text.dart';
-import 'package:pili_aurora/grpc/bilibili/im/interfaces/v1.pb.dart'
-    show EmotionInfo;
-import 'package:pili_aurora/grpc/bilibili/im/type.pb.dart' show Msg, MsgType;
 import 'package:pili_aurora/http/search.dart';
 import 'package:pili_aurora/models/common/image_preview_type.dart';
+import 'package:pili_aurora/services/messaging/message_models.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
 import 'package:pili_aurora/utils/duration_utils.dart';
@@ -27,10 +24,6 @@ import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
 class ChatItem extends StatelessWidget {
-  static MsgType msgTypeFromValue(int value) {
-    return MsgType.valueOf(value) ?? MsgType.EN_INVALID_MSG_TYPE;
-  }
-
   const ChatItem({
     super.key,
     required this.item,
@@ -40,8 +33,8 @@ class ChatItem extends StatelessWidget {
     required this.isOwner,
   });
 
-  final Msg item;
-  final List<EmotionInfo>? eInfos;
+  final Message item;
+  final List<EmotionSticker>? eInfos;
   final VoidCallback onLongPress;
   final GestureTapUpCallback? onSecondaryTapUp;
   final bool isOwner;
@@ -55,34 +48,29 @@ class ChatItem extends StatelessWidget {
   // };
   @override
   Widget build(BuildContext context) {
-    final msgType = item.msgType;
-    // final isRevoke = msgType == MsgType.EN_MSG_TYPE_DRAW_BACK.value; // 撤回消息
-    // if (isRevoke) {
-    //   return const SizedBox.shrink();
-    // }
-
     late final ThemeData theme = Theme.of(context);
     late final Color textColor = isOwner
         ? theme.colorScheme.onSecondaryContainer
         : theme.colorScheme.onSurface;
-    late final dynamic content = jsonDecode(item.content);
-
     Widget child = messageContent(
       context: context,
       theme: theme,
-      content: content,
       textColor: textColor,
     );
 
-    final isSystem =
-        msgType == MsgType.EN_MSG_TYPE_VIDEO_CARD.value ||
-        msgType == MsgType.EN_MSG_TYPE_TIP_MESSAGE.value ||
-        msgType == MsgType.EN_MSG_TYPE_NOTIFY_MSG.value ||
-        msgType == MsgType.EN_MSG_TYPE_PICTURE_CARD.value ||
-        msgType == 16;
+    final isSystem = switch (item.content.kind) {
+      MessageContentKind.notify ||
+      MessageContentKind.pictureCard ||
+      MessageContentKind.tip ||
+      MessageContentKind.videoCard ||
+      MessageContentKind.articleCard ||
+      MessageContentKind.commonShareCard ||
+      MessageContentKind.legacyCard => true,
+      _ => false,
+    };
 
     if (!isSystem) {
-      final isPic = msgType == MsgType.EN_MSG_TYPE_PIC.value; // 图片
+      final isPic = item.content is ImageMessageContent;
       child = Row(
         mainAxisAlignment: isOwner ? .end : .start,
         children: [
@@ -114,14 +102,14 @@ class ChatItem extends StatelessWidget {
               children: [
                 child,
                 isPic ? const SizedBox(height: 7) : const SizedBox(height: 2),
-                if (item.msgStatus == 1)
+                if (item.recalled)
                   Text(
                     '  已撤回',
                     style: theme.textTheme.labelSmall!.copyWith(
                       color: theme.colorScheme.onErrorContainer,
                     ),
                   ),
-                if (item.msgSource >= 8 && item.msgSource <= 11) ...[
+                if (item.source >= 8 && item.source <= 11) ...[
                   Divider(
                     height: 10,
                     thickness: 1,
@@ -146,7 +134,7 @@ class ChatItem extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(top: 6, bottom: 18),
           child: Text(
-            DateFormatUtils.chatFormat(item.timestamp.toInt()),
+            DateFormatUtils.chatFormat(item.timestamp),
             textAlign: TextAlign.center,
             style: TextStyle(color: theme.colorScheme.outline),
           ),
@@ -164,35 +152,47 @@ class ChatItem extends StatelessWidget {
   Widget messageContent({
     required BuildContext context,
     required ThemeData theme,
-    required dynamic content,
     required Color textColor,
   }) {
     try {
-      switch (msgTypeFromValue(item.msgType)) {
-        case MsgType.EN_MSG_TYPE_NOTIFY_MSG:
-          return msgTypeNotifyMsg_10(theme, content);
-        case MsgType.EN_MSG_TYPE_PICTURE_CARD:
-          return msgTypePictureCard_13(content);
-        case MsgType.EN_MSG_TYPE_TIP_MESSAGE:
-          return msgTypeTipMessage_18(theme, content);
-        case MsgType.EN_MSG_TYPE_TEXT:
-          return msgTypeText_1(theme, content: content, textColor: textColor);
-        case MsgType.EN_MSG_TYPE_PIC || MsgType.EN_MSG_TYPE_CUSTOM_FACE:
-          return msgTypePic_2(content);
-        case MsgType.EN_MSG_TYPE_SHARE_V2:
-          return msgTypeShareV2_7(content, textColor);
-        case MsgType.EN_MSG_TYPE_VIDEO_CARD:
-          return msgTypeVideoCard_11(theme, content, textColor);
-        case MsgType.EN_MSG_TYPE_ARTICLE_CARD:
-          return msgTypeArticleCard_12(content, textColor);
-        case MsgType.EN_MSG_TYPE_COMMON_SHARE_CARD:
-          return msgTypeCommonShareCard_14(content, textColor);
-        default:
-          if (item.msgType == 16) {
-            return msgType_16(theme, content, textColor);
-          }
-          return def(textColor);
-      }
+      return switch (item.content) {
+        TextMessageContent(:final text) => msgTypeText_1(
+          theme,
+          content: {'content': text},
+          textColor: textColor,
+        ),
+        ImageMessageContent content => msgTypePic_2({
+          'url': content.url,
+          'width': content.width,
+          'height': content.height,
+        }),
+        StructuredMessageContent(:final kind, :final payload) => switch (kind) {
+          MessageContentKind.notify => msgTypeNotifyMsg_10(theme, payload),
+          MessageContentKind.pictureCard => msgTypePictureCard_13(payload),
+          MessageContentKind.tip => msgTypeTipMessage_18(theme, payload),
+          MessageContentKind.shareV2 => msgTypeShareV2_7(payload, textColor),
+          MessageContentKind.videoCard => msgTypeVideoCard_11(
+            theme,
+            payload,
+            textColor,
+          ),
+          MessageContentKind.articleCard => msgTypeArticleCard_12(
+            payload,
+            textColor,
+          ),
+          MessageContentKind.commonShareCard => msgTypeCommonShareCard_14(
+            payload,
+            textColor,
+          ),
+          MessageContentKind.legacyCard => msgType_16(
+            theme,
+            payload,
+            textColor,
+          ),
+          _ => def(textColor),
+        },
+        UnknownMessageContent() => def(textColor),
+      };
     } catch (err) {
       return def(textColor, err: err);
     }
@@ -339,7 +339,7 @@ class ChatItem extends StatelessWidget {
                           cid: cid,
                           cover: i['cover_url'],
                           dimension: res!.dimension,
-                          // title: res.title,
+                          // 接口提供标题时可同时传入。
                         );
                       }
                     } catch (err) {
@@ -433,7 +433,7 @@ class ChatItem extends StatelessWidget {
                       cid: cid,
                       cover: content['cover'],
                       dimension: res!.dimension,
-                      // title: res.title,
+                      // 接口提供标题时可同时传入。
                     );
                   }
                 } catch (err) {
@@ -505,13 +505,13 @@ class ChatItem extends StatelessWidget {
     String? type;
     GestureTapCallback onTap;
     switch (content['source']) {
-      // album
+      // 相簿。
       case 2:
         type = '相簿';
         onTap = () => PageUtils.pushDynFromId(rid: content['id']);
         break;
 
-      // video
+      // 视频。
       case 5:
         type = '视频';
         onTap = () async {
@@ -537,13 +537,13 @@ class ChatItem extends StatelessWidget {
               cid: cid,
               cover: content['thumb'],
               dimension: res!.dimension,
-              // title: res.title,
+              // 查询接口支持时可同时展示视频标题。
             );
           }
         };
         break;
 
-      // article
+      // 专栏。
       case 6:
         type = '专栏';
         onTap = () => Get.toNamed(
@@ -555,13 +555,13 @@ class ChatItem extends StatelessWidget {
         );
         break;
 
-      // dynamic
+      // 动态。
       case 11:
         type = '动态';
         onTap = () => PageUtils.pushDynFromId(id: content['id']);
         break;
 
-      // pgc
+      // 番剧。
       case 16:
         onTap = () => PageUtils.viewPgc(epId: content['id']);
         break;
@@ -649,7 +649,7 @@ class ChatItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Text(
-        jsonDecode(content['content']).map((e) => e['text']).join("\n"),
+        (content['content'] as List).map((e) => e['text']).join("\n"),
         textAlign: TextAlign.center,
         style: TextStyle(
           height: 1.5,
@@ -672,8 +672,8 @@ class ChatItem extends StatelessWidget {
     if (eInfos != null) {
       for (final e in eInfos!) {
         emojiMap[e.text] ??= {
-          'url': e.hasGifUrl() ? e.gifUrl : e.url,
-          'size': e.size * 22.0,
+          'url': e.url,
+          'size': e.size,
         };
       }
       patterns.addAll(emojiMap.keys.map(RegExp.escape));
@@ -828,8 +828,14 @@ class ChatItem extends StatelessWidget {
   }
 
   Widget def(Color textColor, {err}) {
+    final raw = switch (item.content) {
+      UnknownMessageContent(:final raw) => raw,
+      TextMessageContent(:final text) => text,
+      ImageMessageContent(:final url) => url,
+      StructuredMessageContent(:final payload) => payload.toString(),
+    };
     return Text(
-      '${item.content}${err != null ? '\n\ntype: ${msgTypeFromValue(item.msgType)}\nerr: $err' : ''}',
+      '$raw${err != null ? '\n\ntype: ${item.type}\nerr: $err' : ''}',
       style: TextStyle(
         letterSpacing: 0.6,
         height: 1.5,
