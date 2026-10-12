@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:pili_aurora/common/widgets/flutter/popup_menu.dart';
 import 'package:pili_aurora/common/widgets/gesture/tap_gesture_recognizer.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/http/live.dart';
 import 'package:pili_aurora/models/remote/live/live_danmaku/danmaku_msg.dart';
+import 'package:pili_aurora/models/remote/live/live_danmaku/live_emote.dart';
 import 'package:pili_aurora/models/remote/live/live_superchat/item.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/live_room/superchat/superchat_card.dart';
@@ -54,7 +57,6 @@ class LiveRoomChatPanel extends StatelessWidget {
     late final nameColor = isPP
         ? Colors.white.withValues(alpha: 0.9)
         : Colors.white.withValues(alpha: 0.6);
-    late final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
     late final colorScheme = ColorScheme.of(context);
     late final primary = colorScheme.isDark
         ? colorScheme.primary
@@ -128,7 +130,7 @@ class LiveRoomChatPanel extends StatelessWidget {
                                     ..onTap = () =>
                                         Get.toNamed('/member?mid=${reply.mid}'),
                                 ),
-                              _buildMsg(devicePixelRatio, item),
+                              _buildMsg(item),
                             ],
                           ),
                         ),
@@ -254,25 +256,24 @@ class LiveRoomChatPanel extends StatelessWidget {
     return pending == 0 ? '回到底部' : '回到底部 · $pending 条新消息';
   }
 
-  InlineSpan _buildMsg(double devicePixelRatio, DanmakuMsg obj) {
+  WidgetSpan _buildEmote(BaseEmote emote, {required double maxSide}) {
+    // 资源像素尺寸用于保留比例，聊天布局使用与屏幕缩放无关的逻辑尺寸。
+    final scale = math.min(1.0, maxSide / math.max(emote.width, emote.height));
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: NetworkImgLayer(
+        src: emote.url,
+        type: .emote,
+        width: emote.width * scale,
+        height: emote.height * scale,
+      ),
+    );
+  }
+
+  InlineSpan _buildMsg(DanmakuMsg obj) {
     final uemote = obj.uemote;
     if (uemote != null) {
-      // "room_{{room_id}}_{{int}}" , "upower_[{{emote}}]" , "official_{{int}}"
-      final double width, height;
-      if (uemote.isOfficial) {
-        width = uemote.width / devicePixelRatio;
-        height = uemote.height / devicePixelRatio;
-      } else {
-        width = height = 162.0 / devicePixelRatio;
-      }
-      return WidgetSpan(
-        child: NetworkImgLayer(
-          src: uemote.url,
-          type: .emote,
-          width: width,
-          height: height,
-        ),
-      );
+      return _buildEmote(uemote, maxSide: 40);
     }
     final emots = obj.emots;
     if (emots != null) {
@@ -284,14 +285,7 @@ class LiveRoomChatPanel extends StatelessWidget {
           final key = match[0]!;
           final emote = emots[key]!;
           spanChildren.add(
-            WidgetSpan(
-              child: NetworkImgLayer(
-                src: emote.url,
-                type: .emote,
-                width: emote.width,
-                height: emote.height,
-              ),
-            ),
+            _buildEmote(emote, maxSide: 20),
           );
           return '';
         },

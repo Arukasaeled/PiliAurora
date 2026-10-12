@@ -1,5 +1,7 @@
 import 'package:pili_aurora/models/common/super_chat_type.dart';
 import 'package:pili_aurora/models/remote/live/live_danmaku/danmaku_msg.dart';
+import 'package:pili_aurora/models/remote/live/live_danmaku/live_emote.dart';
+import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/live_room/widgets/chat_panel.dart';
@@ -20,15 +22,19 @@ class _TestController extends LiveRoomController {
   Future<void> queryLiveInfoH5() async {}
 }
 
-// 本组只读取设置，不依赖磁盘存储或播放器平台插件。
+// 本组在内存中保存设置，不依赖磁盘存储或播放器平台插件。
 class _SettingsBox implements Box<dynamic> {
-  _SettingsBox([this._settings = const {}]);
+  _SettingsBox([Map<dynamic, dynamic> settings = const {}])
+    : _settings = Map.of(settings);
 
   final Map<dynamic, dynamic> _settings;
 
   @override
   dynamic get(dynamic key, {dynamic defaultValue}) =>
       _settings[key] ?? defaultValue;
+
+  @override
+  Future<void> put(dynamic key, dynamic value) async => _settings[key] = value;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -69,6 +75,59 @@ void main() {
     controller.plPlayerController.showDanmaku = true;
     addTearDown(controller.onDelete.call);
     return controller;
+  }
+
+  for (final ratio in [1.0, 1.5, 2.0]) {
+    for (final (unique, inline, natural, expected) in [
+      ('room_1_1', false, const Size(240, 120), const Size(40, 20)),
+      ('official_1', false, const Size(120, 240), const Size(20, 40)),
+      ('official_2', true, const Size(180, 90), const Size(20, 10)),
+      ('official_3', true, const Size(16, 12), const Size(16, 12)),
+    ]) {
+      testWidgets('聊天表情 $unique 在 DPR $ratio 下保持紧凑尺寸和比例', (tester) async {
+        final controller = createController();
+        BaseEmote emote(String unique, double width, double height) =>
+            BaseEmote.fromJson({
+              'url': 'https://example.test/emote.png',
+              'emoticon_unique': unique,
+              'width': width,
+              'height': height,
+            });
+        final imageEmote = emote(unique, natural.width, natural.height);
+        controller.addDm(
+          DanmakuMsg(
+            name: '用户',
+            text: '[表情]',
+            uemote: inline ? null : imageEmote,
+            emots: inline ? {'[表情]': imageEmote} : null,
+            extra: _message(1).extra,
+          ),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(devicePixelRatio: ratio),
+              child: child!,
+            ),
+            home: Scaffold(
+              body: LiveRoomChatPanel(
+                liveRoomController: controller,
+                isPP: false,
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        final image = tester.widget<NetworkImgLayer>(
+          find.byType(NetworkImgLayer),
+        );
+        expect(image.width, expected.width);
+        expect(image.height, expected.height);
+        expect(tester.getSize(find.byType(NetworkImgLayer)), expected);
+        expect(tester.takeException(), isNull);
+        controller.onDelete();
+      });
+    }
   }
 
   testWidgets(
