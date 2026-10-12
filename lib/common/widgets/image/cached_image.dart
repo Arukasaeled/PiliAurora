@@ -192,6 +192,25 @@ class _ImageCompleter extends MultiFrameImageStreamCompleter {
     });
   }
 
+  @override
+  void reportError({
+    DiagnosticsNode? context,
+    required Object exception,
+    StackTrace? stack,
+    InformationCollector? informationCollector,
+    bool silent = false,
+  }) {
+    // 排队期间退出的图片没有帧可交付，取消属于正常生命周期结束。
+    if (exception is _ImageDecodeCancelled) return;
+    super.reportError(
+      context: context,
+      exception: exception,
+      stack: stack,
+      informationCollector: informationCollector,
+      silent: silent,
+    );
+  }
+
   void _releaseIfUnused() {
     if (_hadListener && !hasListeners && _handles == 0) _owner.dispose();
   }
@@ -239,6 +258,7 @@ class _ThrottledCodec implements ui.Codec {
   bool _disposed = false;
   bool _firstFrame = true;
   _FrameAdmission? _admission;
+  _DecodeAdmission? _decodeAdmission;
 
   @override
   int get frameCount => _codec.frameCount;
@@ -248,9 +268,19 @@ class _ThrottledCodec implements ui.Codec {
 
   @override
   Future<ui.FrameInfo> getNextFrame() async {
-    final operation = Diagnostics.instance.begin('imageFrame', '解码图片帧');
+    final admission = _decodeAdmission = _DecodeBudget.admit();
+    TraceOperation? operation;
     try {
-      final frame = await _codec.getNextFrame();
+      await admission.ready;
+      if (_disposed) throw const _ImageDecodeCancelled();
+      operation = Diagnostics.instance.begin('imageFrame', '解码图片帧');
+      late final ui.FrameInfo frame;
+      try {
+        frame = await _codec.getNextFrame();
+      } finally {
+        admission.release();
+        _decodeAdmission = null;
+      }
       operation?.finish(
         details: {
           'width': frame.image.width,
@@ -279,6 +309,8 @@ class _ThrottledCodec implements ui.Codec {
       operation?.finish(error: error);
       rethrow;
     } finally {
+      admission.release();
+      _decodeAdmission = null;
       operation?.finish();
     }
   }
@@ -287,6 +319,7 @@ class _ThrottledCodec implements ui.Codec {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _decodeAdmission?.cancel();
     _admission?.cancel();
     _admission = null;
     Diagnostics.instance.gauge('imageCodecs', --_activeCodecs);
@@ -582,4 +615,57 @@ class _FrameAdmission {
   Future<void> get ready => _ready.future;
 
   void cancel() => _FrameBudget.cancel(this);
+}
+
+/// 在原生帧请求开始前限制并发，避免多个可见卡片同时提交整批解码。
+abstract final class _DecodeBudget {
+  static const _limit = 2;
+  static int _active = 0;
+  static final _pending = Queue<_DecodeAdmission>();
+
+  static _DecodeAdmission admit() {
+    final admission = _DecodeAdmission();
+    _pending.add(admission);
+    _drain();
+    return admission;
+  }
+
+  static void _drain() {
+    while (_active < _limit && _pending.isNotEmpty) {
+      final admission = _pending.removeFirst();
+      _active++;
+      admission
+        .._active = true
+        .._ready.complete();
+    }
+  }
+}
+
+class _DecodeAdmission {
+  final _ready = Completer<void>();
+  bool _active = false;
+  bool _released = false;
+
+  Future<void> get ready => _ready.future;
+
+  void cancel() {
+    // 已启动的原生请求完成后才归还名额，避免取消期间突破并发上限。
+    if (!_active) release();
+  }
+
+  void release() {
+    if (_released) return;
+    _released = true;
+    if (_active) {
+      _DecodeBudget._active--;
+    } else {
+      _DecodeBudget._pending.remove(this);
+      _ready.complete();
+    }
+    _DecodeBudget._drain();
+  }
+}
+
+class _ImageDecodeCancelled implements Exception {
+  const _ImageDecodeCancelled();
 }

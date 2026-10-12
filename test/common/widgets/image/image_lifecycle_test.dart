@@ -500,6 +500,74 @@ void main() {
     expect((provider as CachedImageProvider).maxDecodePixels, 1 << 20);
   });
 
+  testWidgets('image decoding limits concurrent native frame requests', (
+    tester,
+  ) async {
+    final batch = await _prepareBatch(tester, manager, source, count: 5);
+    try {
+      await _flushDecoding(tester);
+      expect(
+        batch.codecs.fold<int>(0, (sum, codec) => sum + codec.decodedFrames),
+        2,
+      );
+      batch.release();
+      await _flushDecoding(tester);
+      expect(batch.delivered, 5);
+      expect(batch.errors, isEmpty);
+    } finally {
+      batch.dispose();
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets('cancelled queued images never start native decoding', (
+    tester,
+  ) async {
+    final batch = await _prepareBatch(tester, manager, source, count: 5);
+    await _flushDecoding(tester);
+    final queued = batch.codecs
+        .where((codec) => codec.decodedFrames == 0)
+        .toList();
+    batch.dispose();
+    await _flushDecoding(tester);
+    batch.release();
+    await _flushDecoding(tester);
+    expect(queued.length, 3);
+    expect(
+      queued.every((codec) => codec.disposed && codec.decodedFrames == 0),
+      isTrue,
+    );
+    expect(batch.delivered, 0);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('failed native decoding releases its concurrency slot', (
+    tester,
+  ) async {
+    final batch = await _prepareBatch(tester, manager, source, count: 3);
+    try {
+      await _flushDecoding(tester);
+      final active = batch.codecs.indexWhere(
+        (codec) => codec.decodedFrames == 1,
+      );
+      final queued = batch.codecs.singleWhere(
+        (codec) => codec.decodedFrames == 0,
+      );
+      batch.gates[active].completeError(StateError('test decode failure'));
+      await _flushDecoding(tester);
+      expect(queued.decodedFrames, 1);
+      expect(batch.errors, hasLength(1));
+      for (final gate in batch.gates) {
+        if (!gate.isCompleted) gate.complete();
+      }
+      await _flushDecoding(tester);
+      expect(batch.delivered, 2);
+    } finally {
+      batch.dispose();
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets('image delivery does not release every waiter at frame end', (
     tester,
   ) async {
