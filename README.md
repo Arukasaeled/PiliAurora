@@ -1,47 +1,69 @@
 # PiliAurora
 
-基于 [PiliPlus 2.1.5](https://github.com/bggRGjQaUbCoE/PiliPlus/tree/2.1.5) 继续开发的 Bilibili 第三方客户端，使用 Flutter 编写，主要维护 Android 和 Windows 版本。
+[![GitHub Release](https://img.shields.io/github/v/release/wallpap/PiliAurora?display_name=tag)](https://github.com/wallpap/PiliAurora/releases/latest)
+[![License](https://img.shields.io/github/license/wallpap/PiliAurora)](LICENSE)
 
-[下载](https://github.com/wallpap/PiliAurora/releases) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
+基于 [PiliPlus 2.1.5](https://github.com/bggRGjQaUbCoE/PiliPlus/tree/2.1.5) 继续开发的 Bilibili 第三方客户端，使用 Flutter 编写，主要维护 Android 和 Windows x64。
+
+[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.2.0.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
+
+## 项目特点
+
+- 继承 PiliPlus 的内容浏览、视频与直播、互动、账号管理、收藏、历史和离线下载等客户端功能。
+- 聚焦 Android 与 Windows x64 播放体验，维护跨平台播放器、视频输出和弹幕渲染。
+- 对播放状态、缓存和渲染工作设置边界，降低资源占用并改善高负载播放场景。
+
+## 与 PiliPlus 2.1.5 的差异
+
+以下列出 PiliAurora 基于上游版本持续维护的代表性改进，完整功能变更见各版本发布说明。
+
+### 桌面播放
+
+- Windows 视频和直播可弹出多个独立播放窗口，支持置顶、拖动、缩放、网格或层叠排列，并可分别调节音量和选择声音来源。
+- Windows 播放器增加桌面音量滑块、静音、键盘和滚轮调节；窗口位置和大小可在关闭后恢复。
+- Windows 优先使用 D3D11 硬件解码并通过共享纹理输出；设备支持时可降低 CPU 解码负载，不支持或初始化失败时可回退到其他解码路径。
+
+### 播放、纹理与解码
+
+- 视频输出尺寸按显示区域限制，避免为超出显示能力的画面创建过大的输出纹理；Android 可选启用实验性的屏幕分辨率缩放，默认关闭。缩小输出 Surface 会降低纹理和渲染链路的内存开销；Android 视频仍按源分辨率解码。
+- Android 针对 MediaCodec、Surface 和图像输出错误增加有界恢复与解码回退，减少播放异常后持续卡顿或失去画面的情况。
+- 视频与直播播放会话按页面和请求代次隔离，快速切源时复用播放器资源，避免过期请求或回调改写当前播放状态。
+- 音视频地址支持按需尝试备用 CDN，网络读取中断时结合当前媒体和缓冲状态恢复播放。
+
+### 弹幕与内存占用
+
+- Windows 弹幕使用预处理渲染器，复用文字布局、轨迹和栅格图片，并为缓存与活动工作集设定容量预算，减少逐帧重复布局和图片生成。
+- 视频输出、弹幕图片缓存和活动对象均采用资源控制。相同设备和播放场景下，PiliAurora 的整体内存占用要明显低于原版 PiliPlus；实际消耗会随分辨率、弹幕数量、硬件和同时播放的窗口数变化。
+- 直播消息解析复用后台 worker，弹幕数据按分段和条目数限界缓存，减少长时间播放中的任务与对象堆积。
+
+### 其他功能改进
+
+- Android 改进屏幕旋转、视频输出尺寸同步、硬件解码错误恢复和网络异常恢复。
+- 增加下载音质选择、分集间字幕状态继承、直播表情弹幕和失效订阅清理等体验改进。
+- GitHub Release 提供 Android 分 ABI APK，以及 Windows x64 便携包和安装程序。
+
+实际表现受系统版本、设备、驱动、媒体编码、清晰度、弹幕设置和播放窗口数量影响。纹理输出尺寸优化主要降低渲染目标和纹理开销；硬件解码路径是否生效取决于设备支持。
 
 ## 适配平台
 
-- Android（arm64-v8a、armeabi-v7a、x86_64）
+- Android：`arm64-v8a`、`armeabi-v7a`、`x86_64`
 - Windows x64
 
-## PiliAurora 的改进
+从 [GitHub Releases](https://github.com/wallpap/PiliAurora/releases/latest) 下载对应平台的安装包。PiliAurora 使用独立的应用标识和数据目录，可以与 PiliPlus 并存；两个应用不会自动共享账号状态、设置、缓存或离线文件。
 
-PiliAurora 以 PiliPlus 的客户端功能为基础，重点维护桌面播放和跨平台播放器行为。相较于 PiliPlus 2.1.5，本项目持续进行以下改进：
-
-- **Windows 播放器与弹幕：** 维护桌面视频输出、窗口显示、硬件解码兼容和弹幕渲染，并针对高密度弹幕场景优化渲染开销。
-- **Windows 多窗口播放：** 视频和直播可弹出独立小窗，支持置顶、位置恢复、网格/层叠排列及独立音量和静音，使用方式见[播放窗口说明](doc/windows-playback-windows.md)。
-- **Android 播放稳定性：** 改进解码异常后的恢复，并维护屏幕旋转、画面尺寸同步、跳转和独立音轨等播放场景。
-- **播放地址回退：** 音频与视频可以独立尝试备用 CDN；独立音轨播放也支持地址回退。
-- **日常功能完善：** 增加下载音质选择、分集间字幕状态继承、直播表情弹幕和失效订阅清理等改进。
-
-项目的一个主要使用场景是在 Windows 上使用完整的 B 站客户端，同时获得持续维护的播放器和弹幕体验；Android 版本也共享相关播放改进。具体变更和已知限制见[版本发布说明](https://github.com/wallpap/PiliAurora/releases)。
-
-## 功能
-
-保留并维护 PiliPlus 的主要客户端功能，包括：
+## 功能概览
 
 - **内容浏览：** 首页推荐、热门、排行榜、视频、番剧、文章、音频、直播和搜索。
 - **播放：** 清晰度和音质选择、播放速度、硬件解码设置、弹幕、字幕、分集切换和播放记录。
 - **互动：** 评论、动态、关注、粉丝、私信和直播聊天。
 - **账号与内容管理：** 多账号、收藏夹、观看历史、稍后再看、番剧订阅和离线下载。
-- **扩展功能：** DLNA 投屏、WebDAV 设置备份、SponsorBlock 和 WebView。
+- **扩展能力：** DLNA 投屏、WebDAV 设置备份、SponsorBlock 和 WebView。
 
 功能受 Bilibili 接口、账号权限、平台和具体媒体资源影响。
 
-## 下载
-
-从 [GitHub Releases](https://github.com/wallpap/PiliAurora/releases) 下载 Android APK，或 Windows x64 便携包和安装程序。每个版本的变更与可用附件见对应发布页。
-
-PiliAurora 使用独立的应用标识和数据目录，可以与 PiliPlus 并存。两个应用不会自动共享账号状态、设置、缓存或离线文件。
-
 ## 从源码构建
 
-项目使用 [.fvmrc](.fvmrc) 固定 Flutter 版本。Android 构建需要 Android SDK 和 JDK 25；Windows 构建需要安装启用了“使用 C++ 的桌面开发”工作负载的 Visual Studio。详细环境要求和测试命令见[构建与测试](doc/build-and-test.md)。
+项目使用 [.fvmrc](.fvmrc) 固定 Flutter 版本。Android 构建需要 Android SDK 和 JDK 25；Windows 构建需要安装启用了“使用 C++ 的桌面开发”工作负载的 Visual Studio。详细环境要求、平台构建和测试命令见[构建与测试](doc/build-and-test.md)。
 
 ```powershell
 git clone https://github.com/wallpap/PiliAurora.git
@@ -50,6 +72,21 @@ fvm install
 pwsh -File tool/build.ps1 -Platform windows -Mode debug
 pwsh -File tool/build.ps1 -Platform android -Mode debug
 ```
+
+## 项目文档
+
+- [文档索引](doc/README.md)
+- [功能领域地图与性能说明](doc/features.md)
+- [Windows 独立播放窗口](doc/windows-playback-windows.md)
+- [架构说明](doc/architecture.md)
+- [运行流程图](doc/runtime-flows.md)
+- [构建与测试](doc/build-and-test.md)
+- [维护与排障](doc/maintenance.md)
+- [第三方依赖及许可证](third_party/README.md)
+
+## 参与贡献
+
+欢迎通过 GitHub Issues 报告问题或提交 Pull Request。修改播放器、弹幕或平台代码前，请先阅读[维护与排障](doc/maintenance.md)和[构建与测试](doc/build-and-test.md)；修改第三方依赖时，按[依赖维护说明](third_party/README.md)登记来源和许可证。
 
 ## 问题反馈
 
@@ -71,12 +108,3 @@ PiliAurora 是社区独立维护的第三方客户端，与 Bilibili 官方无�
 ## 许可证
 
 本项目采用 [GNU General Public License v3.0](LICENSE)。第三方组件遵循各自的许可证。
-
-## 项目文档
-
-- [文档索引](doc/README.md)
-- [功能领域地图](doc/features.md)
-- [架构说明](doc/architecture.md)
-- [运行流程图](doc/runtime-flows.md)
-- [构建与测试](doc/build-and-test.md)
-- [维护与排障](doc/maintenance.md)

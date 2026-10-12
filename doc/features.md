@@ -52,6 +52,14 @@ flowchart TD
 - 模型：`lib/models/remote/video/`、`pgc/` 及顶层视频模型。
 - 修改前确认详情、播放地址和弹幕使用的资源标识（aid、bvid、cid），再调整页面。
 
+### 播放性能与资源控制
+
+- Windows 弹幕使用预处理渲染器，复用文字布局和栅格图片，并对缓存和活动工作集设定条目数与字节预算，减少逐帧重复布局和图片栅格化的工作量。实现见 `lib/pages/danmaku/windows_renderer.dart`、`raster_cache.dart` 和 `trajectory.dart`。
+- Windows 视频输出尺寸按启动时所在显示器限制；Android 可选实验性地按设备物理分辨率缩小输出 Surface，默认关闭。尺寸变化会合并并串行提交，Android 还等待纹理帧交接，避免快速旋转或切换时重复调整旧 Surface。输出限幅减少渲染表面和纹理开销；源视频仍按其原始分辨率解码。
+- 点播与直播共享播放器时，播放会话按页面归属和请求代次管理；快速切源复用原生播放器、控制器和纹理资源。Android 对 MediaCodec、Surface 和图像输出错误采用有界恢复与回退；网络读取中断可按当前媒体和缓冲状态尝试恢复。
+- 直播消息连接复用有序解析 worker；弹幕数据按分段与条目数限界缓存，降低长时间播放时的对象和任务堆积。
+- 这些机制约束重复工作与资源峰值，不代表所有设备、视频、解码器和弹幕密度下都有相同的帧率或内存收益。测量口径和设备验收范围见[维护与排障](maintenance.md#复现和测量)。
+
 ## 弹幕与评论
 
 - 页面：`lib/pages/danmaku/`、`danmaku_block/`、`main_reply/`、`my_reply/`。
