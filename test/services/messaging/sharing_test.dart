@@ -10,22 +10,7 @@ import 'package:pili_aurora/services/messaging/sharing.dart';
 import 'package:pili_aurora/services/messaging/sharing_adapter.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 
-import 'messaging_test.dart' as helpers;
-
-class RecordingConversationAdapter extends helpers.FakeConversationAdapter {
-  final sent = <({Account account, MessageContent content})>[];
-  Future<LoadingState<void>> Function(int call)? resultFor;
-
-  @override
-  Future<LoadingState<void>> send(
-    Account account,
-    ConversationTarget target,
-    MessageContent content,
-  ) async {
-    sent.add((account: account, content: content));
-    return await resultFor?.call(sent.length) ?? const Success(null);
-  }
-}
+import 'messaging_fixtures.dart';
 
 class FakeSharingAdapter extends SharingAdapter {
   final result = Completer<LoadingState<List<ShareRecipient>>>();
@@ -42,13 +27,13 @@ class FakeSharingAdapter extends SharingAdapter {
 
 void main() {
   late MessagingSession session;
-  late RecordingConversationAdapter adapter;
+  late FakeConversationAdapter adapter;
   late ConversationCache cache;
   late MessageSharing sharing;
 
   setUp(() {
-    session = helpers.scope();
-    adapter = RecordingConversationAdapter();
+    session = sessionFixture();
+    adapter = FakeConversationAdapter();
     cache = ConversationCache(session: session, adapter: adapter);
     sharing = MessageSharing(session: session, cache: cache);
   });
@@ -81,8 +66,8 @@ void main() {
     expect(card.payload['title'], 'original');
     expect((adapter.sent.last.content as TextMessageContent).text, 'note');
     expect(adapter.latestRequests.length, 1);
-    adapter.latestRequests.single.complete(Success(helpers.page([11])));
-    await helpers.settle();
+    adapter.latestRequests.single.complete(Success(page([11])));
+    await settle();
     expect(lease.conversation.snapshot.messages.single.sequence, 11);
     expect(changes.single.kind, MessagingChangeKind.unread);
     expect(changes.single.talkerId, 456);
@@ -90,8 +75,8 @@ void main() {
 
   test('分享与直接聊天共用发送锁，完成后可再次发送', () async {
     final pending = Completer<LoadingState<void>>();
-    adapter.resultFor = (call) async =>
-        call == 1 ? pending.future : const Success(null);
+    adapter.sendRequest = () async =>
+        adapter.sent.length == 1 ? pending.future : const Success(null);
     final first = sharing.send(
       receiverId: 456,
       content: {'source': '直播'},
@@ -118,7 +103,7 @@ void main() {
 
   test('卡片发送途中切换账号，附言不会继续发送', () async {
     final pending = Completer<LoadingState<void>>();
-    adapter.resultFor = (_) => pending.future;
+    adapter.sendRequest = () => pending.future;
     final sent = sharing.send(
       receiverId: 456,
       content: {'source': 5},
@@ -132,7 +117,7 @@ void main() {
   });
 
   test('卡片结果未知时保留 unknown，刷新核对且不发送附言', () async {
-    adapter.resultFor = (_) async => throw DioException(
+    adapter.sendRequest = () async => throw DioException(
       requestOptions: RequestOptions(),
       type: DioExceptionType.sendTimeout,
     );
@@ -148,7 +133,7 @@ void main() {
 
   for (final unknown in [false, true]) {
     test('附言${unknown ? '结果未知' : '失败'}保留卡片已发送信息', () async {
-      adapter.resultFor = (call) async => call == 1
+      adapter.sendRequest = () async => adapter.sent.length == 1
           ? const Success(null)
           : Error(
               'note failed',

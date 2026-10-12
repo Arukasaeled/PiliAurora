@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -8,32 +9,35 @@ import 'package:pili_aurora/grpc/bilibili/im/interfaces/v1.pb.dart';
 import 'package:pili_aurora/grpc/bilibili/im/type.pbenum.dart';
 import 'package:pili_aurora/grpc/grpc_req.dart';
 import 'package:pili_aurora/grpc/im.dart';
+import 'package:pili_aurora/http/api.dart';
 import 'package:pili_aurora/http/init.dart';
+import 'package:pili_aurora/models/remote/msg/msg_sys/data.dart';
 import 'package:pili_aurora/services/messaging/conversation_adapter.dart';
+import 'package:pili_aurora/services/messaging/feed.dart';
+import 'package:pili_aurora/services/messaging/feed_adapters.dart';
 import 'package:pili_aurora/services/messaging/message_models.dart';
+import 'package:pili_aurora/services/messaging/session.dart';
 import 'package:pili_aurora/utils/storage.dart';
 
-import 'messaging_test.dart' as helpers;
+import 'messaging_fixtures.dart';
 
 void main() {
+  late MessagingSession session;
+  late RequestOptions captured;
+
   setUpAll(() async {
     GStorage.setting = await Hive.openBox('setting', bytes: Uint8List(0));
     Request();
   });
-
   tearDownAll(() async {
     Request.dio.close(force: true);
     await Hive.close();
   });
-
-  setUp(() => Request.dio.interceptors.clear());
-
-  for (final explicitAccount in [false, true]) {
-    test('发送${explicitAccount ? '显式' : '默认'}账号请求均关闭自动重试', () async {
-      final session = helpers.scope();
-      addTearDown(session.dispose);
-      RequestOptions? captured;
-      Request.dio.interceptors.add(
+  setUp(() {
+    session = sessionFixture();
+    Request.dio.interceptors
+      ..clear()
+      ..add(
         InterceptorsWrapper(
           onRequest: (options, handler) {
             captured = options;
@@ -49,6 +53,11 @@ void main() {
           },
         ),
       );
+  });
+  tearDown(() => session.dispose());
+
+  for (final explicitAccount in [false, true]) {
+    test('发送${explicitAccount ? '显式' : '默认'}账号请求均关闭自动重试', () async {
       final result = await ImGrpc.sendMsg(
         account: explicitAccount ? session.account : null,
         senderUid: 123,
@@ -56,9 +65,9 @@ void main() {
         content: jsonEncode({'content': 'test'}),
       );
       expect(result.isSuccess, isTrue);
-      expect(captured!.extra['noRetry'], isTrue);
+      expect(captured.extra['noRetry'], isTrue);
       expect(
-        captured!.extra['account'],
+        captured.extra['account'],
         explicitAccount ? same(session.account) : isNull,
       );
     });
@@ -69,49 +78,106 @@ void main() {
     MessageContentKind.commonShareCard,
   ]) {
     test('分享卡片 $kind 保留协议字段并绑定账号', () async {
-      final session = helpers.scope();
-      addTearDown(session.dispose);
       final payload = <String, Object?>{
         'source': kind == MessageContentKind.shareV2 ? 5 : '直播',
         'id': 1234,
         'title': 'test',
         'thumb': 'https://example.invalid/cover.png',
       };
-      Request.dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (options, handler) {
-            final request = ReqSendMsg.fromBuffer(
-              GrpcReq.decompressProtobuf(options.data as Uint8List),
-            );
-            expect(options.extra['account'], same(session.account));
-            expect(options.extra['noRetry'], isTrue);
-            expect(request.msg.senderUid.toInt(), 123);
-            expect(request.msg.receiverId.toInt(), 456);
-            expect(
-              request.msg.msgType,
-              kind == MessageContentKind.shareV2
-                  ? MsgType.EN_MSG_TYPE_SHARE_V2.value
-                  : MsgType.EN_MSG_TYPE_COMMON_SHARE_CARD.value,
-            );
-            expect(jsonDecode(request.msg.content), payload);
-            handler.resolve(
-              Response(
-                requestOptions: options,
-                headers: Headers.fromMap({
-                  'grpc-status': ['0'],
-                }),
-                data: GrpcReq.compressProtobuf(RspSendMsg().writeToBuffer()),
-              ),
-            );
-          },
-        ),
-      );
       final result = await const GrpcConversationAdapter().send(
         session.account,
         const ConversationTarget(talkerId: 456),
         StructuredMessageContent(kind, payload),
       );
       expect(result.isSuccess, isTrue);
+      final request = ReqSendMsg.fromBuffer(
+        GrpcReq.decompressProtobuf(captured.data as Uint8List),
+      );
+      expect(captured.extra['account'], same(session.account));
+      expect(captured.extra['noRetry'], isTrue);
+      expect(request.msg.senderUid.toInt(), 123);
+      expect(request.msg.receiverId.toInt(), 456);
+      expect(
+        request.msg.msgType,
+        kind == MessageContentKind.shareV2
+            ? MsgType.EN_MSG_TYPE_SHARE_V2.value
+            : MsgType.EN_MSG_TYPE_COMMON_SHARE_CARD.value,
+      );
+      expect(jsonDecode(request.msg.content), payload);
     });
   }
+
+  test('系统消息先展示，ACK 超时保留数据且刷新可重试', () async {
+    var acknowledgementAttempts = 0;
+    var unreadChanges = 0;
+    final unreadConfirmed = Completer<void>();
+    final subscription = session.changes.listen((change) {
+      if (change.kind == MessagingChangeKind.unread) {
+        unreadChanges++;
+        unreadConfirmed.complete();
+      }
+    });
+    addTearDown(subscription.cancel);
+    final acknowledgement = Completer<void>();
+    final acknowledgementStarted = Completer<void>();
+    Request.dio.interceptors
+      ..clear()
+      ..add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (options.path == Api.msgSysNotify) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'code': 0,
+                    'data': [
+                      {'id': 1, 'cursor': 1},
+                    ],
+                  },
+                ),
+              );
+            } else {
+              expect(options.path, Api.msgSysUpdateCursor);
+              acknowledgementAttempts++;
+              if (acknowledgementAttempts == 1) {
+                acknowledgementStarted.complete();
+                acknowledgement.future.then(
+                  (_) => handler.reject(
+                    DioException(
+                      requestOptions: options,
+                      type: DioExceptionType.receiveTimeout,
+                    ),
+                  ),
+                );
+              } else {
+                handler.resolve(
+                  Response(requestOptions: options, data: {'code': 0}),
+                );
+              }
+            }
+          },
+        ),
+      );
+    final feed = FeedHandle<MsgSysItem>(
+      session: session,
+      request: MessagingFeedAdapters.system,
+      idOf: (item) => item.id,
+      acknowledge: MessagingFeedAdapters.acknowledgeSystem,
+      notifyUnreadOnRefresh: true,
+    );
+    addTearDown(feed.dispose);
+    await feed.refresh();
+    await acknowledgementStarted.future.timeout(const Duration(seconds: 1));
+    expect(acknowledgementAttempts, 1);
+    expect(feed.state.value.loadingState.dataOrNull?.single.id, 1);
+    acknowledgement.complete();
+    await settle();
+    expect(feed.state.value.loadingState.dataOrNull?.single.id, 1);
+    expect(unreadChanges, 0);
+    await feed.refresh();
+    await unreadConfirmed.future.timeout(const Duration(seconds: 1));
+    expect(acknowledgementAttempts, 2);
+    expect(unreadChanges, 1);
+  });
 }

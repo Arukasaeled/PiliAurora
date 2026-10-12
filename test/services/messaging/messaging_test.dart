@@ -10,7 +10,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/common/msg/msg_unread_type.dart';
 import 'package:pili_aurora/services/messaging/conversation.dart';
-import 'package:pili_aurora/services/messaging/conversation_adapter.dart';
 import 'package:pili_aurora/services/messaging/feed.dart';
 import 'package:pili_aurora/services/messaging/message_models.dart';
 import 'package:pili_aurora/services/messaging/overview.dart';
@@ -21,84 +20,7 @@ import 'package:pili_aurora/services/messaging/session_providers.dart';
 import 'package:pili_aurora/services/messaging/sessions.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 
-MessagingSession scope() => MessagingSession(
-  account: LoginAccount(
-    BiliCookieJar.fromJson({'DedeUserID': '123'}),
-    null,
-    null,
-  ),
-  key: (mid: 123, generation: 1),
-);
-
-Message message(int sequence) => Message(
-  id: '$sequence',
-  messageKey: sequence,
-  sequence: sequence,
-  senderId: 456,
-  timestamp: 1,
-  type: 1,
-  source: 1,
-  content: TextMessageContent('$sequence'),
-);
-ConversationPage page(List<int> ids) => ConversationPage(
-  messages: ids.map(message),
-  hasOlder: true,
-  cursor: ids.last,
-);
-Future<void> settle() => Future<void>.delayed(Duration.zero);
-
-class FakeConversationAdapter implements ConversationAdapter {
-  final latestRequests = <Completer<LoadingState<ConversationPage>>>[];
-  final olderRequests = <Completer<LoadingState<ConversationPage>>>[];
-  final acknowledgements = <int>[];
-  Future<LoadingState<void>> Function()? sendRequest;
-  LoadingState<void> ackResult = const Success(null);
-  @override
-  Future<LoadingState<ConversationPage>> latest(
-    Account account,
-    ConversationTarget target,
-  ) {
-    final request = Completer<LoadingState<ConversationPage>>();
-    latestRequests.add(request);
-    return request.future;
-  }
-
-  @override
-  Future<LoadingState<ConversationPage>> older(
-    Account account,
-    ConversationTarget target,
-    int cursor,
-  ) {
-    final request = Completer<LoadingState<ConversationPage>>();
-    olderRequests.add(request);
-    return request.future;
-  }
-
-  @override
-  Future<LoadingState<void>> send(
-    Account account,
-    ConversationTarget target,
-    MessageContent content,
-  ) async => await sendRequest?.call() ?? const Success(null);
-  @override
-  Future<LoadingState<void>> acknowledge(
-    Account account,
-    ConversationTarget target,
-    int sequence,
-  ) async {
-    acknowledgements.add(sequence);
-    return ackResult;
-  }
-
-  @override
-  Future<LoadingState<void>> recall(
-    Account account,
-    ConversationTarget target,
-    int messageKey,
-  ) async => const Success(null);
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
+import 'messaging_fixtures.dart';
 
 class TestSessionNotifier extends MessagingSessionNotifier {
   TestSessionNotifier(this.session);
@@ -173,7 +95,7 @@ class TestFeedNotifier extends FeedNotifier<int> {
 
 void main() {
   test('会话已读同步到所有列表，旧刷新不会覆盖操作结果', () async {
-    final session = scope();
+    final session = sessionFixture();
     final adapter = FakeSessionAdapter();
     final sessions = Sessions(session, adapter: adapter);
     final home = sessions.list(SessionFolder.home);
@@ -196,7 +118,7 @@ void main() {
   });
 
   test('删除会话后在途列表结果不能恢复已删除项', () async {
-    final session = scope();
+    final session = sessionFixture();
     final adapter = FakeSessionAdapter();
     final sessions = Sessions(session, adapter: adapter);
     final home = sessions.list(SessionFolder.home);
@@ -213,8 +135,8 @@ void main() {
   });
 
   test('账号切换重建会话订阅，旧账号响应不进入新列表', () async {
-    final oldSession = scope();
-    final newSession = scope();
+    final oldSession = sessionFixture();
+    final newSession = sessionFixture();
     final adapters = {
       oldSession: FakeSessionAdapter(),
       newSession: FakeSessionAdapter(),
@@ -266,7 +188,7 @@ void main() {
   });
 
   test('Feed Notifier 首次创建可安全加载并发布状态', () async {
-    final session = scope();
+    final session = sessionFixture();
     final container = ProviderContainer(
       overrides: [
         messagingSessionProvider.overrideWith(
@@ -283,7 +205,7 @@ void main() {
   });
 
   test('点赞刷新重新开放分页，并保留 latest 与 total 分组', () async {
-    final session = scope();
+    final session = sessionFixture();
     int calls = 0;
     final feed = LikeFeedHandle(
       session: session,
@@ -314,7 +236,7 @@ void main() {
   });
 
   test('未读合并重复刷新，阅读后旧结果失效', () async {
-    final session = scope();
+    final session = sessionFixture();
     final requests = <Completer<UnreadQueryResult>>[];
     final overview = UnreadOverview(
       session,
@@ -340,7 +262,7 @@ void main() {
   });
 
   test('查询失败保留旧数值，缺失分类保持未知', () async {
-    final session = scope();
+    final session = sessionFixture();
     int count = 0;
     final overview = UnreadOverview(
       session,
@@ -358,7 +280,7 @@ void main() {
   });
 
   test('账号释放后在途响应返回失效', () async {
-    final session = scope();
+    final session = sessionFixture();
     final response = Completer<LoadingState<int>>();
     final result = session.run((account) => response.future);
     session.dispose();
@@ -366,107 +288,135 @@ void main() {
     expect((await result as Error).code, messagingInactiveCode);
   });
 
-  test('发送失败和网络未知均释放锁，允许下一次发送', () async {
-    final session = scope();
-    final adapter = FakeConversationAdapter();
-    final chat = Conversation(
-      session: session,
-      target: const ConversationTarget(talkerId: 456),
-      adapter: adapter,
-    );
-    adapter.sendRequest = () async => const Error('失败');
-    expect((await chat.sendText('first')).status, OperationStatus.failure);
-    expect(chat.snapshot.isSending, isFalse);
-    adapter.sendRequest = () async => throw DioException(
-      requestOptions: RequestOptions(),
-      type: DioExceptionType.receiveTimeout,
-    );
-    expect((await chat.sendText('second')).status, OperationStatus.unknown);
-    expect(chat.snapshot.isSending, isFalse);
-    adapter.latestRequests.single.complete(Success(page([3])));
-    await settle();
-    adapter.sendRequest = () async => const Success(null);
-    expect((await chat.sendText('third')).isSuccess, isTrue);
-    chat.dispose();
-    session.dispose();
-  });
+  group('聊天', () {
+    late MessagingSession session;
+    late FakeConversationAdapter adapter;
+    late Conversation chat;
 
-  test('刷新使旧历史页失效，消息按稳定 ID 去重', () async {
-    final session = scope();
-    final adapter = FakeConversationAdapter();
-    final chat = Conversation(
-      session: session,
-      target: const ConversationTarget(talkerId: 456),
-      adapter: adapter,
-    );
-    final initial = chat.open();
-    adapter.latestRequests[0].complete(Success(page([10, 9])));
-    await initial;
-    final older = chat.loadOlder();
-    final refresh = chat.refresh();
-    adapter.latestRequests[1].complete(Success(page([11, 10])));
-    await refresh;
-    adapter.olderRequests.single.complete(Success(page([9, 8])));
-    await older;
-    expect(chat.snapshot.messages.map((m) => m.sequence), [11, 10, 9]);
-    chat.dispose();
-    session.dispose();
-  });
+    setUp(() {
+      session = sessionFixture();
+      adapter = FakeConversationAdapter();
+      chat = Conversation(
+        session: session,
+        target: const ConversationTarget(talkerId: 456),
+        adapter: adapter,
+      );
+    });
+    tearDown(() {
+      chat.dispose();
+      session.dispose();
+    });
+    test('发送成功后的刷新应查询发送后的记录', () async {
+      final initial = chat.open();
+      expect((await chat.sendText('new message')).isSuccess, isTrue);
+      final afterSend = chat.refresh(retryFailedAcknowledgement: false);
+      expect(adapter.latestRequests.length, 2, reason: '发送前的查询不能保证包含已发送的新消息');
+      adapter.latestRequests.first.complete(Success(page([10])));
+      adapter.latestRequests.last.complete(Success(page([11, 10])));
+      await initial;
+      await afterSend;
+      expect(chat.snapshot.messages.first.sequence, 11);
+    });
 
-  test('历史加载不 ACK，渲染水位单调且手动刷新可重试失败 ACK', () async {
-    final session = scope();
-    final adapter = FakeConversationAdapter();
-    final chat = Conversation(
-      session: session,
-      target: const ConversationTarget(talkerId: 456),
-      adapter: adapter,
-    );
-    final initial = chat.open();
-    adapter.latestRequests.single.complete(Success(page([10, 9])));
-    await initial;
-    expect(adapter.acknowledgements, isEmpty);
-    adapter.ackResult = const Error('失败');
-    chat.markRendered(message(10));
-    await settle();
-    chat.markRendered(message(9));
-    await settle();
-    expect(adapter.acknowledgements, [10]);
-    adapter.ackResult = const Success(null);
-    final refresh = chat.refresh();
-    adapter.latestRequests[1].complete(Success(page([10, 9])));
-    await refresh;
-    await settle();
-    expect(adapter.acknowledgements, [10, 10]);
-    expect(chat.snapshot.acknowledgedSequence, 10);
-    chat.dispose();
-    session.dispose();
-  });
+    test('历史分页应保留最新页使用的表情映射', () async {
+      final initial = chat.open();
+      adapter.latestRequests.single.complete(
+        Success(
+          page(
+            [10],
+            emotions: const [
+              EmotionSticker(text: '[new]', url: 'new.png', size: 22),
+            ],
+          ),
+        ),
+      );
+      await initial;
+      final older = chat.loadOlder();
+      adapter.olderRequests.single.complete(
+        Success(
+          page(
+            [9],
+            hasOlder: false,
+            emotions: const [
+              EmotionSticker(text: '[old]', url: 'old.png', size: 22),
+            ],
+          ),
+        ),
+      );
+      await older;
+      expect(chat.snapshot.messages.length, 2);
+      expect(
+        chat.snapshot.emotions.map((item) => item.text),
+        containsAll(['[new]', '[old]']),
+      );
+    });
 
-  test('撤回遇到在途刷新仍按 ID 保留撤回状态', () async {
-    final session = scope();
-    final adapter = FakeConversationAdapter();
-    final chat = Conversation(
-      session: session,
-      target: const ConversationTarget(talkerId: 456),
-      adapter: adapter,
-    );
-    final initial = chat.open();
-    adapter.latestRequests.single.complete(Success(page([10, 9])));
-    await initial;
-    final refresh = chat.refresh();
-    await chat.recall(message(9));
-    adapter.latestRequests[1].complete(Success(page([11, 10, 9])));
-    await refresh;
-    expect(
-      chat.snapshot.messages.singleWhere((m) => m.id == '9').recalled,
-      isTrue,
-    );
-    chat.dispose();
-    session.dispose();
+    test('发送失败和网络未知均释放锁，允许下一次发送', () async {
+      adapter.sendRequest = () async => const Error('失败');
+      expect((await chat.sendText('first')).status, OperationStatus.failure);
+      expect(chat.snapshot.isSending, isFalse);
+      adapter.sendRequest = () async => throw DioException(
+        requestOptions: RequestOptions(),
+        type: DioExceptionType.receiveTimeout,
+      );
+      expect((await chat.sendText('second')).status, OperationStatus.unknown);
+      expect(chat.snapshot.isSending, isFalse);
+      adapter.latestRequests.single.complete(Success(page([3])));
+      await settle();
+      adapter.sendRequest = () async => const Success(null);
+      expect((await chat.sendText('third')).isSuccess, isTrue);
+    });
+
+    test('刷新使旧历史页失效，消息按稳定 ID 去重', () async {
+      final initial = chat.open();
+      adapter.latestRequests[0].complete(Success(page([10, 9])));
+      await initial;
+      final older = chat.loadOlder();
+      final refresh = chat.refresh();
+      adapter.latestRequests[1].complete(Success(page([11, 10])));
+      await refresh;
+      adapter.olderRequests.single.complete(Success(page([9, 8])));
+      await older;
+      expect(chat.snapshot.messages.map((m) => m.sequence), [11, 10, 9]);
+    });
+
+    test('历史加载不 ACK，渲染水位单调且手动刷新可重试失败 ACK', () async {
+      final initial = chat.open();
+      adapter.latestRequests.single.complete(Success(page([10, 9])));
+      await initial;
+      expect(adapter.acknowledgements, isEmpty);
+      adapter.ackResult = const Error('失败');
+      chat.markRendered(message(10));
+      await settle();
+      chat.markRendered(message(9));
+      await settle();
+      expect(adapter.acknowledgements, [10]);
+      adapter.ackResult = const Success(null);
+      final refresh = chat.refresh();
+      adapter.latestRequests[1].complete(Success(page([10, 9])));
+      await refresh;
+      await settle();
+      expect(adapter.acknowledgements, [10, 10]);
+      expect(chat.snapshot.acknowledgedSequence, 10);
+    });
+
+    test('撤回遇到在途刷新仍按 ID 保留撤回状态', () async {
+      final initial = chat.open();
+      adapter.latestRequests.single.complete(Success(page([10, 9])));
+      await initial;
+      final refresh = chat.refresh();
+      await chat.recall(message(9));
+      adapter.latestRequests[1].complete(Success(page([11, 10, 9])));
+      await refresh;
+      expect(
+        chat.snapshot.messages.singleWhere((m) => m.id == '9').recalled,
+        isTrue,
+      );
+    });
   });
 
   test('聊天缓存不会驱逐在用会话，释放后回收空闲会话', () {
-    final session = scope();
+    final session = sessionFixture();
     final cache = ConversationCache(
       session: session,
       adapter: FakeConversationAdapter(),
@@ -500,7 +450,7 @@ void main() {
   });
 
   test('Feed 刷新废弃旧分页，删除使用稳定 ID', () async {
-    final session = scope();
+    final session = sessionFixture();
     final requests = <Completer<LoadingState<FeedPage<int>>>>[];
     final feed = FeedHandle<int>(
       session: session,

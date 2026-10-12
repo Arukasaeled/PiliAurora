@@ -22,7 +22,6 @@ $ciTests = @(
     "test/services/diagnostics/report_handler_test.dart",
     "test/services/settings/webdav_client_test.dart",
     "test/services/messaging/messaging_test.dart",
-    "test/services/messaging/migration_regression_test.dart",
     "test/services/messaging/sharing_test.dart",
     "test/services/messaging/protocol_test.dart",
     "test/architecture/dependency_rules_test.dart",
