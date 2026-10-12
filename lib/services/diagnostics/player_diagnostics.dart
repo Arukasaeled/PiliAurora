@@ -108,6 +108,9 @@ class PlayerDiagnostics {
     'eof-reached',
     'seeking',
     'video-pts',
+    'audio-pts',
+    'audio-delay',
+    'track-list',
     if (Platform.isAndroid) ...[
       'android-surface-size',
       'osd-dimensions',
@@ -157,6 +160,8 @@ class PlayerDiagnostics {
     for (final name in [
       'hwdec-current',
       'video-pts',
+      'audio-pts',
+      'track-list',
       'eof-reached',
       'seeking',
     ]) {

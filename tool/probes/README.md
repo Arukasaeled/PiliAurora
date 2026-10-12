@@ -36,6 +36,8 @@ fvm dart tool/probes/event_loop/native_event_loop_abi_probe.dart build/probe-val
 
 播放链路工具位于 `playback/`。`native_media_smoke.py` 的输入、独立音轨与跳转检查命令见[工具入口](../README.md#原生媒体加载烟测)。
 
+增加 `--audio-reload` 可检查后台外部音轨重连：音频时钟恢复、视频继续输出新帧、媒体未重开或跳转，暂停状态保持。输入视频需要超过 3 秒并包含连续视频帧。探针使用 `vo=null`、`ao=null` 和本地生成的无声 WAV；视频帧依据当前 mpv 的 trace 日志计数，结果不覆盖 GPU 画面和真实扬声器输出。
+
 ## 暂停旋转探针
 
 `paused_rotation.dart` 使用本地视频检查暂停后横屏、竖屏和再次横屏时的整帧显示。配套的 `paused_rotation_probe.py` 会检查四象限、视频白边和暂停状态。输入文件应使用对应的测试图视频。

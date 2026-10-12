@@ -31,14 +31,19 @@ class PlaybackNetworkRecovery {
   final _attempted = <(int, bool), Duration>{};
   Timer? _timer;
   bool _requireEmptyBuffer = true;
+  bool _allowNativeRecovery = true;
+  bool _waitForCachedPlayback = false;
   bool _tryNextCdn = false;
   RecoveryState? _failureState;
   (int, bool)? _scheduledAttempt;
   bool _disposed = false;
   bool get isActive => !_disposed && isCurrent();
 
+  /// 强制恢复可关闭进度判断；分离音视频的读取失败可先保留主视频缓存。
   void schedule({
     bool requireEmptyBuffer = false,
+    bool allowNativeRecovery = true,
+    bool waitForCachedPlayback = false,
     bool tryNextCdn = false,
     int candidate = 0,
     bool throttle = false,
@@ -46,6 +51,8 @@ class PlaybackNetworkRecovery {
     if (_disposed || !isCurrent()) return;
     if (_timer != null) {
       _requireEmptyBuffer &= requireEmptyBuffer;
+      _allowNativeRecovery &= allowNativeRecovery;
+      _waitForCachedPlayback |= waitForCachedPlayback;
       _tryNextCdn |= tryNextCdn;
       if (!requireEmptyBuffer) _failureState = readState();
       return;
@@ -57,9 +64,13 @@ class PlaybackNetworkRecovery {
       _attempted[key] = _clock.elapsed;
     }
     _requireEmptyBuffer = requireEmptyBuffer;
+    _allowNativeRecovery = allowNativeRecovery;
+    _waitForCachedPlayback = waitForCachedPlayback;
     _tryNextCdn = tryNextCdn;
     _scheduledAttempt = throttle ? (candidate, requireEmptyBuffer) : null;
-    _failureState = requireEmptyBuffer ? null : readState();
+    _failureState = requireEmptyBuffer && !waitForCachedPlayback
+        ? null
+        : readState();
     _timer = Timer(delay, _check);
   }
 
@@ -67,7 +78,7 @@ class PlaybackNetworkRecovery {
     _timer = null;
     if (_disposed || !isCurrent()) return;
     final previous = _failureState;
-    if (!_requireEmptyBuffer && previous != null) {
+    if (_allowNativeRecovery && !_requireEmptyBuffer && previous != null) {
       final state = readState();
       // FFmpeg 可以自行重连；播放和缓冲终点都恢复推进后，取消这次整段重载。
       // 仅播放时钟推进可能来自剩余缓存或独立音轨，仍需保留断流恢复。
@@ -80,7 +91,15 @@ class PlaybackNetworkRecovery {
         return;
       }
     }
-    if (_requireEmptyBuffer) {
+    if (_waitForCachedPlayback) {
+      final state = readState();
+      if (state == null) return;
+      // 分离音视频可能由另一轨推进时钟；主视频缓存耗尽后再恢复画面。
+      if (state.buffer > state.position) {
+        _timer = Timer(delay, _check);
+        return;
+      }
+    } else if (_requireEmptyBuffer) {
       final state = readState();
       if (state == null) return;
       if (!hasExhaustedPlaybackBuffer(

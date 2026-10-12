@@ -33,6 +33,8 @@ def main():
                         help='跳转至非关键帧位置，检查独立音轨恢复时的无声间隔')
     parser.add_argument('--keyframes-control', action='store_true',
                         help='使用旧关键帧策略复现无声，作为单变量对照')
+    parser.add_argument('--audio-reload', action='store_true',
+                        help='验证后台音轨重连保持视频时钟与暂停状态')
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     workspace = Path(__file__).resolve().parents[3]
@@ -45,13 +47,16 @@ def main():
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(8000)
-        wav.writeframes(b"\0\0" * 8000 * max(3, int(args.seek_target or 0) + 3))
+        wav.writeframes(b"\0\0" * 8000 * max(
+            20 if args.audio_reload else 3, int(args.seek_target or 0) + 3))
 
     mpv = c.CDLL(str(library))
     mpv.mpv_create.restype = c.c_void_p
     mpv.mpv_set_option_string.argtypes = [c.c_void_p, c.c_char_p, c.c_char_p]
     mpv.mpv_initialize.argtypes = [c.c_void_p]
     mpv.mpv_command.argtypes = [c.c_void_p, c.POINTER(c.c_char_p)]
+    mpv.mpv_command_async.argtypes = [
+        c.c_void_p, c.c_uint64, c.POINTER(c.c_char_p)]
     mpv.mpv_wait_event.argtypes = [c.c_void_p, c.c_double]
     mpv.mpv_wait_event.restype = c.POINTER(Event)
     mpv.mpv_get_property_string.argtypes = [c.c_void_p, c.c_char_p]
@@ -82,18 +87,35 @@ def main():
         )
         require(mpv.mpv_command(handle, argv) >= 0, f"{values[0]} failed")
 
+    video_frames = 0
+    native_errors = []
+
+    def read_event(timeout):
+        nonlocal video_frames
+        event = mpv.mpv_wait_event(handle, timeout).contents
+        if args.audio_reload and event.event_id == 2:
+            log = c.cast(event.data, c.POINTER(LogMessage)).contents
+            message = log.text.decode('utf-8')
+            if log.level in (b'error', b'fatal'):
+                native_errors.append(message.strip())
+            if (log.prefix == b'cplayer'
+                    and 'video_output_image: r=2/' in message):
+                video_frames += 1
+        return event
+
     def load(uri, options=""):
         # 清空上一轮事件，避免误把旧 file-loaded 作为新媒体加载完成。
-        while mpv.mpv_wait_event(handle, 0).contents.event_id:
+        while read_event(0).event_id:
             pass
         command("loadfile", str(uri), "replace", "-1", options)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            event = mpv.mpv_wait_event(handle, 0.1).contents
+            event = read_event(0.1)
             if event.event_id == 7:  # MPV_EVENT_END_FILE
                 end = c.cast(event.data, c.POINTER(c.c_int))
                 if end[0] == 4:  # MPV_END_FILE_REASON_ERROR
-                    raise RuntimeError(f"media load failed: mpv error {end[1]}")
+                    raise RuntimeError(f"media load failed: mpv error {end[1]}, "
+                                       f"context={native_errors[-4:]}")
             if event.event_id == 8:  # MPV_EVENT_FILE_LOADED
                 return json.loads(property_value("track-list"))
         raise RuntimeError("file-loaded timeout")
@@ -103,7 +125,7 @@ def main():
         gap = 0.0
         seeking = False
         while time.monotonic() < deadline:
-            event = mpv.mpv_wait_event(handle, 0.01).contents
+            event = read_event(0.01)
             if event.event_id != 2:  # MPV_EVENT_LOG_MESSAGE
                 continue
             log = c.cast(event.data, c.POINTER(LogMessage)).contents
@@ -122,6 +144,29 @@ def main():
                 return gap
         raise RuntimeError('playback restart timeout')
 
+    def reload_audio(request):
+        tracks = json.loads(property_value('track-list'))
+        track = next(t for t in tracks if t.get('external') and t['type'] == 'audio')
+        before = float(property_value('time-pos') or 0)
+        paused = property_value('pause')
+        values = ['audio-reload', str(track['id'])]
+        argv = (c.c_char_p * 3)(*(v.encode() for v in values), None)
+        require(mpv.mpv_command_async(handle, request, argv) >= 0,
+                'audio-reload was rejected')
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            event = read_event(0.05)
+            require(event.event_id not in (8, 20),
+                    'audio-reload reopened or sought the video')
+            require(float(property_value('time-pos') or 0) >= before - 0.1,
+                    'audio-reload reset the video clock')
+            if event.event_id == 5 and event.reply_userdata == request:
+                require(event.error >= 0, 'audio-reload failed')
+                require(property_value('pause') == paused,
+                        'audio-reload changed the pause state')
+                return before
+        raise RuntimeError('audio-reload reply timeout')
+
     try:
         for key, value in {
             "config": "no", "vo": "null", "ao": "null", "hwdec": "no",
@@ -130,6 +175,9 @@ def main():
             require(mpv.mpv_set_option_string(handle, key.encode(), value.encode())
                     >= 0, f"option {key} failed")
         require(mpv.mpv_initialize(handle) >= 0, "mpv_initialize failed")
+        if args.audio_reload:
+            require(mpv.mpv_request_log_messages(handle, b'trace') >= 0,
+                    'video frame logging failed')
         options = f"audio-files-append=%{len(str(audio).encode('utf-8'))}%{audio}"
         tracks = load(video, options)
         require(any(t["type"] == "video" for t in tracks), "video missing")
@@ -149,6 +197,38 @@ def main():
         tracks = load(audio)
         require(all(t["type"] == "audio" for t in tracks),
                 "audio-only unexpectedly opened video")
+        if args.audio_reload:
+            load(video, options)
+            require(float(property_value('duration') or 0) > 3,
+                    'audio-reload fixture must exceed 3 seconds')
+            command('set', 'pause', 'no')
+            # 等待开播事件稳定，再检查重连是否重新加载或跳转了视频。
+            until = time.monotonic() + 3
+            while time.monotonic() < until:
+                read_event(0.05)
+                if float(property_value('audio-pts') or 0) > 0.4:
+                    break
+            require(video_frames > 0, 'video output did not receive frames')
+            before_video_frames = video_frames
+            before = reload_audio(101)
+            until = time.monotonic() + 3
+            restored = False
+            while time.monotonic() < until:
+                read_event(0.05)
+                pts = property_value('audio-pts')
+                if (pts is not None and float(pts) > before + 0.2
+                        and video_frames > before_video_frames):
+                    restored = True
+                    break
+            require(restored, 'audio clock did not resume after audio-reload')
+            require(video_frames > before_video_frames,
+                    'video output did not keep receiving frames during audio recovery')
+            command('set', 'pause', 'yes')
+            # 覆盖故障音轨已经被取消选中的情形。
+            command('set', 'aid', 'no')
+            before = reload_audio(102)
+            require(abs(float(property_value('time-pos') or 0) - before) < 0.1,
+                    'paused audio recovery moved the video')
         seek_gaps = []
         if args.seek_target is not None:
             require(args.seek_target > 0, 'seek target must be positive')
@@ -183,6 +263,8 @@ def main():
         print(json.dumps({
             "mpv": property_value("mpv-version"),
             "unicode_delimiter_audio_loaded": True,
+            **({"audio_reload_preserves_video_and_pause": True}
+               if args.audio_reload else {}),
             "reload_preserves_audio_and_start": True,
             "next_media_clears_external_audio": True,
             "audio_only": True,

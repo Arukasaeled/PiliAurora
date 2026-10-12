@@ -30,9 +30,11 @@ import 'package:pili_aurora/plugin/pl_player/utils/decode_fallback.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/android_decode_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/preview_image_cache.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_media_source.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/native_audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_playback_runtime.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/network_recovery.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/playback_network_recovery.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/services/desktop_playback_windows.dart';
@@ -195,6 +197,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   Future<void> setMuted(bool value) async {
     muted.value = value;
     await _videoPlayerController?.setVolume(value ? 0 : volume.value * 100);
+    _audioRecovery?.onPlaybackChanged();
   }
 
   /// 听视频
@@ -578,6 +581,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
   final _session = PlaybackSession();
   PlaybackNetworkRecovery? _networkRecovery;
+  PlaybackAudioRecovery? _audioRecovery;
+  bool _audioSeekInProgress = false;
   PlaybackOwner attachPlaybackOwner() => _session.attach();
   bool get processing => _session.isLoading;
 
@@ -613,6 +618,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     if (_playerCount == 0) return;
     _networkRecovery?.dispose();
     _networkRecovery = null;
+    _audioRecovery?.dispose();
+    _audioRecovery = null;
     try {
       this.isLive = isLive;
       _videoType = videoType ?? VideoType.ugc;
@@ -819,7 +826,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     return null;
   }
 
-  void _recoverPlaybackNetwork({bool requireEmptyBuffer = true}) {
+  void _recoverPlaybackNetwork({
+    bool requireEmptyBuffer = true,
+    bool allowNativeRecovery = true,
+    bool waitForCachedPlayback = false,
+  }) {
     final source = dataSource;
     if (source is FileSource) return;
     final revision = _session.revision;
@@ -847,11 +858,113 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     );
     _networkRecovery!.schedule(
       requireEmptyBuffer: !isLive && requireEmptyBuffer,
+      allowNativeRecovery: allowNativeRecovery,
+      waitForCachedPlayback: waitForCachedPlayback,
       tryNextCdn: true,
       candidate: Pref.enableMultiCdn && source is NetworkSource
           ? source.candidateIndex
           : 0,
       throttle: !isLive,
+    );
+  }
+
+  void _observePlaybackAudio(PlayerLog event) {
+    if (dataSource is FileSource || processing) return;
+    if (event.level != 'error' && event.level != 'fatal') return;
+    if (event.prefix != 'ffmpeg/audio' &&
+        event.prefix != 'ad' &&
+        !isPlaybackPermissionFailure(event.text) &&
+        !isPlaybackStreamReadFailure(
+          prefix: event.prefix,
+          level: event.level,
+          message: event.text,
+        )) {
+      return;
+    }
+    final source = dataSource;
+    if (source.audioSource?.isNotEmpty != true &&
+        _videoPlayerController?.state.tracks.audio.any(
+              (track) => int.tryParse(track.id) != null,
+            ) !=
+            true) {
+      return;
+    }
+    final revision = _session.revision;
+    if (_audioRecovery?.isActive == false) {
+      _audioRecovery?.dispose();
+      _audioRecovery = null;
+    }
+    _audioRecovery ??= PlaybackAudioRecovery(
+      readState: () {
+        final player = _videoPlayerController;
+        if (!_session.isCurrent(revision) ||
+            player == null ||
+            player.disposed ||
+            player.current.isEmpty) {
+          return null;
+        }
+        return (
+          playing:
+              player.state.playing &&
+              wantsToPlay &&
+              !isMuted &&
+              volume.value > 0,
+          waiting:
+              processing ||
+              _audioSeekInProgress ||
+              isSeeking.value ||
+              player.state.buffering ||
+              _diagnostics?.property('seeking') == 'yes',
+          completed:
+              player.state.completed ||
+              _diagnostics?.property('eof-reached') == 'yes',
+          position: player.state.position,
+          duration: player.state.duration,
+          audioPts: double.tryParse(_diagnostics?.property('audio-pts') ?? ''),
+          audioDelay:
+              double.tryParse(
+                _diagnostics?.property('audio-delay') ?? '',
+              ) ??
+              0,
+        );
+      },
+      repairAudio: () {
+        if (processing) return null;
+        final player = _videoPlayerController;
+        final audio = source is NetworkSource
+            ? source.currentAudioSource
+            : null;
+        if (player == null || onlyPlayAudio.value || audio == null) {
+          return Future.value(false);
+        }
+        final media = player.current.last;
+        return reloadNativeAudio(
+          player: player,
+          audioUrl: audio,
+          trackList: _diagnostics?.property('track-list'),
+          isCurrent: () =>
+              _session.isCurrent(revision) &&
+              !player.disposed &&
+              player.current.isNotEmpty &&
+              identical(media, player.current.last),
+        );
+      },
+      reload: () => refreshPlayer(tryNextCdn: true),
+      onDiagnostic: (action) => _diagnostics?.event(
+        action,
+        level: DiagnosticLogLevel.warning,
+      ),
+      onError: (error) => _diagnostics?.event(
+        'audio.recovery.failed',
+        level: DiagnosticLogLevel.warning,
+        details: {'error': error},
+      ),
+      onExhausted: () => SmartDialog.showToast('声音恢复失败，可尝试重新播放'),
+    );
+    _audioRecovery!.onLog(
+      prefix: event.prefix,
+      level: event.level,
+      message: event.text,
     );
   }
 
@@ -987,7 +1100,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       );
     }
     _subscriptions = [
+      player.observeProperty('seeking').listen((_) {
+        _audioRecovery?.onPlaybackChanged();
+      }),
       stream.log.listen((event) {
+        _observePlaybackAudio(event);
         _androidDecodeRecovery?.onLog(
           prefix: event.prefix,
           level: event.level,
@@ -999,12 +1116,18 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           level: event.level,
           message: event.text,
         )) {
-          _recoverPlaybackNetwork(requireEmptyBuffer: false);
+          _recoverPlaybackNetwork(
+            requireEmptyBuffer: false,
+            waitForCachedPlayback:
+                !onlyPlayAudio.value &&
+                dataSource.audioSource?.isNotEmpty == true,
+          );
         }
       }),
 
       /// playing
       stream.playing.listen((bool playing) {
+        _audioRecovery?.onPlaybackChanged();
         if (playing) {
           playerStatus = .playing;
           _stopWakeLockTimer();
@@ -1079,6 +1202,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       }),
       stream.buffering.listen((bool buffering) {
         isBuffering.value = buffering;
+        _audioRecovery?.onPlaybackChanged();
         if (!playerStatus.isCompleted) {
           _stopWakeLockTimer();
           _updatePlaybackState();
@@ -1095,6 +1219,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         }
         if (_av1DecodeErrorObserved && isHardwareDecodeFailure(event)) {
           // mpv 继续执行完整候选列表；避免同时重开媒体或上报已处理的回退错误。
+          return;
+        }
+        if (event == 'Error decoding audio.' && !isFileSource) {
+          // 原始 ad 日志已进入音轨恢复，避免同时重载视频或弹出异常报告。
           return;
         }
         if (isLive) {
@@ -1143,6 +1271,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   }
 
   Future<void> seek(Duration position, {bool isSeek = false}) async {
+    _audioSeekInProgress = true;
+    _audioRecovery?.onPlaybackChanged();
     danmakuController?.clear();
     final watch = Stopwatch()..start();
     _diagnostics?.event(
@@ -1170,6 +1300,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           'targetMs': position.inMilliseconds,
         },
       );
+    } finally {
+      _audioSeekInProgress = false;
+      _audioRecovery?.onPlaybackChanged();
     }
   }
 
@@ -1324,6 +1457,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   void onSeekStart(int seekFrom) {
     seekPosition.value = seekFrom;
     isSeeking.value = true;
+    _audioRecovery?.onPlaybackChanged();
   }
 
   void onSeekEnd() {
@@ -1332,6 +1466,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
     hasToasted = false;
     isSeeking.value = false;
+    _audioRecovery?.onPlaybackChanged();
     hideTaskControls();
   }
 
@@ -1355,6 +1490,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       } catch (err) {
         logger.d(err.toString());
       }
+      _audioRecovery?.onPlaybackChanged();
     }
     if (showIndicator) {
       volumeIndicator.value = true;
@@ -1728,6 +1864,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     _session.dispose();
     _networkRecovery?.dispose();
     _networkRecovery = null;
+    _audioRecovery?.dispose();
+    _audioRecovery = null;
     if (removeSafeArea) {
       showSystemBar();
     }

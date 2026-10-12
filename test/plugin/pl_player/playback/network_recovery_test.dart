@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/network_recovery.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/playback_network_recovery.dart';
 
 void main() {
   const empty = (
@@ -7,6 +8,142 @@ void main() {
     position: Duration(seconds: 10),
     buffer: Duration(seconds: 10),
   );
+
+  testWidgets('分离音视频读取失败先保留剩余缓存，耗尽后恢复主视频', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(seconds: 10),
+      buffer: const Duration(seconds: 20),
+    );
+    var retries = 0;
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (_) async => retries++,
+      onError: (error) => fail('$error'),
+    )..schedule(waitForCachedPlayback: true);
+    state = (
+      buffering: false,
+      position: const Duration(seconds: 13),
+      buffer: const Duration(seconds: 20),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 0);
+    state = (
+      buffering: false,
+      position: const Duration(seconds: 20),
+      buffer: const Duration(seconds: 20),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 1);
+    recovery.dispose();
+  });
+
+  testWidgets('独立音轨故障但主视频缓存健康，取消主视频重载', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(milliseconds: 645478),
+      buffer: const Duration(milliseconds: 651651),
+    );
+    var retries = 0;
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (_) async => retries++,
+      onError: (error) => fail('$error'),
+    )..schedule(waitForCachedPlayback: true);
+    state = (
+      buffering: false,
+      position: const Duration(milliseconds: 648478),
+      buffer: const Duration(milliseconds: 654651),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 0);
+    recovery.dispose();
+  });
+
+  testWidgets('独立音轨截断后，视频缓冲继续增长仍需重载音轨', (tester) async {
+    // 诊断包中的截断发生于 645.478 秒，主媒体缓存仅包含 video。
+    var state = (
+      buffering: false,
+      position: const Duration(milliseconds: 645478),
+      buffer: const Duration(milliseconds: 651651),
+    );
+    var retries = 0;
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (_) async => retries++,
+      onError: (error) => fail('$error'),
+    );
+    if (isPlaybackStreamReadFailure(
+      prefix: 'ffmpeg/demuxer',
+      level: 'error',
+      message:
+          'mov,mp4,m4a,3gp,3g2,mj2: stream 0, offset 0xeb17ab: partial file',
+    )) {
+      recovery.schedule(tryNextCdn: true, allowNativeRecovery: false);
+    }
+    state = (
+      buffering: false,
+      position: const Duration(milliseconds: 648478),
+      buffer: const Duration(milliseconds: 654651),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 1);
+    recovery.dispose();
+  });
+
+  testWidgets('音频解码失败升级缓冲等待，后续网络日志不能取消重载', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(milliseconds: 658858),
+      buffer: const Duration(milliseconds: 664664),
+    );
+    final retries = <bool>[];
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (cdn) async => retries.add(cdn),
+      onError: (error) => fail('$error'),
+    )..schedule(requireEmptyBuffer: true);
+    await tester.pump(const Duration(seconds: 1));
+    recovery
+      ..schedule(allowNativeRecovery: false, tryNextCdn: true)
+      ..schedule()
+      ..schedule(requireEmptyBuffer: true);
+    state = (
+      buffering: false,
+      position: const Duration(milliseconds: 661858),
+      buffer: const Duration(milliseconds: 667664),
+    );
+    await tester.pump(const Duration(seconds: 2));
+    expect(retries, [true]);
+    recovery.dispose();
+  });
+
+  testWidgets('音轨恢复仍合并错误风暴并遵守重试限频', (tester) async {
+    final retries = <bool>[];
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => empty,
+      reload: (cdn) async => retries.add(cdn),
+      onError: (error) => fail('$error'),
+    );
+    for (var i = 0; i < 20; i++) {
+      recovery.schedule(
+        allowNativeRecovery: false,
+        tryNextCdn: true,
+        throttle: true,
+      );
+    }
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, [true]);
+    recovery.schedule(allowNativeRecovery: false, throttle: true);
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, [true]);
+    recovery.dispose();
+  });
 
   testWidgets('错误风暴合并，终止读取升级已安排的缓冲等待', (tester) async {
     final retries = <bool>[];

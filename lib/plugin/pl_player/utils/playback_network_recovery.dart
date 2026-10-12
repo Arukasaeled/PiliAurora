@@ -1,3 +1,6 @@
+bool isPlaybackPermissionFailure(String event) =>
+    RegExp(r'HTTP error 403\b').hasMatch(event);
+
 /// 只把连接中断和 CDN 临时失效交给重试，HTTP 403 仍按权限错误处理。
 bool isPlaybackNetworkFailure(String event) {
   final status = RegExp(r'HTTP error (\d{3})\b').firstMatch(event)?.group(1);
