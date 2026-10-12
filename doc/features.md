@@ -43,6 +43,7 @@ flowchart TD
 - API/模型：`lib/http/api.dart`、`search.dart`、`lib/models/remote/` 下的 `popular/`、`search/` 等。
 - 入口：根路由 `/` → `MainApp`；具体子页见 `lib/router/app_pages.dart`。
 - 推荐和热门功能受响应结构、分页及登录状态影响；改动后先检查对应领域的测试。
+- 推荐与热门列表通过 `lib/common/widgets/feed_pagination.dart` 按实际滚动范围分页：首屏补足可视区，滚动后按页面指定的预取距离加载，避免预加载区构建末项时连续请求。对应测试为 `test/common/widgets/feed_pagination_test.dart`。
 
 ## 视频、文章、番剧与音频
 
@@ -66,6 +67,7 @@ flowchart TD
 - API/模型：`lib/http/danmaku.dart`、`reply.dart`，`lib/models/remote/danmaku/`、`reply/`。
 - 渲染：通用组件和播放器插件；直播弹幕另走直播间链路。
 - 视频弹幕和直播消息的生命周期不同。修改渲染或消息队列时分别检查两条链路和对应测试。
+- 视频弹幕支持相似内容合并、重复字号放大与帧率档位；设置入口和规则见[弹幕合并与帧率设置](danmaku-merge.md)。合并实现位于 `lib/pages/danmaku/merge.dart`，过滤与后台结果接入位于 `controller.dart`；相关测试见 `test/pages/danmaku/`。
 
 ## 直播
 

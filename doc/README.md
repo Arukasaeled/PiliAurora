@@ -6,6 +6,7 @@
 - [运行流程图](runtime-flows.md)：启动、HTTP、播放器、下载和直播消息的时序图与流程图。
 - [功能领域地图](features.md)：按用户功能查找页面、接口、模型、服务和测试。
 - [Windows 播放窗口](windows-playback-windows.md)：独立点播与直播窗口、排列和声音控制。
+- [弹幕合并与帧率设置](danmaku-merge.md)：设置入口、生效方式、匹配规则和字号放大。
 - [领域词汇表](glossary.md)：说明项目中容易混淆的业务和工程术语。
 
 ## 开发参考
