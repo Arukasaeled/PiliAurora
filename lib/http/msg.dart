@@ -14,7 +14,6 @@ import 'package:pili_aurora/models/remote/msg/msg_like_detail/data.dart';
 import 'package:pili_aurora/models/remote/msg/msg_reply/data.dart';
 import 'package:pili_aurora/models/remote/msg/msg_sys/data.dart';
 import 'package:pili_aurora/models/remote/msg/session_ss/data.dart';
-import 'package:pili_aurora/models/remote/msgfeed_unread/data.dart';
 import 'package:pili_aurora/models/remote/single_unread/data.dart';
 import 'package:pili_aurora/models/remote/upload_bfs/data.dart';
 import 'package:pili_aurora/utils/accounts.dart';
@@ -341,34 +340,6 @@ abstract final class MsgHttp {
     }
   }
 
-  static Future<LoadingState<void>> setTop({
-    Account? account,
-    required Object talkerId,
-    required int opType,
-  }) async {
-    final requestAccount = account ?? Accounts.main;
-    String csrf = requestAccount.csrf;
-    Map<String, dynamic> data = await WbiSign.makSign({
-      'talker_id': talkerId,
-      'session_type': 1,
-      'op_type': opType,
-      'build': 0,
-      'mobi_app': 'web',
-      'csrf_token': csrf,
-      'csrf': csrf,
-    });
-    final res = await _MessageRequest(account).post(
-      HttpString.tUrl + Api.setTop,
-      data: data,
-      options: Options(contentType: Headers.formUrlEncodedContentType),
-    );
-    if (res.data['code'] == 0) {
-      return const Success(null);
-    } else {
-      return Error(res.data['message']);
-    }
-  }
-
   // 消息标记已读
   static Future<LoadingState<void>> ackSessionMsg({
     Account? account,
@@ -398,59 +369,6 @@ abstract final class MsgHttp {
       );
     }
   }
-
-  // // 发送私信
-  // static Future<LoadingState<void>> sendMsg({
-  //   required int senderUid,
-  //   required int receiverId,
-  //   int? msgType,
-  //   dynamic content,
-  // }) async {
-  //   String csrf = requestAccount.csrf;
-  //   final devId = getDevId();
-  //   final data = {
-  //     'msg': {
-  //       'sender_uid': senderUid,
-  //       'receiver_id': receiverId,
-  //       'receiver_type': 1,
-  //       'msg_type': msgType ?? 1,
-  //       'msg_status': 0,
-  //       'dev_id': devId,
-  //       'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-  //       'new_face_version': 1,
-  //       'content': content,
-  //     },
-  //     'from_firework': 0,
-  //     'build': 0,
-  //     'mobi_app': 'web',
-  //     'csrf_token': csrf,
-  //     'csrf': csrf,
-  //   };
-  //   Map<String, dynamic> params = await WbiSign.makSign(data);
-  //   final res = await _MessageRequest(account).post(
-  //     Api.sendMsg,
-  //     queryParameters: <String, dynamic>{
-  //       'w_sender_uid': senderUid,
-  //       'w_receiver_id': receiverId,
-  //       'w_dev_id': devId,
-  //       'w_rid': params['w_rid'],
-  //       'wts': params['wts'],
-  //     },
-  //     data: data,
-  //     options: Options(
-  //       contentType: Headers.formUrlEncodedContentType,
-  //     ),
-  //   );
-  //   if (res.data['code'] == 0) {
-  //     return const Success(null);
-  //   } else {
-  //     return Error(res.data['message']);
-  //   }
-  // }
-
-  // static String getDevId() {
-  //   return const UuidV4().generate();
-  // }
 
   static Future<LoadingState<void>> msgSetNotice({
     Account? account,
@@ -628,24 +546,6 @@ abstract final class MsgHttp {
     );
     if (res.data['code'] == 0) {
       return Success(SingleUnreadData.fromJson(res.data['data']));
-    } else {
-      return Error(res.data['message']);
-    }
-  }
-
-  static Future<LoadingState<MsgFeedUnreadData>> msgFeedUnread({
-    Account? account,
-  }) async {
-    final res = await _MessageRequest(account).get(
-      Api.msgFeedUnread,
-      queryParameters: {
-        'build': 0,
-        'mobi_app': 'web',
-        'web_location': 333.1365,
-      },
-    );
-    if (res.data['code'] == 0) {
-      return Success(MsgFeedUnreadData.fromJson(res.data['data']));
     } else {
       return Error(res.data['message']);
     }

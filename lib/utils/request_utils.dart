@@ -1,14 +1,11 @@
-import 'dart:convert' show jsonEncode;
 import 'dart:math';
 
 import 'package:pili_aurora/common/widgets/dialog/dialog.dart';
 import 'package:pili_aurora/services/logger.dart';
 import 'package:pili_aurora/common/widgets/dialog/simple_dialog_option.dart';
 import 'package:pili_aurora/common/widgets/selection_text.dart';
-import 'package:pili_aurora/grpc/bilibili/im/type.pbenum.dart';
 import 'package:pili_aurora/grpc/bilibili/main/community/reply/v1.pb.dart'
     show ReplyInfo;
-import 'package:pili_aurora/grpc/im.dart';
 import 'package:pili_aurora/http/dynamics.dart';
 import 'package:pili_aurora/http/fav.dart';
 import 'package:pili_aurora/http/loading_state.dart';
@@ -53,52 +50,6 @@ abstract final class RequestUtils {
     final res = await UserHttp.historyStatus(account: account);
     if (res case Success(:final response)) {
       GStorage.localCache.put(LocalCacheKey.historyPause, response);
-    }
-  }
-
-  // 1：小视频（已弃用）
-  // 2：相簿
-  // 3：纯文字
-  // 4：直播（此类型不常用，见分享其他内容消息）
-  // 5：视频
-  // 6：专栏
-  // 7：番剧（id 为 season_id）
-  // 8：音乐
-  // 9：国产动画（id 为 AV 号）
-  // 10：图片
-  // 11：动态
-  // 16：番剧（id 为 epid）
-  // 17：番剧
-  // https://github.com/SocialSisterYi/bilibili-API-collect/tree/master/docs/message/private_msg_content.md
-  static Future<bool> pmShare({
-    required int receiverId,
-    required Map content,
-    String? message,
-  }) async {
-    final ownerMid = Accounts.main.mid;
-    final contentRes = await ImGrpc.sendMsg(
-      senderUid: ownerMid,
-      receiverId: receiverId,
-      content: jsonEncode(content),
-      msgType: content['source'] is String
-          ? MsgType.EN_MSG_TYPE_COMMON_SHARE_CARD
-          : MsgType.EN_MSG_TYPE_SHARE_V2,
-    );
-
-    if (contentRes.isSuccess) {
-      if (message?.isNotEmpty == true) {
-        final msgRes = await ImGrpc.sendMsg(
-          senderUid: ownerMid,
-          receiverId: receiverId,
-          content: jsonEncode({"content": message}),
-          msgType: MsgType.EN_MSG_TYPE_TEXT,
-        );
-        return msgRes.isSuccess;
-      } else {
-        return true;
-      }
-    } else {
-      return false;
     }
   }
 

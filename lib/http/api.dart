@@ -464,8 +464,6 @@ abstract final class Api {
   static const String msgUnread =
       '${HttpString.tUrl}/session_svr/v1/session_svr/single_unread';
 
-  // 获取消息中心未读信息
-  static const String msgFeedUnread = '/x/msgfeed/unread';
   //https://api.bilibili.com/x/msgfeed/reply?platform=web&build=0&mobi_app=web
   static const String msgFeedReply = '/x/msgfeed/reply';
   //https://api.bilibili.com/x/msgfeed/at?platform=web&build=0&mobi_app=web
@@ -668,9 +666,6 @@ abstract final class Api {
   /// 我的订阅-合集详情
   static const favSeasonList = '/x/space/fav/season/list';
 
-  /// 发送私信
-  static const String sendMsg = '${HttpString.tUrl}/web_im/v1/web_im/send_msg';
-
   /// 排行榜
   static const String getRankApi = "/x/web-interface/ranking/v2";
 
@@ -692,8 +687,6 @@ abstract final class Api {
   static const String delSysMsg = '/x/sys-msg/del_notify_list';
 
   static const String delMsgfeed = '/x/msgfeed/del';
-
-  static const String setTop = '/session_svr/v1/session_svr/set_top';
 
   static const String createDynamic = '/x/dynamic/feed/create/dyn';
 
