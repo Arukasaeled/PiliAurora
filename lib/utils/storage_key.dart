@@ -114,6 +114,7 @@ abstract final class SettingBoxKey {
       enableLivePhoto = 'enableLivePhoto',
       showSeekPreview = 'showSeekPreview',
       showDmChart = 'showDmChart',
+      dmChartColor = 'dmChartColor',
       enableCommAntifraud = 'enableCommAntifraud',
       biliSendCommAntifraud = 'biliSendCommAntifraud',
       enableCreateDynAntifraud = 'enableCreateDynAntifraud',

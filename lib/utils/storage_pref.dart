@@ -536,6 +536,11 @@ abstract final class Pref {
   static bool get showDmChart =>
       _setting.get(SettingBoxKey.showDmChart, defaultValue: false);
 
+  static Color? get dmChartColor {
+    final int? color = _setting.get(SettingBoxKey.dmChartColor);
+    return color == null ? null : Color(color);
+  }
+
   static bool get enableCommAntifraud =>
       _setting.get(SettingBoxKey.enableCommAntifraud, defaultValue: false);
 

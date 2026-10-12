@@ -12,6 +12,7 @@ import 'package:pili_aurora/models/common/video/subtitle_pref_type.dart';
 import 'package:pili_aurora/pages/main/controller.dart';
 import 'package:pili_aurora/pages/setting/models/model.dart';
 import 'package:pili_aurora/pages/setting/pages/fullscreen_sc_size.dart';
+import 'package:pili_aurora/pages/setting/slide_color_picker.dart';
 import 'package:pili_aurora/pages/setting/widgets/select_dialog.dart';
 import 'package:pili_aurora/pages/setting/widgets/slider_dialog.dart';
 import 'package:pili_aurora/plugin/pl_player/models/bottom_progress_behavior.dart';
@@ -564,7 +565,49 @@ List<SettingsModel> get playProgressExtraSettings => [
     setKey: SettingBoxKey.showDmChart,
     defaultVal: false,
   ),
+  NormalModel(
+    title: '高能进度条颜色',
+    leading: const Icon(Icons.palette_outlined),
+    getSubtitle: () {
+      final color = Pref.dmChartColor;
+      return color == null
+          ? '跟随主题'
+          : '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).toUpperCase().padLeft(6, '0')}';
+    },
+    getTrailing: (theme) => Icon(
+      Icons.circle,
+      color: Pref.dmChartColor ?? theme.colorScheme.primary,
+      size: 20,
+    ),
+    onTap: _showDmChartColorDialog,
+  ),
 ];
+
+void _showDmChartColorDialog(BuildContext context, VoidCallback setState) {
+  showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      clipBehavior: Clip.hardEdge,
+      contentPadding: const EdgeInsets.symmetric(vertical: 16),
+      title: const Text('高能进度条颜色'),
+      content: SlideColorPicker(
+        color: Pref.dmChartColor ?? const Color(0xFFFB7299),
+        showResetBtn: true,
+        onChanged: (color) async {
+          if (color == null) {
+            await GStorage.setting.delete(SettingBoxKey.dmChartColor);
+          } else {
+            await GStorage.setting.put(
+              SettingBoxKey.dmChartColor,
+              color.toARGB32(),
+            );
+          }
+          setState();
+        },
+      ),
+    ),
+  );
+}
 
 void _showDmHeightDialog(BuildContext context, VoidCallback setState) {
   String danmakuLineHeight = Pref.danmakuLineHeight.toString();

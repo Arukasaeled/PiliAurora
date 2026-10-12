@@ -6,6 +6,7 @@ import 'package:pili_aurora/models/common/setting_type.dart';
 import 'package:pili_aurora/models/common/video/cdn_type.dart';
 import 'package:pili_aurora/pages/setting/common_setting.dart';
 import 'package:pili_aurora/pages/setting/models/model.dart';
+import 'package:pili_aurora/pages/setting/models/play_settings.dart';
 import 'package:pili_aurora/pages/setting/models/video_settings.dart';
 import 'package:pili_aurora/pages/setting/view.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -20,6 +21,36 @@ void main() {
   });
   setUp(settings._values.clear);
   tearDown(Get.reset);
+
+  testWidgets('高能进度条颜色支持保存、取消与恢复主题', (tester) async {
+    final item = playProgressExtraSettings.whereType<NormalModel>().single;
+    await tester.pumpWidget(
+      GetMaterialApp(home: Scaffold(body: item.widget)),
+    );
+    expect(find.text('跟随主题'), findsOneWidget);
+    await tester.tap(find.text('高能进度条颜色'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '123456');
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(Pref.dmChartColor, const Color(0xFF123456));
+    expect(find.text('#123456'), findsOneWidget);
+
+    await tester.tap(find.text('高能进度条颜色'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'ABCDEF');
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(Pref.dmChartColor, const Color(0xFF123456));
+
+    await tester.tap(find.text('高能进度条颜色'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重置'));
+    await tester.pumpAndSettle();
+    expect(Pref.dmChartColor, isNull);
+    expect(find.text('跟随主题'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('landscape search stays inside the category list', (
     tester,
@@ -198,6 +229,9 @@ class _DefaultSettings implements Box<dynamic> {
 
   @override
   Future<void> put(dynamic key, dynamic value) async => _values[key] = value;
+
+  @override
+  Future<void> delete(dynamic key) async => _values.remove(key);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

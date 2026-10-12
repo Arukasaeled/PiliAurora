@@ -1,11 +1,12 @@
 part of 'view.dart';
 
 Widget buildDmChart(
-  Color color,
+  Color themeColor,
   List<double> dmTrend,
   VideoDetailController videoDetailController, [
   double offset = 0,
 ]) {
+  final color = Pref.dmChartColor ?? themeColor;
   return IgnorePointer(
     child: Container(
       height: 12,
