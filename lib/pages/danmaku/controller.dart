@@ -62,26 +62,29 @@ class PlDanmakuController {
       return;
     }
     _requestedSeg.add(segmentIndex);
-    late final LoadingState<DmSegMobileReply> res;
     try {
-      res = await DmGrpc.dmSegMobile(
+      final res = await DmGrpc.dmSegMobile(
         cid: _cid,
         segmentIndex: segmentIndex + 1,
       );
+      if (_disposed) return;
+
+      if (res case Success(:final response)) {
+        if (response.state == 1) {
+          _plPlayerController.dmState.add(_cid);
+        }
+        // 合并完成并写入缓存前仍算请求中，避免播放时钟重复请求同一分段。
+        await handleDanmaku(response.elems, segmentIndex: segmentIndex);
+      }
     } finally {
       _requestedSeg.remove(segmentIndex);
     }
-    if (_disposed) return;
-
-    if (res case Success(:final response)) {
-      if (response.state == 1) {
-        _plPlayerController.dmState.add(_cid);
-      }
-      handleDanmaku(response.elems, segmentIndex: segmentIndex);
-    }
   }
 
-  void handleDanmaku(List<DanmakuElem> elems, {int? segmentIndex}) {
+  Future<void> handleDanmaku(
+    List<DanmakuElem> elems, {
+    int? segmentIndex,
+  }) async {
     if (_disposed) return;
     final filtered = <DanmakuElem>[];
     final retained = _isFileSource ? <DanmakuElem>[] : null;
@@ -106,8 +109,9 @@ class PlDanmakuController {
       filtered.add(element);
     }
     final processed = _mergeDanmaku
-        ? DanmakuMerger().merge(filtered)
+        ? await mergeDanmakuInBackground(filtered)
         : filtered;
+    if (_disposed) return;
     for (final element in processed) {
       if (_isFileSource) {
         retained!.add(element);
@@ -163,7 +167,7 @@ class PlDanmakuController {
       final bytes = await file.readAsBytes();
       if (bytes.isEmpty) return;
       final elem = DmSegMobileReply.fromBuffer(bytes).elems;
-      handleDanmaku(elem);
+      await handleDanmaku(elem);
     } catch (e, s) {
       Utils.reportError(e, s);
     }

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
@@ -17,6 +20,74 @@ DanmakuElem _dm(
 );
 
 void main() {
+  test(
+    'background merge preserves metadata and leaves input untouched',
+    () async {
+      final elements = [
+        _dm('同样的内容', 20)..idStr = 'original',
+        _dm('同样的内容', 30),
+        _dm('同样的内容', 40, self: true),
+        _dm('同样的内容', 10, mode: 5),
+      ];
+      final originalCounts = elements.map((e) => e.count).toList();
+      var eventLoopRan = false;
+      final timer = Timer(Duration.zero, () => eventLoopRan = true);
+      final result = await mergeDanmakuInBackground(elements);
+      // 后台完成前主 isolate 可以处理事件；结果携带完整弹幕元数据。
+      expect(eventLoopRan, isTrue);
+      timer.cancel();
+      expect(result.map((e) => e.progress), [10, 20, 40]);
+      expect(result.map((e) => e.count), [1, 2, 1]);
+      expect(result[1].idStr, 'original');
+      expect(result.last.isSelf, isTrue);
+      expect(elements.map((e) => e.count), originalCounts);
+    },
+  );
+
+  test(
+    'bounded matcher agrees with full edit distance across shared affixes',
+    () {
+      final random = Random(42);
+      const alphabet = ['a', 'b', 'c', 'd', 'e', 'f', '好', '看', '😀'];
+      for (var i = 0; i < 1000; i++) {
+        final length = [7, 8, 15, 16, 40, 198, 200, 202][i % 8];
+        final first = List.generate(
+          length,
+          (_) => alphabet[random.nextInt(alphabet.length)],
+        );
+        final second = first.toList();
+        for (var edit = 0; edit < i % 5; edit++) {
+          final index = random.nextInt(second.length);
+          switch (random.nextInt(3)) {
+            case 0:
+              second[index] = alphabet[random.nextInt(alphabet.length)];
+            case 1:
+              second.insert(index, alphabet[random.nextInt(alphabet.length)]);
+            case 2:
+              second.removeAt(index);
+          }
+        }
+        final text = first.join();
+        final other = second.join();
+        final normalized = DanmakuMerger.normalize(text).runes.toList();
+        final normalizedOther = DanmakuMerger.normalize(other).runes.toList();
+        final fuzzy =
+            normalizedOther.length >= 8 && normalizedOther.length <= 200;
+        final matches =
+            normalized.join(',') == normalizedOther.join(',') ||
+            (fuzzy &&
+                _editDistance(normalized, normalizedOther) <=
+                    min(2, normalizedOther.length ~/ 8));
+        final result = DanmakuMerger().merge([_dm(text, 0), _dm(other, 1)]);
+        expect(
+          result.length,
+          matches ? 1 : 2,
+          reason: 'case $i: $text / $other',
+        );
+      }
+    },
+  );
+
   test('repeated digits retain their numeric meaning', () {
     final result = DanmakuMerger().merge([
       _dm('现在已经有1000个人了', 0),
@@ -30,8 +101,8 @@ void main() {
   test(
     'dense windows evict matching state without dropping original messages',
     () {
-      final elements = List.generate(2050, (i) => _dm('弹幕$i', i));
-      elements.addAll([_dm('弹幕0', 2051), _dm('弹幕0', 2052)]);
+      final elements = List.generate(2050, (i) => _dm('弹幕$i', i))
+        ..addAll([_dm('弹幕0', 2051), _dm('弹幕0', 2052)]);
       final result = DanmakuMerger().merge(elements);
       expect(result, hasLength(2051));
       expect(result.first.count, 1);
@@ -122,4 +193,19 @@ void main() {
     expect(scale(4, threshold: 2, base: 7), 1);
     expect(scale(10, base: 3), greaterThan(scale(10)));
   });
+}
+
+int _editDistance(List<int> first, List<int> second) {
+  var previous = List.generate(second.length + 1, (i) => i);
+  for (var i = 0; i < first.length; i++) {
+    final current = List<int>.filled(second.length + 1, 0)..[0] = i + 1;
+    for (var j = 0; j < second.length; j++) {
+      current[j + 1] = min(
+        previous[j + 1] + 1,
+        min(current[j] + 1, previous[j] + (first[i] == second[j] ? 0 : 1)),
+      );
+    }
+    previous = current;
+  }
+  return previous.last;
 }
