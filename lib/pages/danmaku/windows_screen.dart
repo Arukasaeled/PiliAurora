@@ -11,6 +11,7 @@ class WindowsDanmakuScreen<T> extends StatefulWidget {
     required this.size,
     required this.createdRenderer,
     this.opacity = 1,
+    this.frameRate = 0,
     this.rasterCacheMaxBytes = 16 * 1024 * 1024,
     this.rasterCacheMaxEntries = 512,
   });
@@ -18,6 +19,7 @@ class WindowsDanmakuScreen<T> extends StatefulWidget {
   final DanmakuOption option;
   final Size size;
   final double opacity;
+  final int frameRate;
 
   /// 创建时固定；实验更换预算时使用不同的 widget key。
   final int rasterCacheMaxBytes;
@@ -31,7 +33,7 @@ class WindowsDanmakuScreen<T> extends StatefulWidget {
 
 class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
     with TickerProviderStateMixin {
-  late final Ticker _ticker;
+  late final FrameRateTicker _ticker;
   late final AnimationController _opacity;
   WindowsDanmakuRenderer<T>? _renderer;
   late _WindowsDanmakuPainter<T> _painter;
@@ -46,11 +48,11 @@ class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
     if (WindowsDanmakuRenderer.adaptivePrewarm) {
       SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
     }
-    _ticker = createTicker((elapsed) {
+    _ticker = FrameRateTicker((elapsed) {
       final delta = elapsed - _lastElapsed;
       _lastElapsed = elapsed;
       _renderer!.advance(delta);
-    });
+    }, frameRate: widget.frameRate);
     _opacity = AnimationController(
       vsync: this,
       value: widget.opacity,
@@ -101,6 +103,7 @@ class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
   @override
   void didUpdateWidget(WindowsDanmakuScreen<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _ticker.frameRate = widget.frameRate;
     _renderer!.configure(option: widget.option, size: widget.size);
     if (widget.opacity != oldWidget.opacity) {
       if (widget.opacity == 0) {

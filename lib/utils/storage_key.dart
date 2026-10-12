@@ -115,6 +115,7 @@ abstract final class SettingBoxKey {
       showSeekPreview = 'showSeekPreview',
       showDmChart = 'showDmChart',
       dmChartColor = 'dmChartColor',
+      danmakuFrameRate = 'danmakuFrameRate',
       enableCommAntifraud = 'enableCommAntifraud',
       biliSendCommAntifraud = 'biliSendCommAntifraud',
       enableCreateDynAntifraud = 'enableCreateDynAntifraud',

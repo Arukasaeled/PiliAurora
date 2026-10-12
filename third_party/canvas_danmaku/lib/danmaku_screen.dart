@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:canvas_danmaku/danmaku_controller.dart';
+import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:canvas_danmaku/models/danmaku_content_item.dart';
 import 'package:canvas_danmaku/models/danmaku_item.dart';
 import 'package:canvas_danmaku/models/danmaku_option.dart';
@@ -8,7 +9,6 @@ import 'package:canvas_danmaku/scroll_danmaku_painter.dart';
 import 'package:canvas_danmaku/special_danmaku_painter.dart';
 import 'package:canvas_danmaku/static_danmaku_painter.dart';
 import 'package:canvas_danmaku/utils/utils.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
 
 class DanmakuScreen<T> extends StatefulWidget {
@@ -16,20 +16,21 @@ class DanmakuScreen<T> extends StatefulWidget {
   final ValueChanged<DanmakuController<T>> createdController;
   final DanmakuOption option;
   final Size size;
+  final int frameRate;
 
   const DanmakuScreen({
     super.key,
     required this.createdController,
     required this.option,
     required this.size,
+    this.frameRate = 0,
   });
 
   @override
   State<DanmakuScreen<T>> createState() => _DanmakuScreenState<T>();
 }
 
-class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
-    with SingleTickerProviderStateMixin {
+class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   /// 视图宽度
   double _viewWidth = 0;
   double _viewHeight = 0;
@@ -63,7 +64,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
 
   late final _random = Random();
 
-  late final Ticker _ticker;
+  late final FrameRateTicker _ticker;
   late final ValueNotifier<int> _notifier;
   late int _lastTick = 0;
 
@@ -81,7 +82,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
 
     _danmakuHeight = _textPainter.height;
 
-    _ticker = createTicker(_tick);
+    _ticker = FrameRateTicker(_tick, frameRate: widget.frameRate);
     _notifier = ValueNotifier(0);
 
     widget.createdController(DanmakuController<T>(
@@ -106,6 +107,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _ticker.muted = !TickerMode.valuesOf(context).enabled;
     DmUtils.fontFamily = DefaultTextStyle.of(context).style.fontFamily;
 
     final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
@@ -490,6 +492,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>>
   @override
   void didUpdateWidget(DanmakuScreen<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _ticker.frameRate = widget.frameRate;
     if (oldWidget.size != widget.size) {
       _init(widget.size);
     }

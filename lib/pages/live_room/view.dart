@@ -1081,6 +1081,7 @@ class _LiveDanmakuState extends State<LiveDanmaku> {
             : 0,
         duration: const Duration(milliseconds: 100),
         child: DanmakuScreen<DanmakuExtra>(
+          frameRate: Pref.danmakuFrameRate,
           createdController: (e) {
             widget.liveRoomController.danmakuController =
                 plPlayerController.danmakuController = e;

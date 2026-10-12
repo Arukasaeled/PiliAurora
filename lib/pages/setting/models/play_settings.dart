@@ -512,6 +512,13 @@ List<SettingsModel> get playEnhancementSettings => [
 
 List<SettingsModel> get danmakuExtraSettings => [
   NormalModel(
+    title: '弹幕帧率',
+    leading: const Icon(Icons.speed_outlined),
+    getSubtitle: () =>
+        Pref.danmakuFrameRate == 0 ? '跟随屏幕' : '${Pref.danmakuFrameRate} FPS',
+    onTap: _showDanmakuFrameRateDialog,
+  ),
+  NormalModel(
     title: '弹幕行高',
     subtitle: '默认1.6',
     leading: const Icon(CustomIcons.dm_settings),
@@ -607,6 +614,32 @@ void _showDmChartColorDialog(BuildContext context, VoidCallback setState) {
       ),
     ),
   );
+}
+
+Future<void> _showDanmakuFrameRateDialog(
+  BuildContext context,
+  VoidCallback setState,
+) async {
+  final result = await showDialog<int>(
+    context: context,
+    builder: (context) => SelectDialog<int>(
+      title: '弹幕帧率',
+      value: Pref.danmakuFrameRate,
+      values: const [
+        (0, '跟随屏幕'),
+        (30, '30 FPS'),
+        (60, '60 FPS'),
+        (90, '90 FPS'),
+        (120, '120 FPS'),
+      ],
+      subtitleBuilder: (_, index) => Text(
+        index == 0 ? '沿用屏幕刷新节奏' : '限制弹幕刷新频率，降低绘制开销；重新打开播放器生效',
+      ),
+    ),
+  );
+  if (result == null || result == Pref.danmakuFrameRate) return;
+  await GStorage.setting.put(SettingBoxKey.danmakuFrameRate, result);
+  if (context.mounted) setState();
 }
 
 void _showDmHeightDialog(BuildContext context, VoidCallback setState) {

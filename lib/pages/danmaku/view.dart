@@ -11,6 +11,7 @@ import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/utils/danmaku_utils.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
+import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -274,6 +275,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
             : 0.0;
         if (PlatformUtils.isDesktop && _windowsPreprocess) {
           return WindowsDanmakuScreen<DanmakuExtra>(
+            frameRate: Pref.danmakuFrameRate,
             option: option,
             size: widget.size,
             opacity: opacity,
@@ -286,6 +288,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
           );
         }
         final child = DanmakuScreen<DanmakuExtra>(
+          frameRate: Pref.danmakuFrameRate,
           createdController: (e) {
             playerController.danmakuController = _controller = e;
           },

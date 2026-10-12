@@ -536,6 +536,9 @@ abstract final class Pref {
   static bool get showDmChart =>
       _setting.get(SettingBoxKey.showDmChart, defaultValue: false);
 
+  static int get danmakuFrameRate =>
+      _setting.get(SettingBoxKey.danmakuFrameRate, defaultValue: 0);
+
   static Color? get dmChartColor {
     final int? color = _setting.get(SettingBoxKey.dmChartColor);
     return color == null ? null : Color(color);

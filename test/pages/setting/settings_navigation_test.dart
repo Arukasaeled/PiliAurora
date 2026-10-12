@@ -22,6 +22,31 @@ void main() {
   setUp(settings._values.clear);
   tearDown(Get.reset);
 
+  testWidgets('弹幕帧率提供固定档位并支持恢复跟随屏幕', (tester) async {
+    final item = danmakuExtraSettings.whereType<NormalModel>().singleWhere(
+      (item) => item.title == '弹幕帧率',
+    );
+    await tester.pumpWidget(
+      GetMaterialApp(home: Scaffold(body: item.widget)),
+    );
+    expect(Pref.danmakuFrameRate, 0);
+    await tester.tap(find.text('弹幕帧率'));
+    await tester.pumpAndSettle();
+    for (final fps in [30, 60, 90, 120]) {
+      expect(find.text('$fps FPS'), findsOneWidget);
+    }
+    await tester.tap(find.text('60 FPS'));
+    await tester.pumpAndSettle();
+    expect(Pref.danmakuFrameRate, 60);
+    expect(find.text('60 FPS'), findsOneWidget);
+    await tester.tap(find.text('弹幕帧率'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('跟随屏幕'));
+    await tester.pumpAndSettle();
+    expect(Pref.danmakuFrameRate, 0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('高能进度条颜色支持保存、取消与恢复主题', (tester) async {
     final item = playProgressExtraSettings.whereType<NormalModel>().single;
     await tester.pumpWidget(
