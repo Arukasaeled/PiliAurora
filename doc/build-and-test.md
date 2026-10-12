@@ -62,6 +62,14 @@ fvm flutter test --no-pub test/pages/danmaku/merge_test.dart test/pages/danmaku/
 
 推荐与热门分页改动可运行 `fvm flutter test --no-pub test/common/widgets/feed_pagination_test.dart`。这些是针对模块的验证入口，CI 当前选择的文件以 `tool/run-ci-tests.ps1` 为准。
 
+消息、私信、未读角标和私信分享改动可运行：
+
+```powershell
+fvm flutter test --no-pub test/services/messaging/
+```
+
+该组测试覆盖账号切换、订阅释放、会话共享、分页竞争、发送与已读结果，以及分享协议字段。测试使用模拟响应，登录后的实际服务交互还需按[消息模块验证说明](../lib/services/messaging/README.md#验证)检查。
+
 弹幕容量对照和旧渲染器重建测量位于 `tool/experiments/danmaku/`，按需单独运行：
 
 ```powershell

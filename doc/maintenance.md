@@ -30,6 +30,18 @@
 
 `lib/pages/login/` → `lib/http/login.dart` → `lib/services/account_service.dart`、`lib/utils/accounts/` 与本地存储。日志和 issue 内容应去掉 Cookie、Token、二维码和签名信息。
 
+### 消息与私信分享
+
+`lib/pages/msg_feed_top/`、`whisper*`、`share/` → `lib/services/messaging/` → `lib/http/msg.dart` 或 `lib/grpc/im.dart`。主页未读角标也使用该模块。所有权与异步约定见[消息模块](../lib/services/messaging/README.md)。
+
+- 账号切换后出现旧数据：检查 `Accounts` 是否通知 `Messaging` 更换 Session，以及响应应用前的账号和代次检查。
+- 会话删除、已读或撤回被刷新覆盖：检查稳定标识、共享实体和在途请求失效处理。
+- 未读数未更新：区分查询失败、字段未知和已读确认失败；聊天需消息行完成布局后调用 `markRendered`，系统通知先展示再确认已读。
+- 发送或分享状态待确认：先核对聊天记录，再决定是否重发；卡片成功而附言失败时分别核对两条消息。
+- 退出页面后仍有状态更新：检查 provider 订阅、聊天租约和业务句柄的释放顺序。
+
+复现记录注明消息分类、列表或聊天入口、是否切换账号、请求完成顺序及提示结果；隐去消息正文、收件人标识和账号凭据。相关回归测试位于 `test/services/messaging/`。
+
 ## 诊断入口
 
 - `lib/services/diagnostics/`：播放器、HTTP、进程指标、历史读取、记录保存和脱敏。

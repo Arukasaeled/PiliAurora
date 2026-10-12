@@ -246,6 +246,52 @@ flowchart TD
 
 实现与测试：[`download_service.dart`](../lib/services/download/download_service.dart)、[`download_repository.dart`](../lib/services/download/download_repository.dart)、[`download_manager.dart`](../lib/services/download/download_manager.dart)；`test/services/download/`。
 
+## 账号消息与私信
+
+消息页面沿用 GetX 路由，通过 Riverpod 获取当前主账号的 `MessagingSession` 和业务快照。未读概览、会话列表及聊天缓存由 Session 共享；分类消息句柄随页面订阅释放。状态所有权与协议入口见[消息模块](../lib/services/messaging/README.md)。
+
+```mermaid
+sequenceDiagram
+    participant UI as 消息页 / 聊天页
+    participant RP as Riverpod provider
+    participant S as MessagingSession
+    participant B as 列表句柄 / Conversation
+    participant API as HTTP / gRPC adapter
+    participant A as Accounts / Messaging
+
+    UI->>RP: 订阅列表或聊天快照
+    RP->>S: 获取当前主账号 Session
+    RP->>B: 获取句柄或聊天租约
+    B->>S: run(request)
+    S->>API: 使用 Session 绑定的账号请求
+    API-->>S: 查询结果
+    S->>S: 检查账号仍有效
+    S-->>B: 返回结果
+    B->>B: 检查请求代次并合并数据
+    B-->>RP: 发布业务快照
+    RP-->>UI: 更新界面
+    opt 聊天消息行完成布局
+        UI->>B: markRendered(message)
+        B->>S: 提交递增的 ACK 水位
+        S->>API: 确认已读
+        API-->>S: 确认结果
+        S-->>B: 返回结果
+        B->>S: 成功后通知未读与会话更新
+    end
+    opt 切换主账号
+        A->>S: dispose 旧 Session
+        A->>RP: 发布新 Session
+        RP->>B: 释放旧订阅 / 租约，创建新状态
+        Note over S,B: 旧账号在途响应失效
+    end
+    UI->>RP: 退出页面，释放订阅
+    RP->>B: 释放页面句柄或聊天租约
+```
+
+私信分享由 `PageUtils.pmShare` 获取当前 Session 的 `MessageSharing`，将它传入分享页；发送时从同一聊天缓存获取租约。发送文本、图片和分享共用该聊天的发送锁。分享卡片确认成功后才发送附言；消息发送请求成功或结果待确认时，重新查询时间线并废弃发送前的读取。网络层关闭消息写请求的自动重试，结果待确认时页面提示核对聊天记录。卡片与附言分别请求，部分成功的结果保留已发送信息。
+
+聊天读取历史时保留表情映射，刷新使旧历史页失效；消息按稳定标识合并。ACK 失败后等待更高渲染水位或手动刷新重试。系统通知先展示查询结果，再异步确认已读，失败时保留数据和未读数。
+
 ## 直播消息与弹幕
 
 视频播放和聊天使用独立连接。页面从 `LiveHttp` 获取播放地址；聊天另取连接信息，再由 WebSocket 接收弹幕和互动消息。

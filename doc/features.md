@@ -2,7 +2,7 @@
 
 从页面目录进入对应领域，再沿 API、服务和模型追踪调用。
 
-模块边界见[架构概览](architecture.md)；启动、播放、下载和直播消息的时序见[运行流程图](runtime-flows.md)。
+模块边界见[架构概览](architecture.md)；启动、播放、下载和消息的时序见[运行流程图](runtime-flows.md)。
 
 ## 领域关系图
 
@@ -11,7 +11,8 @@ flowchart TD
     Main[MainApp / 根路由]
     Discover[内容发现<br/>首页、热门、排行、搜索]
     Video[视频与番剧<br/>详情、播放、分集]
-    Social[动态与社交<br/>动态、关注、粉丝、消息、私信]
+    Social[动态与社交<br/>动态、关注、粉丝]
+    Messaging[消息与私信<br/>未读、会话、聊天、分享]
     Live[直播<br/>直播间、直播弹幕、直播聊天]
     Manage[内容管理<br/>收藏、历史、稍后再看、订阅]
     Account[账号与设置<br/>登录、多账号、主题、偏好]
@@ -22,6 +23,7 @@ flowchart TD
     Player[lib/plugin/pl_player]
     Main --> Discover
     Main --> Account
+    Main --> Messaging
     Discover --> Video
     Discover --> Social
     Video --> Player
@@ -29,6 +31,7 @@ flowchart TD
     Live --> API
     Live --> Services
     Social --> API
+    Messaging --> Services
     Manage --> API
     Account --> API
     Download --> Services
@@ -83,12 +86,27 @@ flowchart TD
 - 服务/本地状态：`lib/services/account_service.dart`、`lib/utils/accounts/`、`lib/utils/storage*`。
 - 安全：严禁把 Cookie、Token、二维码登录信息或完整账号数据写入文档、日志和 issue。
 
-## 动态、关注、粉丝与消息
+## 动态、关注与粉丝
 
-- 页面：`dynamics*`、`follow*`、`fan/`、`msg_feed_top/`、`whisper*`。
-- API：`lib/http/dynamics.dart`、`follow.dart`、`fan.dart`、`msg.dart`。
-- 模型：`lib/models/remote/dynamic/`、`follow/`、`msg/`。
-- 互动操作通常依赖登录状态及 CSRF/请求上下文。失败时同时检查请求和响应，不要只依据页面提示判断。
+- 页面：`dynamics*`、`follow*`、`fan/`。
+- API：`lib/http/dynamics.dart`、`follow.dart`、`fan.dart`。
+- 模型：`lib/models/remote/dynamic/`、`follow/`。
+- 互动操作通常依赖登录状态及 CSRF/请求上下文。排查失败时核对实际请求与响应。
+
+## 消息、私信与分享
+
+| 功能 | 页面或入口 | 业务实现 |
+| --- | --- | --- |
+| 未读角标 | `home/`、`main/`、`whisper/` | `overview.dart` |
+| 回复、@、点赞和系统通知 | `msg_feed_top/` | `feed.dart`、`feed_notifier.dart`、`feed_adapters.dart` |
+| 私信会话及二级列表 | `whisper/`、`whisper_secondary/` | `sessions.dart`、`session_models.dart`、`session_providers.dart` |
+| 聊天、历史、发送和撤回 | `whisper_detail/` | `conversation.dart`、`conversation_providers.dart`、`message_models.dart` |
+| 接收设置、关键词屏蔽、联系设置 | `whisper_settings/`、`whisper_block/`、`whisper_link_setting/` | `settings.dart` |
+| 私信分享及附言 | `share/`；调用入口见 `lib/utils/page_utils.dart` | `sharing.dart`、`sharing_adapter.dart` |
+
+页面路径相对于 `lib/pages/`，业务文件位于 `lib/services/messaging/`。HTTP 和 gRPC 协议入口分别为 `lib/http/msg.dart`、`lib/grpc/im.dart`；适配器把响应转换成业务模型，页面订阅 Riverpod 状态。
+
+修改时先核对主账号 Session 和资源所有者，再检查分页、写入结果及已读同步。发送结果待确认时应核对聊天记录，重复发送可能产生重复消息。详细约定见[消息模块](../lib/services/messaging/README.md)，回归测试位于 `test/services/messaging/`。
 
 ## 收藏、历史、稍后再看与订阅
 
