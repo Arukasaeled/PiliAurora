@@ -13,6 +13,7 @@ import 'package:pili_aurora/pages/dynamics/controller.dart';
 import 'package:pili_aurora/pages/home/controller.dart';
 import 'package:pili_aurora/pages/mine/view.dart';
 import 'package:pili_aurora/services/account_service.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/utils/extension/get_ext.dart';
 import 'package:pili_aurora/utils/extension/iterable_ext.dart';
 import 'package:pili_aurora/utils/feed_back.dart';
@@ -39,6 +40,7 @@ class MainController extends GetxController
   bool useBottomNav = false;
   late dynamic controller;
   final RxInt selectedIndex = 0.obs;
+  late final VoidCallback _unregisterPageDiagnostics;
 
   final RxInt dynCount = 0.obs;
   late DynamicBadgeMode dynamicBadgeMode;
@@ -82,6 +84,12 @@ class MainController extends GetxController
     _shouldCheckUpdate = Pref.autoUpdate;
 
     setNavBarConfig();
+    _unregisterPageDiagnostics = Diagnostics.instance.register(
+      'mainPage',
+      () => {
+        'page': navigationBars[selectedIndex.value].name,
+      },
+    );
 
     controller = mainTabBarView
         ? TabController(
@@ -308,6 +316,12 @@ class MainController extends GetxController
     final currentNav = navigationBars[value];
     if (value != selectedIndex.value) {
       selectedIndex.value = value;
+      Diagnostics.instance.log(
+        DiagnosticLogLevel.debug,
+        'pageSwitch',
+        '切换主页面',
+        details: {'page': currentNav.name},
+      );
       if (mainTabBarView) {
         controller.animateTo(value);
       } else {
@@ -362,6 +376,7 @@ class MainController extends GetxController
 
   @override
   void onClose() {
+    _unregisterPageDiagnostics();
     barOffset?.close();
     controller.dispose();
     super.onClose();

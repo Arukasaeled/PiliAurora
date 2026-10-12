@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show FramePhase;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
@@ -584,6 +585,7 @@ class _OperationStats {
 }
 
 class _FrameStats {
+  final _slowDetails = <Map<String, Object?>>[];
   int count = 0, slow = 0;
   double build = 0, raster = 0, maxBuild = 0, maxRaster = 0;
   void add(List<FrameTiming> timings, double budgetUs) {
@@ -598,6 +600,28 @@ class _FrameStats {
       if (frame.buildDuration.inMicroseconds > budgetUs ||
           frame.rasterDuration.inMicroseconds > budgetUs) {
         slow++;
+        if (_slowDetails.length < 16) {
+          final finish = frame.timestampInMicroseconds(
+            FramePhase.rasterFinishWallTime,
+          );
+          final start =
+              finish -
+              (frame.timestampInMicroseconds(FramePhase.rasterFinish) -
+                  frame.timestampInMicroseconds(FramePhase.buildStart));
+          _slowDetails.add({
+            'buildStartUtc': DateTime.fromMicrosecondsSinceEpoch(
+              start,
+              isUtc: true,
+            ).toIso8601String(),
+            'rasterFinishUtc': DateTime.fromMicrosecondsSinceEpoch(
+              finish,
+              isUtc: true,
+            ).toIso8601String(),
+            'buildMs': b,
+            'rasterMs': r,
+            'totalMs': frame.totalSpan.inMicroseconds / 1000,
+          });
+        }
       }
     }
   }
@@ -610,8 +634,11 @@ class _FrameStats {
       'averageRasterMs': count == 0 ? null : raster / count,
       'maxBuildMs': maxBuild,
       'maxRasterMs': maxRaster,
+      // FrameTiming 会延迟批量回报，使用真实帧时刻对齐导航和请求。
+      'slowFrameDetails': List<Map<String, Object?>>.of(_slowDetails),
     };
     count = slow = 0;
+    _slowDetails.clear();
     build = raster = maxBuild = maxRaster = 0;
     return result;
   }

@@ -6,6 +6,7 @@ import 'package:pili_aurora/models/model_hot_video_item.dart';
 import 'package:pili_aurora/pages/rank/zone/controller.dart';
 import 'package:pili_aurora/pages/rank/zone/widget/pgc_rank_item.dart';
 import 'package:pili_aurora/utils/grid.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -41,6 +42,7 @@ class _ZonePageState extends State<ZonePage>
     return refreshIndicator(
       onRefresh: controller.onRefresh,
       child: CustomScrollView(
+        scrollCacheExtent: const ScrollCacheExtent.pixels(0),
         controller: controller.scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [

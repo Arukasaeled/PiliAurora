@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:pili_aurora/common/widgets/feed_pagination.dart';
+
 import 'package:pili_aurora/common/widgets/flutter/refresh_indicator.dart';
 import 'package:pili_aurora/common/widgets/loading_widget/http_error.dart';
 import 'package:pili_aurora/http/loading_state.dart';
@@ -11,6 +13,7 @@ import 'package:pili_aurora/pages/dynamics_tab/controller.dart';
 import 'package:pili_aurora/utils/extension/get_ext.dart';
 import 'package:pili_aurora/utils/global_data.dart';
 import 'package:pili_aurora/utils/waterfall.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:waterfall_flow/waterfall_flow.dart'
@@ -47,18 +50,25 @@ class _DynamicsTabPageState extends State<DynamicsTabPage> with DynMixin {
   Widget build(BuildContext context) {
     return refreshIndicator(
       onRefresh: onRefresh,
-      child: CustomScrollView(
-        key: PageStorageKey(widget.dynamicsType.name),
-        physics: const AlwaysScrollableScrollPhysics(),
+      child: FeedPagination(
         controller: controller.scrollController,
-        slivers: [
-          SliverPadding(
-            padding: const EdgeInsets.only(bottom: 100),
-            sliver: buildPage(
-              Obx(() => _buildBody(controller.loadingState.value)),
+        dataChanges: controller.loadingState.stream,
+        canLoadMore: () => controller.canLoadMore && !controller.isLoading,
+        onLoadMore: controller.onLoadMore,
+        child: CustomScrollView(
+          scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+          key: PageStorageKey(widget.dynamicsType.name),
+          physics: const AlwaysScrollableScrollPhysics(),
+          controller: controller.scrollController,
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.only(bottom: 100),
+              sliver: buildPage(
+                Obx(() => _buildBody(controller.loadingState.value)),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -90,9 +100,6 @@ class _DynamicsTabPageState extends State<DynamicsTabPage> with DynMixin {
   }
 
   Widget _itemBuilder(List<DynamicItemModel> list, int index) {
-    if (index == list.length - 1) {
-      controller.onLoadMore();
-    }
     final item = list[index];
     return DynamicPanel(
       item: item,

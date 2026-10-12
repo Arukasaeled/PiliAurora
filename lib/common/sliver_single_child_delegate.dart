@@ -12,7 +12,7 @@ class SliverSingleChildDelegate extends SliverChildDelegate {
   @override
   Widget? build(BuildContext context, int index) {
     if (index < 0 || index >= estimatedChildCount) return null;
-    return child;
+    return RepaintBoundary(child: child);
   }
 
   @override

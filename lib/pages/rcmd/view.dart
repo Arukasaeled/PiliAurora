@@ -1,6 +1,7 @@
 import 'package:pili_aurora/common/skeleton/video_card_v.dart';
 import 'package:pili_aurora/common/sliver_single_child_delegate.dart';
 import 'package:pili_aurora/common/style.dart';
+import 'package:pili_aurora/common/widgets/feed_pagination.dart';
 import 'package:pili_aurora/common/widgets/flutter/refresh_indicator.dart';
 import 'package:pili_aurora/common/widgets/loading_widget/http_error.dart';
 import 'package:pili_aurora/common/widgets/video_card/video_card_v.dart';
@@ -8,6 +9,7 @@ import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/pages/rcmd/controller.dart';
 import 'package:pili_aurora/utils/grid.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -35,17 +37,24 @@ class _RcmdPageState extends State<RcmdPage>
       decoration: const BoxDecoration(borderRadius: Style.mdRadius),
       child: refreshIndicator(
         onRefresh: controller.onRefresh,
-        child: CustomScrollView(
+        child: FeedPagination(
           controller: controller.scrollController,
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverPadding(
-              padding: const .only(top: Style.cardSpace, bottom: 100),
-              sliver: Obx(
-                () => _buildBody(colorScheme, controller.loadingState.value),
+          dataChanges: controller.loadingState.stream,
+          canLoadMore: () => controller.canLoadMore && !controller.isLoading,
+          onLoadMore: controller.onLoadMore,
+          child: CustomScrollView(
+            scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+            controller: controller.scrollController,
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverPadding(
+                padding: const .only(top: Style.cardSpace, bottom: 100),
+                sliver: Obx(
+                  () => _buildBody(colorScheme, controller.loadingState.value),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -70,9 +79,6 @@ class _RcmdPageState extends State<RcmdPage>
             ? SliverGrid.builder(
                 gridDelegate: gridDelegate,
                 itemBuilder: (context, index) {
-                  if (index == response.length - 1) {
-                    controller.onLoadMore();
-                  }
                   if (controller.lastRefreshAt != null) {
                     if (controller.lastRefreshAt == index) {
                       return GestureDetector(

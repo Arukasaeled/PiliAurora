@@ -1,3 +1,4 @@
+import 'package:pili_aurora/common/widgets/feed_pagination.dart';
 import 'package:pili_aurora/common/widgets/flutter/refresh_indicator.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/common/widgets/loading_widget/http_error.dart';
@@ -12,6 +13,7 @@ import 'package:pili_aurora/pages/hot/controller.dart';
 import 'package:pili_aurora/pages/rank/view.dart';
 import 'package:pili_aurora/utils/grid.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -61,60 +63,67 @@ class _HotPageState extends State<HotPage>
     super.build(context);
     return refreshIndicator(
       onRefresh: controller.onRefresh,
-      child: CustomScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
+      child: FeedPagination(
         controller: controller.scrollController,
-        slivers: [
-          if (Pref.showHotRcmd)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const .only(left: 12, top: 12, right: 12),
-                child: Row(
-                  mainAxisAlignment: .spaceEvenly,
-                  children: [
-                    _buildEntranceItem(
-                      iconUrl: 'https://i0.hdslb.com/bfs/archive/a3f11218aaf4521b4967db2ae164ecd3052586b9.png',
-                      title: '排行榜',
-                      onTap: () {
-                        try {
-                          final homeController = Get.find<HomeController>();
-                          final index = homeController.tabs.indexOf(
-                            HomeTabType.rank,
-                          );
-                          if (index != -1) {
-                            homeController.tabController.animateTo(index);
-                          } else {
-                            Get.to(
-                              SimpleScaffold(
-                                appBar: AppBar(title: const Text('排行榜')),
-                                body: const ViewSafeArea(child: RankPage()),
-                              ),
+        dataChanges: controller.loadingState.stream,
+        canLoadMore: () => controller.canLoadMore && !controller.isLoading,
+        onLoadMore: controller.onLoadMore,
+        child: CustomScrollView(
+          scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+          physics: const AlwaysScrollableScrollPhysics(),
+          controller: controller.scrollController,
+          slivers: [
+            if (Pref.showHotRcmd)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const .only(left: 12, top: 12, right: 12),
+                  child: Row(
+                    mainAxisAlignment: .spaceEvenly,
+                    children: [
+                      _buildEntranceItem(
+                        iconUrl: 'https://i0.hdslb.com/bfs/archive/a3f11218aaf4521b4967db2ae164ecd3052586b9.png',
+                        title: '排行榜',
+                        onTap: () {
+                          try {
+                            final homeController = Get.find<HomeController>();
+                            final index = homeController.tabs.indexOf(
+                              HomeTabType.rank,
                             );
-                          }
-                        } catch (_) {}
-                      },
-                    ),
-                    _buildEntranceItem(
-                      iconUrl: 'https://i0.hdslb.com/bfs/archive/552ebe8c4794aeef30ebd1568b59ad35f15e21ad.png',
-                      title: '每周必看',
-                      onTap: () => Get.toNamed('/popularSeries'),
-                    ),
-                    _buildEntranceItem(
-                      iconUrl: 'https://i0.hdslb.com/bfs/archive/3693ec9335b78ca57353ac0734f36a46f3d179a9.png',
-                      title: '入站必刷',
-                      onTap: () => Get.toNamed('/popularPrecious'),
-                    ),
-                  ],
+                            if (index != -1) {
+                              homeController.tabController.animateTo(index);
+                            } else {
+                              Get.to(
+                                SimpleScaffold(
+                                  appBar: AppBar(title: const Text('排行榜')),
+                                  body: const ViewSafeArea(child: RankPage()),
+                                ),
+                              );
+                            }
+                          } catch (_) {}
+                        },
+                      ),
+                      _buildEntranceItem(
+                        iconUrl: 'https://i0.hdslb.com/bfs/archive/552ebe8c4794aeef30ebd1568b59ad35f15e21ad.png',
+                        title: '每周必看',
+                        onTap: () => Get.toNamed('/popularSeries'),
+                      ),
+                      _buildEntranceItem(
+                        iconUrl: 'https://i0.hdslb.com/bfs/archive/3693ec9335b78ca57353ac0734f36a46f3d179a9.png',
+                        title: '入站必刷',
+                        onTap: () => Get.toNamed('/popularPrecious'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+            SliverPadding(
+              padding: const EdgeInsets.only(top: 7, bottom: 100),
+              sliver: Obx(
+                () => _buildBody(controller.loadingState.value),
+              ),
             ),
-          SliverPadding(
-            padding: const EdgeInsets.only(top: 7, bottom: 100),
-            sliver: Obx(
-              () => _buildBody(controller.loadingState.value),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -127,9 +136,6 @@ class _HotPageState extends State<HotPage>
             ? SliverGrid.builder(
                 gridDelegate: gridDelegate,
                 itemBuilder: (context, index) {
-                  if (index == response.length - 1) {
-                    controller.onLoadMore();
-                  }
                   return VideoCardH(
                     videoItem: response[index],
                     onRemove: () => controller.loadingState

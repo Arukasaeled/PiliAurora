@@ -1,0 +1,204 @@
+import 'dart:async';
+
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:pili_aurora/common/widgets/feed_pagination.dart';
+import 'package:pili_aurora/utils/grid.dart' as grid;
+import 'package:waterfall_flow/waterfall_flow.dart';
+
+class _Feed extends StatefulWidget {
+  const _Feed({
+    this.count = 20,
+    this.allowed = true,
+    this.cacheExtent = 250,
+    this.waterfall = false,
+  });
+  final int count;
+  final bool allowed;
+  final double cacheExtent;
+  final bool waterfall;
+
+  @override
+  State<_Feed> createState() => _FeedState();
+}
+
+class _FeedState extends State<_Feed> {
+  final controller = ScrollController();
+  final changes = StreamController<Object?>.broadcast(sync: true);
+  late int count = widget.count;
+  late bool allowed = widget.allowed;
+  int requests = 0;
+  final built = <int>{};
+  Completer<void>? pending;
+  bool grow = true;
+
+  void replace(int value) {
+    setState(() => count = value);
+    changes.add(value);
+  }
+
+  @override
+  Widget build(BuildContext context) => Directionality(
+    textDirection: TextDirection.ltr,
+    child: FeedPagination(
+      controller: controller,
+      dataChanges: changes.stream,
+      canLoadMore: () => allowed,
+      onLoadMore: () async {
+        requests++;
+        if (pending != null) await pending!.future;
+        if (mounted && grow) replace(count + 20);
+      },
+      child: CustomScrollView(
+        controller: controller,
+        scrollCacheExtent: ScrollCacheExtent.pixels(widget.cacheExtent),
+        slivers: [
+          if (widget.waterfall)
+            SliverWaterfallFlow(
+              gridDelegate:
+                  const SliverWaterfallFlowDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                  ),
+              delegate: SliverChildBuilderDelegate(
+                (_, index) => SizedBox(height: 100.0 + index % 3 * 10),
+                childCount: count,
+              ),
+            )
+          else
+            SliverGrid.builder(
+              gridDelegate: grid.SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 480,
+                mainAxisExtent: 110,
+                mainAxisSpacing: 2,
+              ),
+              itemCount: count,
+              itemBuilder: (_, index) {
+                built.add(index);
+                return const SizedBox.expand();
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+
+  @override
+  void dispose() {
+    changes.close();
+    controller.dispose();
+    super.dispose();
+  }
+}
+
+void main() {
+  Future<_FeedState> mount(
+    WidgetTester tester, {
+    _Feed feed = const _Feed(),
+  }) async {
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(feed);
+    await tester.pumpAndSettle();
+    return tester.state<_FeedState>(find.byType(_Feed));
+  }
+
+  testWidgets('fills the viewport without loading a third page for the cache', (
+    tester,
+  ) async {
+    final feed = await mount(tester);
+    expect(feed.count, 40);
+    expect(feed.requests, 1);
+    expect(feed.built, contains(39));
+    await tester.pumpAndSettle();
+    expect(feed.requests, 1);
+    feed.controller.jumpTo(feed.controller.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(feed.count, 60);
+    expect(feed.requests, 2);
+  });
+
+  testWidgets('zero cache avoids constructing cards outside the viewport', (
+    tester,
+  ) async {
+    final feed = await mount(
+      tester,
+      feed: const _Feed(count: 40, cacheExtent: 0),
+    );
+    expect(feed.requests, 0);
+    expect(feed.built.length, 36);
+    expect(feed.built, isNot(contains(39)));
+  });
+
+  testWidgets(
+    'data arrival fills a short list even when scroll extent stays zero',
+    (tester) async {
+      final feed = await mount(
+        tester,
+        feed: const _Feed(count: 0, allowed: false),
+      );
+      feed
+        ..allowed = true
+        ..replace(4);
+      await tester.pumpAndSettle();
+      expect(feed.count, 44);
+      expect(feed.requests, 2);
+    },
+  );
+
+  testWidgets(
+    'in-flight requests are serialized and no-growth responses stop',
+    (tester) async {
+      final feed = await mount(tester, feed: const _Feed(count: 40));
+      feed
+        ..pending = Completer<void>()
+        ..grow = false;
+      feed.controller.jumpTo(feed.controller.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      feed.changes.add(null);
+      await tester.pump();
+      expect(feed.requests, 1);
+      feed.pending!.complete();
+      await tester.pumpAndSettle();
+      expect(feed.requests, 1);
+      feed.allowed = false;
+      feed.changes.add(null);
+      await tester.pump();
+      expect(feed.requests, 1);
+    },
+  );
+
+  testWidgets(
+    'pending pagination is cancelled by unmount and disabled ticker',
+    (tester) async {
+      final feed = await mount(tester, feed: const _Feed(count: 40));
+      feed.controller.jumpTo(feed.controller.position.maxScrollExtent);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(feed.requests, 0);
+      await tester.pumpWidget(const TickerMode(enabled: false, child: _Feed()));
+      await tester.pumpAndSettle();
+      expect(tester.state<_FeedState>(find.byType(_Feed)).requests, 0);
+      await tester.pumpWidget(const TickerMode(enabled: true, child: _Feed()));
+      await tester.pumpAndSettle();
+      expect(tester.state<_FeedState>(find.byType(_Feed)).requests, 1);
+    },
+  );
+
+  testWidgets(
+    'waterfall layout paginates after scrolling near its actual end',
+    (tester) async {
+      final feed = await mount(
+        tester,
+        feed: const _Feed(count: 40, waterfall: true, cacheExtent: 0),
+      );
+      expect(feed.requests, 0);
+      feed.controller.jumpTo(feed.controller.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(feed.requests, 1);
+      expect(feed.count, 60);
+    },
+  );
+}

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show FrameTiming;
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -39,6 +40,45 @@ void main() {
     await diagnostics.configure(level: DiagnosticLogLevel.off);
     diagnostics.log(DiagnosticLogLevel.error, 'test', 'hidden error');
     expect(diagnostics.recentLogs.first['message'], 'record 249');
+  });
+
+  test('slow frames keep bounded wall times and reset after capture', () async {
+    await diagnostics.configure(tracing: true);
+    const finish = 1700000000000000;
+    final timings = List.generate(
+      80,
+      (_) => FrameTiming(
+        vsyncStart: 0,
+        buildStart: 1000,
+        buildFinish: 21000,
+        rasterStart: 22000,
+        rasterFinish: 52000,
+        rasterFinishWallTime: finish,
+      ),
+    );
+    TestWidgetsFlutterBinding.instance.platformDispatcher.onReportTimings!(
+      timings,
+    );
+    diagnostics.capture();
+    final frames = diagnostics.latest!['frames'] as Map;
+    final details = frames['slowFrameDetails'] as List;
+    expect(frames['count'], 80);
+    expect(frames['slowFrames'], 80);
+    expect(details, hasLength(16));
+    expect(details.first, containsPair('buildMs', 20.0));
+    expect(details.first, containsPair('rasterMs', 30.0));
+    expect(
+      details.first,
+      containsPair(
+        'buildStartUtc',
+        DateTime.fromMicrosecondsSinceEpoch(
+          finish - 51000,
+          isUtc: true,
+        ).toIso8601String(),
+      ),
+    );
+    diagnostics.capture();
+    expect((diagnostics.latest!['frames'] as Map)['slowFrameDetails'], isEmpty);
   });
 
   test(
