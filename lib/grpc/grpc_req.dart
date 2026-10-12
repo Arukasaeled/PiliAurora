@@ -62,9 +62,13 @@ abstract final class GrpcReq {
     Account? account,
     bool retry = true,
   }) async {
-    final requestOptions = account == null
-        ? options
-        : options.copyWith(extra: {'account': account, 'noRetry': !retry});
+    final requestOptions = options.copyWith(
+      extra: {
+        ...?options.extra,
+        'account': ?account,
+        'noRetry': !retry,
+      },
+    );
     final response = await (account == null
         ? Request().post<Uint8List>(
             HttpString.appBaseUrl + url,

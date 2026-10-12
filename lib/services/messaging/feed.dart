@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/remote/msg/msg_like/item.dart';
@@ -57,6 +59,11 @@ typedef FeedDelete = Future<LoadingState<void>> Function(
   Object id,
 );
 
+typedef FeedAcknowledge<T> = Future<LoadingState<void>> Function(
+  Account account,
+  FeedPage<T> page,
+);
+
 /// 分页查询的业务状态。协议 DTO 在请求适配器中复制后才进入此句柄。
 class FeedHandle<T> {
   FeedHandle({
@@ -64,6 +71,7 @@ class FeedHandle<T> {
     required this.request,
     required this.idOf,
     this.delete,
+    this.acknowledge,
     this.notifyUnreadOnRefresh = false,
     this.maxItems,
   }) : state = ValueNotifier(
@@ -74,6 +82,7 @@ class FeedHandle<T> {
   final FeedRequest<T> request;
   final Object? Function(T item) idOf;
   final FeedDelete? delete;
+  final FeedAcknowledge<T>? acknowledge;
   final bool notifyUnreadOnRefresh;
   final int? maxItems;
   final ValueNotifier<FeedSnapshot<T>> state;
@@ -124,12 +133,26 @@ class FeedHandle<T> {
           metadata: response.metadata,
         );
         if (notifyUnreadOnRefresh && response.notifyUnread) {
-          session.notifyChanged(MessagingChangeKind.unread);
+          if (acknowledge == null) {
+            session.notifyChanged(MessagingChangeKind.unread);
+          } else {
+            unawaited(_acknowledge(generation, response));
+          }
         }
       case Error():
         state.value = FeedSnapshot(loadingState: response);
       case Loading():
         state.value = FeedSnapshot(loadingState: LoadingState.loading());
+    }
+  }
+
+  Future<void> _acknowledge(int generation, FeedPage<T> page) async {
+    final result = await session.run(
+      (account) => acknowledge!(account, page),
+    );
+    // ACK 失败保留列表与未读数，手动刷新时再次确认。
+    if (_isCurrent(generation) && result.isSuccess) {
+      session.notifyChanged(MessagingChangeKind.unread);
     }
   }
 

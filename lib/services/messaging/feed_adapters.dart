@@ -132,27 +132,26 @@ abstract final class MessagingFeedAdapters {
     if (result case Success<List<MsgSysItem>?>(:final response)) {
       final source = response?.map(_copySystem).toList() ?? <MsgSysItem>[];
       final nextCursor = source.isEmpty ? null : source.last.cursor;
-      var notifyUnread = false;
-      if (cursor == null && source.isNotEmpty) {
-        final readCursor = source.first.cursor;
-        if (readCursor != null) {
-          final ack = await MsgHttp.msgSysUpdateCursor(
-            readCursor,
-            account: account,
-          );
-          notifyUnread = ack.isSuccess;
-        }
-      }
       return Success(
         FeedPage(
           items: source,
           cursor: nextCursor == null ? null : FeedCursor(id: nextCursor),
           isEnd: source.isEmpty,
-          notifyUnread: notifyUnread,
+          notifyUnread: cursor == null && source.firstOrNull?.cursor != null,
         ),
       );
     }
     return _map(result, (items) => FeedPage(items: items ?? const []));
+  }
+
+  static Future<LoadingState<void>> acknowledgeSystem(
+    Account account,
+    FeedPage<MsgSysItem> page,
+  ) {
+    final cursor = page.items.firstOrNull?.cursor;
+    return cursor == null
+        ? Future.value(const Error('消息缺少阅读位置'))
+        : MsgHttp.msgSysUpdateCursor(cursor, account: account);
   }
 
   static Future<LoadingState<void>> deleteReply(Account account, Object id) =>

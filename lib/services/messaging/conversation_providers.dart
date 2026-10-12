@@ -2,23 +2,13 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/services/messaging/conversation.dart';
-import 'package:pili_aurora/services/messaging/conversation_adapter.dart';
 import 'package:pili_aurora/services/messaging/message_models.dart';
 import 'package:pili_aurora/services/messaging/providers.dart';
-
-final Object _conversationCacheKey = Object();
 
 final conversationProvider = Provider.family<Conversation, ConversationTarget>(
   (ref, target) {
     final session = ref.watch(messagingSessionProvider);
-    final cache = session.resource(
-      _conversationCacheKey,
-      () => ConversationCache(
-        session: session,
-        adapter: const GrpcConversationAdapter(),
-      ),
-      (cache) => cache.dispose(),
-    );
+    final cache = conversationCacheFor(session);
     final lease = cache.acquire(target);
     ref.onDispose(lease.release);
     return lease.conversation;

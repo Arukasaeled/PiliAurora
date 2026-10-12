@@ -18,6 +18,7 @@ class SystemMessageFeedNotifier extends FeedNotifier<MsgSysItem> {
     request: MessagingFeedAdapters.system,
     idOf: (item) => item.id,
     delete: MessagingFeedAdapters.deleteSystem,
+    acknowledge: MessagingFeedAdapters.acknowledgeSystem,
     notifyUnreadOnRefresh: true,
   );
 }

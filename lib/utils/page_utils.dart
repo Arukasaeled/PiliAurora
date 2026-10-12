@@ -4,7 +4,6 @@ import 'package:pili_aurora/common/widgets/fractionally_sized_box.dart';
 import 'package:pili_aurora/services/logger.dart';
 import 'package:pili_aurora/common/widgets/image_viewer/gallery_viewer.dart';
 import 'package:pili_aurora/common/widgets/image_viewer/hero_dialog_route.dart';
-import 'package:pili_aurora/grpc/im.dart';
 import 'package:pili_aurora/http/dynamics.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/http/search.dart';
@@ -19,6 +18,8 @@ import 'package:pili_aurora/pages/common/publish/publish_route.dart';
 import 'package:pili_aurora/pages/contact/view.dart';
 import 'package:pili_aurora/pages/fav_panel/view.dart';
 import 'package:pili_aurora/pages/share/view.dart';
+import 'package:pili_aurora/services/messaging/session.dart';
+import 'package:pili_aurora/services/messaging/sharing.dart';
 import 'package:pili_aurora/utils/android/android_helper.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/extension/context_ext.dart';
@@ -67,19 +68,24 @@ abstract final class PageUtils {
     BuildContext context, {
     required Map content,
   }) async {
-    // if (kDebugMode) debugPrint(content.toString());
-
+    final session = Messaging.instance.session;
+    final sharing = sharingFor(session);
+    if (!session.isActive) {
+      SmartDialog.showToast('请先登录');
+      return;
+    }
     List<UserModel> userList = <UserModel>[];
 
-    final res = await ImGrpc.shareList(size: 5);
+    final res = await sharing.recentRecipients();
+    if (!context.mounted || !session.isActive) return;
     if (res case Success(:final response)) {
-      if (response.sessionList.isNotEmpty) {
+      if (response.isNotEmpty) {
         userList.addAll(
-          response.sessionList.map<UserModel>(
+          response.map<UserModel>(
             (item) => UserModel(
-              mid: item.talkerId.toInt(),
-              name: item.talkerUname,
-              avatar: item.talkerIcon,
+              mid: item.id,
+              name: item.name,
+              avatar: item.avatar,
             ),
           ),
         );
@@ -95,10 +101,11 @@ abstract final class PageUtils {
       }
     }
 
-    if (context.mounted) {
+    if (context.mounted && session.isActive) {
       showModalBottomSheet(
         context: context,
         builder: (context) => SharePanel(
+          sharing: sharing,
           content: content,
           userList: userList,
         ),

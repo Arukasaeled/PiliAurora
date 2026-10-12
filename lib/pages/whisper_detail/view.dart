@@ -418,7 +418,6 @@ class _WhisperDetailPageState
         editController.clear();
         enablePublish.value = false;
       }
-      unawaited(conversation.refresh(retryFailedAcknowledgement: false));
       SmartDialog.showToast('发送成功');
     } else if (result.status == OperationStatus.unknown) {
       SmartDialog.showToast('发送状态待确认，请核对聊天记录后再操作');
@@ -451,7 +450,6 @@ class _WhisperDetailPageState
       if (!mounted || !conversation.session.isActive) return;
       if (result.isSuccess) {
         SmartDialog.showToast('发送成功');
-        unawaited(conversation.refresh(retryFailedAcknowledgement: false));
       } else if (result.status == OperationStatus.unknown) {
         SmartDialog.showToast('发送状态待确认，请核对聊天记录后再操作');
       } else {

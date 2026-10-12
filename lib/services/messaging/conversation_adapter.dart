@@ -121,6 +121,15 @@ final class GrpcConversationAdapter implements ConversationAdapter {
             'size': size,
           }),
         ),
+      StructuredMessageContent(:final kind, :final payload)
+          when kind == MessageContentKind.shareV2 ||
+              kind == MessageContentKind.commonShareCard =>
+        (
+          kind == MessageContentKind.shareV2
+              ? MsgType.EN_MSG_TYPE_SHARE_V2
+              : MsgType.EN_MSG_TYPE_COMMON_SHARE_CARD,
+          jsonEncode(payload),
+        ),
       _ => (null, null),
     };
     if (type == null || wireContent == null) {

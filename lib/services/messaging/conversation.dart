@@ -5,6 +5,18 @@ import 'package:pili_aurora/services/messaging/conversation_adapter.dart';
 import 'package:pili_aurora/services/messaging/message_models.dart';
 import 'package:pili_aurora/services/messaging/session.dart';
 
+final Object _conversationCacheKey = Object();
+
+ConversationCache conversationCacheFor(MessagingSession session) =>
+    session.resource(
+      _conversationCacheKey,
+      () => ConversationCache(
+        session: session,
+        adapter: const GrpcConversationAdapter(),
+      ),
+      (cache) => cache.dispose(),
+    );
+
 /// 按账号隔离的会话业务对象；管理消息标识、分页和远端已读水位。
 final class Conversation {
   Conversation({
@@ -80,11 +92,14 @@ final class Conversation {
 
   Future<void> open() => refresh(retryFailedAcknowledgement: false);
 
-  Future<void> refresh({bool retryFailedAcknowledgement = true}) {
+  Future<void> refresh({
+    bool retryFailedAcknowledgement = true,
+    bool force = false,
+  }) {
     if (_disposed || !session.isActive) return Future.value();
     if (retryFailedAcknowledgement) _failedAckSequence = 0;
     final active = _refreshing;
-    if (active != null) {
+    if (active != null && !force) {
       return active.whenComplete(() {
         if (retryFailedAcknowledgement) _retryPendingAcknowledgement();
       });
@@ -120,7 +135,7 @@ final class Conversation {
           _merge(response.messages);
           _historyCursor = response.cursor;
           _hasOlder = response.hasOlder;
-          if (response.emotions.isNotEmpty) _emotions = response.emotions;
+          _mergeEmotions(response.emotions);
           _phase = ConversationPhase.ready;
           _error = null;
         case Error(:final errMsg):
@@ -172,7 +187,7 @@ final class Conversation {
             _historyCursor = response.cursor;
           }
           _hasOlder = response.hasOlder;
-          if (response.emotions.isNotEmpty) _emotions = response.emotions;
+          _mergeEmotions(response.emotions);
           _phase = ConversationPhase.ready;
         case Error(:final errMsg):
           _phase = ConversationPhase.ready;
@@ -202,10 +217,25 @@ final class Conversation {
     kind: 'image',
   );
 
+  Future<OperationResult> sendShare(
+    Map<String, Object?> content, {
+    String? message,
+  }) => _send(
+    StructuredMessageContent(
+      content['source'] is String
+          ? MessageContentKind.commonShareCard
+          : MessageContentKind.shareV2,
+      content,
+    ),
+    kind: 'share',
+    followUpText: message,
+  );
+
   Future<OperationResult> _send(
     MessageContent? content, {
     String? imagePath,
     required String kind,
+    String? followUpText,
   }) async {
     if (_isSending) return const OperationResult.failure('正在发送');
     if (_disposed || !session.isActive) {
@@ -252,21 +282,39 @@ final class Conversation {
         (account) => adapter.send(account, target, outgoing!),
       );
       result = _operationResult(sent, operationId);
+      final contentSent = result.isSuccess;
+      if (contentSent && followUpText?.isNotEmpty == true) {
+        final followUp = await session.run(
+          (account) => adapter.send(
+            account,
+            target,
+            TextMessageContent(followUpText!),
+          ),
+        );
+        final followUpResult = _operationResult(followUp, operationId);
+        result = followUpResult.isSuccess
+            ? followUpResult
+            : OperationResult(
+                followUpResult.status,
+                message:
+                    '分享内容已发送，附言${followUpResult.status == OperationStatus.unknown ? '状态待确认，请核对聊天记录' : '未发送成功'}',
+                operationId: operationId,
+              );
+      }
       _setOperation(operationId, kind, result.status);
-      if (result.isSuccess) {
+      if (contentSent || result.status == OperationStatus.unknown) {
+        // 写入后的读取必须晚于本次发送，废弃发送前的在途查询。
+        unawaited(refresh(retryFailedAcknowledgement: false, force: true));
         session.notifyChanged(
           MessagingChangeKind.unread,
           talkerId: target.talkerId,
         );
-      } else if (result.status == OperationStatus.unknown) {
-        // 查询可安全重试；发送本身不会自动重发。
-        unawaited(refresh(retryFailedAcknowledgement: false));
       }
       return result;
     } catch (error) {
       result = OperationResult.unknown(error.toString(), operationId);
       _setOperation(operationId, kind, result.status);
-      unawaited(refresh(retryFailedAcknowledgement: false));
+      unawaited(refresh(retryFailedAcknowledgement: false, force: true));
       return result;
     } finally {
       _isSending = false;
@@ -404,6 +452,15 @@ final class Conversation {
       }
     }
     return const OperationResult.success();
+  }
+
+  void _mergeEmotions(Iterable<EmotionSticker> incoming) {
+    // 缓存同时保留多页消息；同文本映射采用最近响应的版本。
+    final byText = {for (final emotion in _emotions) emotion.text: emotion};
+    for (final emotion in incoming) {
+      byText[emotion.text] = emotion;
+    }
+    _emotions = List.unmodifiable(byText.values);
   }
 
   void _merge(Iterable<Message> incoming) {

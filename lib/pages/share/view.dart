@@ -5,7 +5,8 @@ import 'package:pili_aurora/common/widgets/view_insets_safe_area.dart';
 import 'package:pili_aurora/models/common/image_type.dart';
 import 'package:pili_aurora/pages/contact/view.dart';
 import 'package:pili_aurora/utils/extension/scroll_controller_ext.dart';
-import 'package:pili_aurora/utils/request_utils.dart';
+import 'package:pili_aurora/services/messaging/message_models.dart';
+import 'package:pili_aurora/services/messaging/sharing.dart';
 import 'package:flutter/services.dart' show LengthLimitingTextInputFormatter;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -43,10 +44,12 @@ class SharePanel extends StatefulWidget {
   const SharePanel({
     super.key,
     required this.content,
+    required this.sharing,
     this.userList,
   });
 
   final Map content;
+  final MessageSharing sharing;
   final List<UserModel>? userList;
 
   @override
@@ -58,6 +61,7 @@ class _SharePanelState extends State<SharePanel> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
   final TextEditingController _controller = TextEditingController();
+  bool _isSending = false;
 
   @override
   void dispose() {
@@ -180,7 +184,9 @@ class _SharePanelState extends State<SharePanel> {
                         .push(
                           GetPageRoute(page: () => const ContactPage()),
                         );
-                    if (userModel != null) {
+                    if (mounted &&
+                        widget.sharing.session.isActive &&
+                        userModel != null) {
                       _userList
                         ..remove(userModel)
                         ..insert(0, userModel);
@@ -249,7 +255,7 @@ class _SharePanelState extends State<SharePanel> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton.tonal(
-                  onPressed: _onSend,
+                  onPressed: _isSending ? null : _onSend,
                   style: FilledButton.styleFrom(
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: const VisualDensity(
@@ -268,29 +274,43 @@ class _SharePanelState extends State<SharePanel> {
   }
 
   Future<void> _onSend() async {
-    final list = _userList.where((user) => user.selected);
+    if (_isSending) return;
+    if (!widget.sharing.session.isActive) {
+      SmartDialog.showToast('账号已切换，请重新打开分享');
+      return;
+    }
+    final list = _userList.where((user) => user.selected).toList();
     if (list.isEmpty) {
       SmartDialog.showToast('请选择分享的用户');
       return;
     }
+    setState(() => _isSending = true);
+    final message = _controller.text;
     SmartDialog.showLoading();
-    final res = await Future.wait(
-      list.map(
-        (user) => RequestUtils.pmShare(
-          receiverId: user.mid,
-          content: widget.content,
-          message: _controller.text,
+    try {
+      final res = await Future.wait(
+        list.map(
+          (user) => widget.sharing.send(
+            receiverId: user.mid,
+            content: Map<String, Object?>.from(widget.content),
+            message: message,
+          ),
         ),
-      ),
-    );
-    SmartDialog.dismiss();
-    if (res.every((e) => e)) {
-      Get.back();
-      SmartDialog.showToast('分享成功');
-    } else if (res.every((e) => !e)) {
-      SmartDialog.showToast('分享失败');
-    } else {
-      SmartDialog.showToast('部分分享失败');
+      );
+      if (!mounted || !widget.sharing.session.isActive) return;
+      if (res.every((e) => e.isSuccess)) {
+        Get.back();
+        SmartDialog.showToast('分享成功');
+      } else if (res.any((e) => e.status == OperationStatus.unknown)) {
+        SmartDialog.showToast('部分分享状态待确认，请核对聊天记录后再操作');
+      } else if (res.length == 1) {
+        SmartDialog.showToast(res.single.message ?? '分享失败');
+      } else {
+        SmartDialog.showToast('部分分享未完成，请核对聊天记录和附言');
+      }
+    } finally {
+      SmartDialog.dismiss();
+      if (mounted) setState(() => _isSending = false);
     }
   }
 }

@@ -97,7 +97,10 @@ class WhisperSessionItem extends StatelessWidget {
                   child: const Text('标为已读'),
                 ),
               DialogOption(
-                onPressed: () => onSetMute(item.isMuted),
+                onPressed: () {
+                  Get.back();
+                  onSetMute(item.isMuted);
+                },
                 child: Text('${item.isMuted ? '关闭' : '开启'}免打扰'),
               ),
               DialogOption(
