@@ -138,19 +138,28 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
 
   String _number(Object? value, String suffix, {double divisor = 1}) =>
       value is num ? '${(value / divisor).toStringAsFixed(1)}$suffix' : '不可用';
-  Widget _metric(String title, String value) => SizedBox(
-    width: 180,
-    child: Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title),
-            const SizedBox(height: 4),
-            Text(value, style: const TextStyle(fontSize: 20)),
-          ],
-        ),
+  Widget _metrics(List<Widget> children) => LayoutBuilder(
+    builder: (context, constraints) => Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final child in children)
+          SizedBox(width: (constraints.maxWidth - 8) / 2, child: child),
+      ],
+    ),
+  );
+
+  Widget _metric(String title, String value) => Card(
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title),
+          const SizedBox(height: 4),
+          Text(value, style: const TextStyle(fontSize: 20)),
+        ],
       ),
     ),
   );
@@ -297,60 +306,56 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
                           '${service.tracing ? '最新采样' : '已停止 · 最后采样'}  #${latest['sequence']}  ${latest['route']}',
                         ),
                         const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            _metric(
-                              '进程工作集',
-                              _number(
-                                process['rssBytes'],
-                                ' MiB',
-                                divisor: 1048576,
-                              ),
+                        _metrics([
+                          _metric(
+                            '进程工作集',
+                            _number(
+                              process['rssBytes'],
+                              ' MiB',
+                              divisor: 1048576,
                             ),
-                            _metric(
-                              '启动以来峰值',
-                              _number(
-                                process['peakRssBytes'],
-                                ' MiB',
-                                divisor: 1048576,
-                              ),
+                          ),
+                          _metric(
+                            '启动以来峰值',
+                            _number(
+                              process['peakRssBytes'],
+                              ' MiB',
+                              divisor: 1048576,
                             ),
-                            _metric(
-                              '私有提交',
-                              _number(
-                                process['privateBytes'],
-                                ' MiB',
-                                divisor: 1048576,
-                              ),
+                          ),
+                          _metric(
+                            '私有提交',
+                            _number(
+                              process['privateBytes'],
+                              ' MiB',
+                              divisor: 1048576,
                             ),
-                            _metric(
-                              '进程 CPU / 全机',
-                              _number(process['cpuPercentMachine'], '%'),
+                          ),
+                          _metric(
+                            '进程 CPU / 全机',
+                            _number(process['cpuPercentMachine'], '%'),
+                          ),
+                          _metric(
+                            '图片 LRU',
+                            _number(
+                              images['cacheBytes'],
+                              ' MiB',
+                              divisor: 1048576,
                             ),
-                            _metric(
-                              '图片 LRU',
-                              _number(
-                                images['cacheBytes'],
-                                ' MiB',
-                                divisor: 1048576,
-                              ),
-                            ),
-                            _metric(
-                              '本周期慢帧',
-                              '${frames['slowFrames'] ?? 0} / ${frames['count'] ?? 0}',
-                            ),
-                            _metric(
-                              'UI 构建峰值',
-                              _number(frames['maxBuildMs'], ' ms'),
-                            ),
-                            _metric(
-                              '光栅化峰值',
-                              _number(frames['maxRasterMs'], ' ms'),
-                            ),
-                          ],
-                        ),
+                          ),
+                          _metric(
+                            '本周期慢帧',
+                            '${frames['slowFrames'] ?? 0} / ${frames['count'] ?? 0}',
+                          ),
+                          _metric(
+                            'UI 构建峰值',
+                            _number(frames['maxBuildMs'], ' ms'),
+                          ),
+                          _metric(
+                            '光栅化峰值',
+                            _number(frames['maxRasterMs'], ' ms'),
+                          ),
+                        ]),
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 8),
                           child: Text(
