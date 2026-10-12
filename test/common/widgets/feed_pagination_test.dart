@@ -13,11 +13,13 @@ class _Feed extends StatefulWidget {
     this.allowed = true,
     this.cacheExtent = 250,
     this.waterfall = false,
+    this.prefetchExtent,
   });
   final int count;
   final bool allowed;
   final double cacheExtent;
   final bool waterfall;
+  final double? prefetchExtent;
 
   @override
   State<_Feed> createState() => _FeedState();
@@ -42,6 +44,9 @@ class _FeedState extends State<_Feed> {
   Widget build(BuildContext context) => Directionality(
     textDirection: TextDirection.ltr,
     child: FeedPagination(
+      prefetchExtent: widget.prefetchExtent == null
+          ? null
+          : () => widget.prefetchExtent!,
       controller: controller,
       dataChanges: changes.stream,
       canLoadMore: () => allowed,
@@ -118,6 +123,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(feed.count, 60);
     expect(feed.requests, 2);
+  });
+
+  testWidgets('home prefetches with two grid rows remaining', (
+    tester,
+  ) async {
+    final feed = await mount(
+      tester,
+      feed: const _Feed(count: 160, prefetchExtent: 224),
+    );
+    expect(feed.requests, 0);
+    feed.pending = Completer<void>();
+    final position = feed.controller.position;
+    feed.controller.jumpTo(
+      position.maxScrollExtent - 225,
+    );
+    await tester.pumpAndSettle();
+    expect(feed.requests, 0);
+    feed.controller.jumpTo(
+      position.maxScrollExtent - 223,
+    );
+    await tester.pumpAndSettle();
+    expect(feed.requests, 1);
+    feed.pending!.complete();
+    await tester.pumpAndSettle();
+    expect(feed.requests, 1);
+    expect(feed.count, 180);
   });
 
   testWidgets('zero cache avoids constructing cards outside the viewport', (

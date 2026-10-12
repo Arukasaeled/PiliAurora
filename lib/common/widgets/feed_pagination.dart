@@ -11,6 +11,7 @@ class FeedPagination extends StatefulWidget {
     required this.canLoadMore,
     required this.onLoadMore,
     required this.child,
+    this.prefetchExtent,
   });
 
   final ScrollController controller;
@@ -18,6 +19,9 @@ class FeedPagination extends StatefulWidget {
   final bool Function() canLoadMore;
   final Future<void> Function() onLoadMore;
   final Widget child;
+
+  /// 用户滚动后的预取距离，由页面按实际卡片行高计算。
+  final double Function()? prefetchExtent;
 
   @override
   State<FeedPagination> createState() => _FeedPaginationState();
@@ -74,9 +78,9 @@ class _FeedPaginationState extends State<FeedPagination> {
     if (!position.hasContentDimensions || position.viewportDimension <= 0) {
       return;
     }
-    // 首屏仅补足可视区；用户滚动后提前四分之一屏请求下一页。
+    // 首屏补足可视区；滚动时按页面指定的余量预取，留出网络加载时间。
     final threshold = position.pixels > position.minScrollExtent
-        ? position.viewportDimension / 4
+        ? (widget.prefetchExtent?.call() ?? position.viewportDimension / 4)
         : 0.0;
     if (position.extentAfter > threshold) return;
     final extent = position.maxScrollExtent;

@@ -13,7 +13,8 @@ import 'package:pili_aurora/pages/hot/controller.dart';
 import 'package:pili_aurora/pages/rank/view.dart';
 import 'package:pili_aurora/utils/grid.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/rendering.dart'
+    show ScrollCacheExtent, SliverGridRegularTileLayout;
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -64,6 +65,13 @@ class _HotPageState extends State<HotPage>
     return refreshIndicator(
       onRefresh: controller.onRefresh,
       child: FeedPagination(
+        // 两行卡片加列表底部留白，窗口缩放后使用最新网格行高。
+        prefetchExtent: () =>
+            ((gridDelegate.layoutCache as SliverGridRegularTileLayout?)
+                        ?.mainAxisStride ??
+                    0) *
+                2 +
+            100,
         controller: controller.scrollController,
         dataChanges: controller.loadingState.stream,
         canLoadMore: () => controller.canLoadMore && !controller.isLoading,
