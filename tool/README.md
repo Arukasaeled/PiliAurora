@@ -89,3 +89,13 @@ fvm flutter test --no-pub test/architecture/dependency_policy_test.dart test/com
 ```
 
 该工具只读工作区，检查 Git 来源、path 范围、来源 SHA、许可证、版本登记与锁文件，并核对合并依赖的目录和许可证信息。可用位置参数指定工作区。普通依赖更新和定制包维护流程见 `third_party/README.md`。本地构建和 CI 会在依赖解析后执行检查，依赖解析使用 `--enforce-lockfile`。更新版本时，运行 `flutter pub get` 或针对目标包执行 `flutter pub upgrade`，再提交锁文件。
+
+## 播放图标资源
+
+播放图标的路径、透明度和模糊阴影源定义保存在 `tool/generate_play_icon.dart`。从仓库根目录重新生成 1×、2×、3×、4× PNG：
+
+```powershell
+fvm flutter test --no-pub tool/generate_play_icon.dart
+```
+
+产物为 `assets/images/play.png` 及同目录下的分辨率变体。图形逻辑尺寸为 60×60，四周各留 12 像素透明边距容纳阴影；`PlayIcon` 在布局时扣除该边距。修改源定义后需同步更新这四张资源。
