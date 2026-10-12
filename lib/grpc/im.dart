@@ -1,3 +1,4 @@
+import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/grpc/bilibili/app/im/v1.pb.dart' hide SessionInfo;
 import 'package:pili_aurora/grpc/bilibili/im/interfaces/v1.pb.dart';
 import 'package:pili_aurora/grpc/bilibili/im/type.pb.dart';
@@ -10,6 +11,7 @@ import 'package:protobuf/protobuf.dart' show PbMap;
 
 abstract final class ImGrpc {
   static Future<LoadingState<RspSendMsg>> sendMsg({
+    Account? account,
     required int senderUid,
     required int receiverId,
     required String content,
@@ -31,18 +33,25 @@ abstract final class ImGrpc {
         devId: newUuidV4(),
       ),
       RspSendMsg.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
-  static Future<LoadingState<RspShareList>> shareList({int size = 10}) {
+  static Future<LoadingState<RspShareList>> shareList({
+    Account? account,
+    int size = 10,
+  }) {
     return GrpcReq.request(
       GrpcUrl.shareList,
       ReqShareList(size: size),
       RspShareList.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<RspSessionMsg>> syncFetchSessionMsgs({
+    Account? account,
     required int talkerId,
     Int64? endSeqno,
     Int64? beginSeqno,
@@ -58,10 +67,12 @@ abstract final class ImGrpc {
         devId: '1',
       ),
       RspSessionMsg.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<SessionMainReply>> sessionMain({
+    Account? account,
     PbMap<int, Offset>? offset,
   }) {
     return GrpcReq.request(
@@ -70,10 +81,12 @@ abstract final class ImGrpc {
         paginationParams: PaginationParams(offsets: offset?.entries),
       ),
       SessionMainReply.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<SessionSecondaryReply>> sessionSecondary({
+    Account? account,
     PbMap<int, Offset>? offset,
     SessionPageType? pageType,
   }) {
@@ -84,10 +97,12 @@ abstract final class ImGrpc {
         pageType: pageType,
       ),
       SessionSecondaryReply.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<ClearUnreadReply>> clearUnread({
+    Account? account,
     SessionPageType? pageType,
     SessionId? sessionId,
   }) {
@@ -98,10 +113,13 @@ abstract final class ImGrpc {
         sessionId: sessionId,
       ),
       ClearUnreadReply.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
   static Future<LoadingState<SessionUpdateReply>> sessionUpdate({
+    Account? account,
     SessionPageType? pageType,
     SessionId? sessionId,
   }) {
@@ -112,10 +130,12 @@ abstract final class ImGrpc {
         sessionId: sessionId,
       ),
       SessionUpdateReply.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<PinSessionReply>> pinSession({
+    Account? account,
     SessionId? sessionId,
     Int64? topTimeMicros,
   }) {
@@ -126,10 +146,13 @@ abstract final class ImGrpc {
         topTimeMicros: topTimeMicros,
       ),
       PinSessionReply.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
   static Future<LoadingState<UnPinSessionReply>> unpinSession({
+    Account? account,
     SessionId? sessionId,
   }) {
     return GrpcReq.request(
@@ -138,10 +161,13 @@ abstract final class ImGrpc {
         sessionId: sessionId,
       ),
       UnPinSessionReply.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
   static Future<LoadingState<DeleteSessionListReply>> deleteSessionList({
+    Account? account,
     SessionPageType? pageType,
   }) {
     return GrpcReq.request(
@@ -150,10 +176,13 @@ abstract final class ImGrpc {
         pageType: pageType,
       ),
       DeleteSessionListReply.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
   static Future<LoadingState<GetImSettingsReply>> getImSettings({
+    Account? account,
     IMSettingType? type,
   }) {
     return GrpcReq.request(
@@ -162,58 +191,74 @@ abstract final class ImGrpc {
         type: type,
       ),
       GetImSettingsReply.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<SetImSettingsReply>> setImSettings({
+    Account? account,
     Map<int, Setting>? settings,
   }) {
     return GrpcReq.request(
       GrpcUrl.setImSettings,
       SetImSettingsReq(settings: settings?.entries),
       SetImSettingsReply.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
-  static Future<LoadingState<KeywordBlockingListReply>> keywordBlockingList() {
+  static Future<LoadingState<KeywordBlockingListReply>> keywordBlockingList({
+    Account? account,
+  }) {
     return GrpcReq.request(
       GrpcUrl.keywordBlockingList,
       KeywordBlockingListReq(),
       KeywordBlockingListReply.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<KeywordBlockingAddReply>> keywordBlockingAdd(
-    String keyword,
-  ) {
+    String keyword, {
+    Account? account,
+  }) {
     return GrpcReq.request(
       GrpcUrl.keywordBlockingAdd,
       KeywordBlockingAddReq(keyword: keyword),
       KeywordBlockingAddReply.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
   static Future<LoadingState<KeywordBlockingDeleteReply>> keywordBlockingDelete(
-    String keyword,
-  ) {
+    String keyword, {
+    Account? account,
+  }) {
     return GrpcReq.request(
       GrpcUrl.keywordBlockingDelete,
       KeywordBlockingDeleteReq(keyword: keyword),
       KeywordBlockingDeleteReply.fromBuffer,
+      account: account,
+      retry: false,
     );
   }
 
   static Future<LoadingState<RspTotalUnread>> getTotalUnread({
+    Account? account,
     int? unreadType,
   }) {
     return GrpcReq.request(
       GrpcUrl.getTotalUnread,
       ReqTotalUnread(unreadType: unreadType, showUnfollowList: 1),
       RspTotalUnread.fromBuffer,
+      account: account,
     );
   }
 
   static Future<LoadingState<SessionInfo>> sessionDetail({
+    Account? account,
     Int64? talkerId,
     int? sessionType,
     Int64? uid,
@@ -222,6 +267,7 @@ abstract final class ImGrpc {
       GrpcUrl.sessionDetail,
       ReqSessionDetail(talkerId: talkerId, sessionType: sessionType, uid: uid),
       SessionInfo.fromBuffer,
+      account: account,
     );
   }
 }

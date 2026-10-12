@@ -1,55 +1,79 @@
-import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/http/msg.dart';
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/models/remote/msg/msg_like_detail/card.dart';
-import 'package:pili_aurora/models/remote/msg/msg_like_detail/data.dart';
 import 'package:pili_aurora/models/remote/msg/msg_like_detail/item.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
-import 'package:get/get.dart';
+import 'package:pili_aurora/services/messaging/feed.dart';
+import 'package:pili_aurora/services/messaging/feed_adapters.dart';
+import 'package:pili_aurora/services/messaging/providers.dart';
 
-class LikeDetailController
-    extends CommonListController<MsgLikeDetailData, MsgLikeDetailItem> {
-  late final String cardId;
-  late final String? uri;
-  late final int counts;
+@immutable
+class LikeDetailArgs {
+  const LikeDetailArgs({
+    required this.cardId,
+    required this.uri,
+    required this.counts,
+  });
 
-  int lastMid = 0;
+  final String cardId;
+  final String? uri;
+  final int counts;
 
   @override
-  void onInit() {
-    super.onInit();
-    final args = Get.arguments;
-    cardId = args['id'];
-    uri = args['uri'];
-    counts = args['counts'];
-    queryData();
+  bool operator ==(Object other) =>
+      other is LikeDetailArgs &&
+      other.cardId == cardId &&
+      other.uri == uri &&
+      other.counts == counts;
+
+  @override
+  int get hashCode => Object.hash(cardId, uri, counts);
+}
+
+final likeDetailFeedProvider =
+    NotifierProvider.family<
+      LikeDetailFeedNotifier,
+      FeedSnapshot<MsgLikeDetailItem>,
+      LikeDetailArgs
+    >(LikeDetailFeedNotifier.new, isAutoDispose: true);
+
+class LikeDetailFeedNotifier extends Notifier<FeedSnapshot<MsgLikeDetailItem>> {
+  LikeDetailFeedNotifier(this.args);
+
+  final LikeDetailArgs args;
+  late FeedHandle<MsgLikeDetailItem> _handle;
+
+  MsgLikeDetailCard? get card => state.metadata as MsgLikeDetailCard?;
+
+  @override
+  FeedSnapshot<MsgLikeDetailItem> build() {
+    final session = ref.watch(messagingSessionProvider);
+    final handle = FeedHandle<MsgLikeDetailItem>(
+      session: session,
+      request: (account, cursor) => MessagingFeedAdapters.likeDetail(
+        account,
+        cursor,
+        cardId: args.cardId,
+      ),
+      idOf: (item) {
+        final mid = item.user?.mid;
+        return mid == null ? null : '$mid:${item.likeTime ?? 0}';
+      },
+      maxItems: args.counts,
+    );
+    _handle = handle;
+    void changed() => state = handle.state.value;
+    handle.state.addListener(changed);
+    ref.onDispose(() {
+      handle.state.removeListener(changed);
+      handle.dispose();
+    });
+    unawaited(handle.refresh());
+    return handle.state.value;
   }
 
-  MsgLikeDetailCard? card;
-
-  @override
-  List<MsgLikeDetailItem>? getDataList(MsgLikeDetailData response) {
-    card = response.card;
-    final items = response.items;
-    if (items?.lastOrNull?.user?.mid case final mid?) {
-      lastMid = mid;
-    }
-    return items;
-  }
-
-  @override
-  void checkIsEnd(int length) {
-    if (length >= counts) {
-      isEnd = true;
-    }
-  }
-
-  @override
-  Future<void> onRefresh() {
-    lastMid = 0;
-    return super.onRefresh();
-  }
-
-  @override
-  Future<LoadingState<MsgLikeDetailData>> customGetData() =>
-      MsgHttp.msgLikeDetail(cardId: cardId, pn: page, lastMid: lastMid);
+  Future<void> refresh() => _handle.refresh();
+  Future<void> loadMore() => _handle.loadMore();
+  Future<void> onReload() => refresh();
 }

@@ -16,22 +16,24 @@ import 'package:pili_aurora/pages/whisper_settings/view.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart' hide ListTile;
 
-class AtMePage extends StatefulWidget {
+class AtMePage extends ConsumerStatefulWidget {
   const AtMePage({super.key});
 
   @override
-  State<AtMePage> createState() => _AtMePageState();
+  ConsumerState<AtMePage> createState() => _AtMePageState();
 }
 
-class _AtMePageState extends State<AtMePage> {
-  final AtMeController _atMeController = Get.put(AtMeController());
-
+class _AtMePageState extends ConsumerState<AtMePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final feed = ref.watch(atMeFeedProvider);
+    final controller = ref.read(atMeFeedProvider.notifier);
     return SimpleScaffold(
       appBar: AppBar(
         title: const Text('@我的'),
@@ -52,7 +54,7 @@ class _AtMePageState extends State<AtMePage> {
         ],
       ),
       body: refreshIndicator(
-        onRefresh: _atMeController.onRefresh,
+        onRefresh: controller.refresh,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -60,9 +62,7 @@ class _AtMePageState extends State<AtMePage> {
               padding: EdgeInsets.only(
                 bottom: MediaQuery.viewPaddingOf(context).bottom + 100,
               ),
-              sliver: Obx(
-                () => _buildBody(theme, _atMeController.loadingState.value),
-              ),
+              sliver: _buildBody(theme, feed.loadingState, controller),
             ),
           ],
         ),
@@ -73,6 +73,7 @@ class _AtMePageState extends State<AtMePage> {
   Widget _buildBody(
     ThemeData theme,
     LoadingState<List<MsgAtItem>?> loadingState,
+    AtMeFeedNotifier controller,
   ) {
     switch (loadingState) {
       case Loading():
@@ -95,13 +96,22 @@ class _AtMePageState extends State<AtMePage> {
             itemCount: response.length,
             itemBuilder: (context, int index) {
               if (index == response.length - 1) {
-                _atMeController.onLoadMore();
+                controller.loadMore();
               }
               final item = response[index];
               void onLongPress() => showConfirmDialog(
                 context: context,
                 title: const Text('确定删除该通知?'),
-                onConfirm: () => _atMeController.onRemove(item.id!, index),
+                onConfirm: () async {
+                  final id = item.id;
+                  if (id == null) return;
+                  final result = await controller.remove(id);
+                  if (result.isSuccess) {
+                    SmartDialog.showToast('删除成功');
+                  } else {
+                    result.toast();
+                  }
+                },
               );
               return ListTile(
                 safeArea: true,
@@ -182,11 +192,11 @@ class _AtMePageState extends State<AtMePage> {
             separatorBuilder: (context, index) => divider,
           );
         }
-        return HttpError(onReload: _atMeController.onReload);
+        return HttpError(onReload: controller.refresh);
       case Error(:final errMsg):
         return HttpError(
           errMsg: errMsg,
-          onReload: _atMeController.onReload,
+          onReload: controller.refresh,
         );
     }
   }

@@ -12,7 +12,8 @@ class RetryInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
-    if (err.requestOptions.responseType == ResponseType.stream) {
+    if (err.requestOptions.responseType == ResponseType.stream ||
+        err.requestOptions.extra['noRetry'] == true) {
       return handler.next(err);
     }
     if (err.response != null) {

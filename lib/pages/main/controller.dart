@@ -3,8 +3,6 @@ import 'dart:math' as math;
 
 import 'package:pili_aurora/common/widgets/view_safe_area.dart';
 import 'package:pili_aurora/grpc/dyn.dart';
-import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/http/msg.dart';
 import 'package:pili_aurora/models/common/dynamic/dynamic_badge_mode.dart';
 import 'package:pili_aurora/models/common/home_tab_type.dart';
 import 'package:pili_aurora/models/common/msg/msg_unread_type.dart';
@@ -13,6 +11,8 @@ import 'package:pili_aurora/pages/dynamics/controller.dart';
 import 'package:pili_aurora/pages/home/controller.dart';
 import 'package:pili_aurora/pages/mine/view.dart';
 import 'package:pili_aurora/services/account_service.dart';
+import 'package:pili_aurora/services/messaging/session.dart';
+import 'package:pili_aurora/services/messaging/overview.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/utils/extension/get_ext.dart';
 import 'package:pili_aurora/utils/extension/iterable_ext.dart';
@@ -22,7 +22,6 @@ import 'package:pili_aurora/utils/storage_key.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/update.dart';
 import 'package:pili_aurora/utils/rate_limiter.dart';
-import 'package:collection/collection.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -56,7 +55,7 @@ class MainController extends GetxController
   late final disableLikeMsg = Pref.disableLikeMsg;
   late DynamicBadgeMode msgBadgeMode = Pref.msgBadgeMode;
   late Set<MsgUnReadType> msgUnReadTypes = Pref.msgUnReadTypeV2;
-  late final RxnString msgUnReadCount = RxnString(null);
+  final msgBadgeRevision = 0.obs;
   late int lastCheckUnreadAt = 0;
 
   final enableMYBar = Pref.enableMYBar;
@@ -140,80 +139,17 @@ class MainController extends GetxController
     if (_shouldCheckMessages) unawaited(queryUnreadMsg());
   }
 
-  Future<int> _msgUnread() async {
-    if (msgUnReadTypes.contains(MsgUnReadType.pm)) {
-      final res = await MsgHttp.msgUnread();
-      if (res case Success(:final response)) {
-        return response.followUnread +
-            response.unfollowUnread +
-            response.bizMsgFollowUnread +
-            response.bizMsgUnfollowUnread +
-            response.unfollowPushMsg +
-            response.customUnread;
-      }
-    }
-    return 0;
-  }
-
-  Future<int> _msgFeedUnread() async {
-    int count = 0;
-    final remainTypes = Set<MsgUnReadType>.from(msgUnReadTypes)
-      ..remove(MsgUnReadType.pm);
-    if (remainTypes.isNotEmpty) {
-      final res = await MsgHttp.msgFeedUnread();
-      if (res case Success(:final response)) {
-        for (final item in remainTypes) {
-          switch (item) {
-            case MsgUnReadType.pm:
-              break;
-            case MsgUnReadType.reply:
-              count += response.reply;
-              break;
-            case MsgUnReadType.at:
-              count += response.at;
-              break;
-            case MsgUnReadType.like:
-              if (!disableLikeMsg) count += response.like;
-              break;
-            case MsgUnReadType.sysMsg:
-              count += response.sysMsg;
-              break;
-          }
-        }
-      }
-    }
-    return count;
-  }
-
-  void clearUnreadMsg() {
-    msgUnReadCount.value = null;
-  }
+  void updateMessageBadge() => msgBadgeRevision.value++;
 
   Future<void> queryUnreadMsg([bool isChangeType = false]) async {
+    updateMessageBadge();
     if (!accountService.isLogin.value ||
         !hasHome ||
         msgUnReadTypes.isEmpty ||
         msgBadgeMode == DynamicBadgeMode.hidden) {
-      clearUnreadMsg();
       return;
     }
-
-    final res = await Future.wait([_msgUnread(), _msgFeedUnread()]);
-
-    final count = res.sum;
-
-    final countStr = count == 0
-        ? null
-        : count > 99
-        ? '99+'
-        : count.toString();
-    if (msgUnReadCount.value == countStr) {
-      if (isChangeType) {
-        msgUnReadCount.refresh();
-      }
-    } else {
-      msgUnReadCount.value = countStr;
-    }
+    await overviewFor(Messaging.instance.session).refresh();
   }
 
   void getUnreadDynamic() {

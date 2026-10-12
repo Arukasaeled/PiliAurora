@@ -5,6 +5,7 @@ import 'package:pili_aurora/models/common/account_type.dart';
 import 'package:pili_aurora/pages/mine/controller.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/utils/login_utils.dart';
+import 'package:pili_aurora/services/messaging/session.dart';
 import 'package:hive_ce/hive.dart';
 
 abstract final class Accounts {
@@ -42,6 +43,7 @@ abstract final class Accounts {
         accountMode[t.index] = a;
       }
     }
+    Messaging.onAccountChanged();
     return Future.wait(
       (accountMode.toSet()..removeWhere((i) => i.activated)).map(
         Request.buvidActive,
@@ -54,16 +56,21 @@ abstract final class Accounts {
     for (int i = 0; i < AccountType.values.length; i++) {
       accountMode[i] = AnonymousAccount();
     }
+    Messaging.onAccountChanged();
     await AnonymousAccount().delete();
     Request.buvidActive(AnonymousAccount());
   }
 
   static Future<void> deleteAll(Set<Account> accounts) async {
-    final isLoginMain = Accounts.main.isLogin;
+    final previousMain = Accounts.main;
+    final isLoginMain = previousMain.isLogin;
     for (int i = 0; i < AccountType.values.length; i++) {
       if (accounts.contains(accountMode[i])) {
         accountMode[i] = AnonymousAccount();
       }
+    }
+    if (!identical(previousMain, Accounts.main)) {
+      Messaging.onAccountChanged();
     }
     await Future.wait(accounts.map((i) => i.delete()));
     if (isLoginMain && !Accounts.main.isLogin) {
@@ -74,6 +81,7 @@ abstract final class Accounts {
   static Future<void> set(AccountType key, Account account) async {
     final oldAccount = accountMode[key.index]..type.remove(key);
     accountMode[key.index] = account..type.add(key);
+    if (key == AccountType.main) Messaging.onAccountChanged();
     await Future.wait([?account.onChange(), ?oldAccount.onChange()]);
     if (!account.activated) await Request.buvidActive(account);
     switch (key) {

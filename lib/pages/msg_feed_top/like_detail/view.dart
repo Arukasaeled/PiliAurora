@@ -11,30 +11,40 @@ import 'package:pili_aurora/models/remote/msg/msg_like_detail/item.dart';
 import 'package:pili_aurora/pages/msg_feed_top/like_detail/controller.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
-import 'package:pili_aurora/utils/utils.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
-class LikeDetailPage extends StatefulWidget {
+class LikeDetailPage extends ConsumerStatefulWidget {
   const LikeDetailPage({super.key});
 
   @override
-  State<LikeDetailPage> createState() => _LikeDetailPageState();
+  ConsumerState<LikeDetailPage> createState() => _LikeDetailPageState();
 }
 
-class _LikeDetailPageState extends State<LikeDetailPage> {
-  final LikeDetailController _controller = Get.put(
-    LikeDetailController(),
-    tag: Utils.generateRandomString(8),
-  );
+class _LikeDetailPageState extends ConsumerState<LikeDetailPage> {
+  late final LikeDetailArgs _args;
+
+  @override
+  void initState() {
+    super.initState();
+    final arguments = Get.arguments as Map;
+    _args = LikeDetailArgs(
+      cardId: arguments['id'] as String,
+      uri: arguments['uri'] as String?,
+      counts: arguments['counts'] as int,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final feed = ref.watch(likeDetailFeedProvider(_args));
+    final controller = ref.read(likeDetailFeedProvider(_args).notifier);
     return SimpleScaffold(
       appBar: AppBar(title: const Text('点赞详情')),
       body: refreshIndicator(
-        onRefresh: _controller.onRefresh,
+        onRefresh: controller.refresh,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -42,9 +52,7 @@ class _LikeDetailPageState extends State<LikeDetailPage> {
               padding: EdgeInsets.only(
                 bottom: MediaQuery.viewPaddingOf(context).bottom + 100,
               ),
-              sliver: Obx(
-                () => _buildBody(theme, _controller.loadingState.value),
-              ),
+              sliver: _buildBody(theme, feed.loadingState, controller),
             ),
           ],
         ),
@@ -55,6 +63,7 @@ class _LikeDetailPageState extends State<LikeDetailPage> {
   Widget _buildBody(
     ThemeData theme,
     LoadingState<List<MsgLikeDetailItem>?> loadingState,
+    LikeDetailFeedNotifier controller,
   ) {
     switch (loadingState) {
       case Loading():
@@ -74,8 +83,8 @@ class _LikeDetailPageState extends State<LikeDetailPage> {
         );
         return SliverMainAxisGroup(
           slivers: [
-            if (_controller.card != null) ...[
-              _buildCard(_controller.card!),
+            if (controller.card != null) ...[
+              _buildCard(controller.card!),
               SliverToBoxAdapter(
                 child: Divider(
                   height: 1,
@@ -87,7 +96,7 @@ class _LikeDetailPageState extends State<LikeDetailPage> {
               itemCount: response!.length,
               itemBuilder: (context, index) {
                 if (index == response.length - 1) {
-                  _controller.onLoadMore();
+                  controller.loadMore();
                 }
                 return _buildItem(theme, response[index]);
               },
@@ -98,7 +107,7 @@ class _LikeDetailPageState extends State<LikeDetailPage> {
       case Error(:final errMsg):
         return HttpError(
           errMsg: errMsg,
-          onReload: _controller.onReload,
+          onReload: controller.refresh,
         );
     }
   }
@@ -107,8 +116,8 @@ class _LikeDetailPageState extends State<LikeDetailPage> {
     return SliverToBoxAdapter(
       child: ListTile(
         onTap: () {
-          if (_controller.uri != null) {
-            PiliScheme.routePushFromUrl(_controller.uri!);
+          if (_args.uri != null) {
+            PiliScheme.routePushFromUrl(_args.uri!);
           }
         },
         title: Text('${card.business}: ${card.title}'),

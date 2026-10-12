@@ -1,100 +1,46 @@
-import 'package:pili_aurora/common/widgets/pair.dart';
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/http/msg.dart';
-import 'package:pili_aurora/models/remote/msg/msg_like/data.dart';
-import 'package:pili_aurora/models/remote/msg/msg_like/item.dart';
-import 'package:pili_aurora/pages/common/common_data_controller.dart';
-import 'package:pili_aurora/utils/extension/iterable_ext.dart';
-import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+import 'package:pili_aurora/services/messaging/feed.dart';
+import 'package:pili_aurora/services/messaging/feed_adapters.dart';
+import 'package:pili_aurora/services/messaging/providers.dart';
 
-class LikeMeController
-    extends
-        CommonDataController<
-          MsgLikeData,
-          Pair<List<MsgLikeItem>, List<MsgLikeItem>>
-        > {
-  int? cursor;
-  int? cursorTime;
-
-  bool isEnd = false;
-
-  @override
-  void onInit() {
-    super.onInit();
-    queryData();
-  }
-
-  @override
-  Future<void> queryData([bool isRefresh = true]) {
-    if (!isRefresh && isEnd) {
-      return Future.syncValue(null);
-    }
-    return super.queryData(isRefresh);
-  }
-
-  @override
-  bool customHandleResponse(bool isRefresh, Success<MsgLikeData> response) {
-    MsgLikeData data = response.response;
-    if (data.total?.cursor?.isEnd == true ||
-        data.total?.items.isNullOrEmpty == true) {
-      isEnd = true;
-    }
-    cursor = data.total?.cursor?.id;
-    cursorTime = data.total?.cursor?.time;
-    List<MsgLikeItem> latest = data.latest?.items ?? <MsgLikeItem>[];
-    List<MsgLikeItem> total = data.total?.items ?? <MsgLikeItem>[];
-    if (!isRefresh) {
-      if (loadingState.value case Success(:final response)) {
-        latest.insertAll(0, response.first);
-        total.insertAll(0, response.second);
-      }
-    }
-    loadingState.value = Success(Pair(first: latest, second: total));
-    return true;
-  }
-
-  @override
-  Future<void> onRefresh() {
-    cursor = null;
-    cursorTime = null;
-    return super.onRefresh();
-  }
-
-  @override
-  Future<LoadingState<MsgLikeData>> customGetData() =>
-      MsgHttp.msgFeedLikeMe(cursor: cursor, cursorTime: cursorTime);
-
-  Future<void> onRemove(dynamic id, int index, bool isLatest) async {
-    try {
-      final res = await MsgHttp.delMsgfeed(0, id);
-      if (res.isSuccess) {
-        Pair<List<MsgLikeItem>, List<MsgLikeItem>> pair =
-            loadingState.value.data;
-        if (isLatest) {
-          pair.first.removeAt(index);
-        } else {
-          pair.second.removeAt(index);
-        }
-        loadingState.refresh();
-        SmartDialog.showToast('删除成功');
-      } else {
-        res.toast();
-      }
-    } catch (_) {}
-  }
-
-  Future<void> onSetNotice(MsgLikeItem item, bool isNotice) async {
-    int noticeState = isNotice ? 1 : 0;
-    final res = await MsgHttp.msgSetNotice(
-      id: item.id!,
-      noticeState: noticeState,
+final likeMeFeedProvider =
+    NotifierProvider<LikeMeFeedNotifier, LikeFeedSnapshot>(
+      LikeMeFeedNotifier.new,
+      isAutoDispose: true,
     );
-    if (res.isSuccess) {
-      item.noticeState = noticeState;
-      loadingState.refresh();
-      SmartDialog.showToast('设置成功');
-    } else {
-      res.toast();
-    }
+
+class LikeMeFeedNotifier extends Notifier<LikeFeedSnapshot> {
+  late LikeFeedHandle _handle;
+
+  @override
+  LikeFeedSnapshot build() {
+    final session = ref.watch(messagingSessionProvider);
+    final handle = LikeFeedHandle(
+      session: session,
+      request: MessagingFeedAdapters.like,
+      delete: MessagingFeedAdapters.deleteLike,
+      setNoticeRequest: MessagingFeedAdapters.setLikeNotice,
+    );
+    _handle = handle;
+    void changed() => state = handle.state.value;
+    handle.state.addListener(changed);
+    ref.onDispose(() {
+      handle.state.removeListener(changed);
+      handle.dispose();
+    });
+    unawaited(handle.refresh());
+    return handle.state.value;
   }
+
+  Future<void> refresh() => _handle.refresh();
+  Future<void> loadMore() => _handle.loadMore();
+
+  Future<LoadingState<void>> remove(Object id, {required bool latest}) =>
+      _handle.remove(id, latest: latest);
+
+  Future<LoadingState<void>> setNotice(Object id, bool isNotice) =>
+      _handle.setNotice(id, isNotice);
 }

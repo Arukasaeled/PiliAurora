@@ -1,14 +1,7 @@
-import 'package:pili_aurora/grpc/bilibili/app/im/v1.pb.dart'
-    show Offset, Session, SessionMainReply, SessionPageType, ThreeDotItem;
-import 'package:pili_aurora/grpc/im.dart';
-import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/models/remote/msg/msgfeed_unread.dart';
 import 'package:pili_aurora/pages/common/common_whisper_controller.dart';
+import 'package:pili_aurora/services/messaging/session_models.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
-import 'package:flutter/foundation.dart';
-import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:protobuf/protobuf.dart' show PbMap;
 
 typedef MsgFeedTopItem = ({
   bool enabled,
@@ -17,98 +10,38 @@ typedef MsgFeedTopItem = ({
   String route,
 });
 
-class WhisperController extends CommonWhisperController<SessionMainReply> {
-  @override
-  SessionPageType sessionPageType = SessionPageType.SESSION_PAGE_TYPE_HOME;
-
-  late final List<MsgFeedTopItem> msgFeedTopItems;
-  final disableLikeMsg = Pref.disableLikeMsg;
-  late final RxList<int> unreadCounts;
-
-  PbMap<int, Offset>? offset;
-
-  Rx<List<ThreeDotItem>?> threeDotItems = Rx<List<ThreeDotItem>?>(null);
-  Rx<List<ThreeDotItem>?> outsideItem = Rx<List<ThreeDotItem>?>(null);
-
-  @override
-  void onInit() {
-    super.onInit();
+class WhisperController extends CommonWhisperController {
+  WhisperController({required super.sessions})
+    : super(folder: SessionFolder.home) {
+    final disableLikeMsg = Pref.disableLikeMsg;
     msgFeedTopItems = [
       const (
-        name: "回复我的",
+        name: '回复我的',
         icon: Icons.message_outlined,
-        route: "/replyMe",
+        route: '/replyMe',
         enabled: true,
       ),
       const (
-        name: "@我",
+        name: '@我',
         icon: Icons.alternate_email_outlined,
-        route: "/atMe",
+        route: '/atMe',
         enabled: true,
       ),
       (
-        name: "收到的赞",
+        name: '收到的赞',
         icon: Icons.favorite_border_outlined,
-        route: "/likeMe",
+        route: '/likeMe',
         enabled: !disableLikeMsg,
       ),
       const (
-        name: "系统通知",
+        name: '系统通知',
         icon: Icons.notifications_none_outlined,
-        route: "/sysMsg",
+        route: '/sysMsg',
         enabled: true,
       ),
     ];
-    unreadCounts = List.filled(msgFeedTopItems.length, 0).obs;
-    queryMsgFeedUnread();
-    queryData();
   }
 
-  Future<void> queryMsgFeedUnread() async {
-    final res = await ImGrpc.getTotalUnread(unreadType: 2);
-    if (res case Success(:final response)) {
-      final data = MsgFeedUnread.fromJson(response.msgFeedUnread.unread);
-      final unreadCounts = [
-        data.reply,
-        data.at,
-        disableLikeMsg ? 0 : data.like,
-        data.sysMsg,
-      ];
-      if (!listEquals(this.unreadCounts, unreadCounts)) {
-        this.unreadCounts.value = unreadCounts;
-      }
-    } else {
-      res.toast();
-    }
-  }
-
-  @override
-  List<Session>? getDataList(SessionMainReply response) {
-    offset = response.paginationParams.offsets;
-    isEnd = !response.paginationParams.hasMore;
-    return response.sessions;
-  }
-
-  @override
-  bool customHandleResponse(
-    bool isRefresh,
-    Success<SessionMainReply> response,
-  ) {
-    if (isRefresh) {
-      threeDotItems.value = response.response.threeDotItems;
-      outsideItem.value = response.response.outsideItem;
-    }
-    return false;
-  }
-
-  @override
-  Future<LoadingState<SessionMainReply>> customGetData() =>
-      ImGrpc.sessionMain(offset: offset);
-
-  @override
-  Future<void> onRefresh() {
-    offset = null;
-    queryMsgFeedUnread();
-    return super.onRefresh();
-  }
+  late final List<MsgFeedTopItem> msgFeedTopItems;
+  final bool disableLikeMsg = Pref.disableLikeMsg;
 }

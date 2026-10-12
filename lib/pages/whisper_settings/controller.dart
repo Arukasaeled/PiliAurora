@@ -1,47 +1,45 @@
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/grpc/bilibili/app/im/v1.pb.dart'
-    show GetImSettingsReply, IMSettingType, Setting;
-import 'package:pili_aurora/grpc/im.dart';
+    show IMSettingType, Setting;
 import 'package:pili_aurora/http/loading_state.dart';
-import 'package:pili_aurora/pages/common/common_data_controller.dart';
-import 'package:get/get.dart';
-import 'package:protobuf/protobuf.dart' show PbMap;
+import 'package:pili_aurora/services/messaging/providers.dart';
+import 'package:pili_aurora/services/messaging/settings.dart';
 
-class WhisperSettingsController
-    extends CommonDataController<GetImSettingsReply, PbMap<int, Setting>> {
-  WhisperSettingsController({
-    required this.imSettingType,
-  });
+final whisperSettingsProvider =
+    NotifierProvider.family<
+      WhisperSettingsNotifier,
+      WhisperSettingsSnapshot,
+      IMSettingType
+    >(WhisperSettingsNotifier.new, isAutoDispose: true);
 
-  final IMSettingType imSettingType;
+class WhisperSettingsNotifier extends Notifier<WhisperSettingsSnapshot> {
+  WhisperSettingsNotifier(this.type);
 
-  final RxString title = ''.obs;
-
-  @override
-  void onInit() {
-    super.onInit();
-    queryData();
-  }
+  final IMSettingType type;
+  late WhisperSettingsHandle _handle;
 
   @override
-  bool customHandleResponse(
-    bool isRefresh,
-    Success<GetImSettingsReply> response,
-  ) {
-    title.value = response.response.pageTitle;
-    loadingState.value = Success(response.response.settings);
-    return true;
+  WhisperSettingsSnapshot build() {
+    final session = ref.watch(messagingSessionProvider);
+    final handle = WhisperSettingsHandle(session: session, type: type);
+    _handle = handle;
+    void changed() => state = handle.state.value;
+    handle.state.addListener(changed);
+    ref.onDispose(() {
+      handle.state.removeListener(changed);
+      handle.dispose();
+    });
+    unawaited(handle.refresh());
+    return handle.state.value;
   }
 
-  @override
-  Future<LoadingState<GetImSettingsReply>> customGetData() =>
-      ImGrpc.getImSettings(type: imSettingType);
+  Future<void> onReload() => _handle.refresh();
 
-  Future<bool> onSet(Map<int, Setting> settings) async {
-    final res = await ImGrpc.setImSettings(settings: settings);
-    if (!res.isSuccess) {
-      res.toast();
-      return false;
-    }
-    return true;
-  }
+  Future<LoadingState<void>> setSetting(int key, Setting setting) =>
+      _handle.setSetting(key, setting);
+
+  void mergeSubSettings(int parentKey, Map<int, Setting> settings) =>
+      _handle.mergeSubSettings(parentKey, settings);
 }

@@ -14,19 +14,17 @@ import 'package:pili_aurora/utils/id_utils.dart';
 import 'package:pili_aurora/utils/page_utils.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
-import 'package:get/get.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart' hide ListTile;
 
-class SysMsgPage extends StatefulWidget {
+class SysMsgPage extends ConsumerStatefulWidget {
   const SysMsgPage({super.key});
 
   @override
-  State<SysMsgPage> createState() => _SysMsgPageState();
+  ConsumerState<SysMsgPage> createState() => _SysMsgPageState();
 }
 
-class _SysMsgPageState extends State<SysMsgPage> {
-  final _sysMsgController = Get.put(SysMsgController());
-
+class _SysMsgPageState extends ConsumerState<SysMsgPage> {
   static final RegExp _urlRegExp = RegExp(
     r'#\{([^}]*)\}\{([^}]*)\}|https?:\/\/[^\s/\$.?#].[^\s]*|www\.[^\s/\$.?#].[^\s]*|【(.*?)】|（(\d+)）',
   );
@@ -34,10 +32,12 @@ class _SysMsgPageState extends State<SysMsgPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final feed = ref.watch(systemMessageFeedProvider);
+    final controller = ref.read(systemMessageFeedProvider.notifier);
     return SimpleScaffold(
       appBar: AppBar(title: const Text('系统通知')),
       body: refreshIndicator(
-        onRefresh: _sysMsgController.onRefresh,
+        onRefresh: controller.refresh,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -45,9 +45,7 @@ class _SysMsgPageState extends State<SysMsgPage> {
               padding: EdgeInsets.only(
                 bottom: MediaQuery.viewPaddingOf(context).bottom + 100,
               ),
-              sliver: Obx(
-                () => _buildBody(theme, _sysMsgController.loadingState.value),
-              ),
+              sliver: _buildBody(theme, feed.loadingState, controller),
             ),
           ],
         ),
@@ -58,6 +56,7 @@ class _SysMsgPageState extends State<SysMsgPage> {
   Widget _buildBody(
     ThemeData theme,
     LoadingState<List<MsgSysItem>?> loadingState,
+    SystemMessageFeedNotifier controller,
   ) {
     switch (loadingState) {
       case Loading():
@@ -84,13 +83,22 @@ class _SysMsgPageState extends State<SysMsgPage> {
             itemCount: response.length,
             itemBuilder: (context, int index) {
               if (index == response.length - 1) {
-                _sysMsgController.onLoadMore();
+                controller.loadMore();
               }
               final item = response[index];
               void onLongPress() => showConfirmDialog(
                 context: context,
                 title: const Text('确定删除该通知?'),
-                onConfirm: () => _sysMsgController.onRemove(item.id, index),
+                onConfirm: () async {
+                  final id = item.id;
+                  if (id == null) return;
+                  final result = await controller.remove(id);
+                  if (result.isSuccess) {
+                    SmartDialog.showToast('删除成功');
+                  } else {
+                    result.toast();
+                  }
+                },
               );
               return ListTile(
                 safeArea: true,
@@ -133,11 +141,11 @@ class _SysMsgPageState extends State<SysMsgPage> {
             separatorBuilder: (context, index) => divider,
           );
         }
-        return HttpError(onReload: _sysMsgController.onReload);
+        return HttpError(onReload: controller.refresh);
       case Error(:final errMsg):
         return HttpError(
           errMsg: errMsg,
-          onReload: _sysMsgController.onReload,
+          onReload: controller.refresh,
         );
     }
   }

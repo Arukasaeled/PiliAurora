@@ -264,6 +264,7 @@ abstract final class LegacySettingBoxKey {
 
 abstract final class LocalCacheKey {
   static const String historyPause = 'historyPause',
+      recentEmotes = 'recentEmotes',
       blackMids = 'blackMids',
       danmakuFilterRules = 'danmakuFilterRules',
       mixinKey = 'mixinKey',

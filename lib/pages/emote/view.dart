@@ -54,83 +54,40 @@ class _EmotePanelState extends State<EmotePanel>
                   Expanded(
                     child: tabBarView(
                       controller: _emotePanelController.tabController,
-                      children: response.map(
-                        (e) {
-                          final emote = e.emote;
-                          if (emote == null || emote.isEmpty) {
+                      children: [
+                        Obx(() {
+                          final recent = _emotePanelController.recentEmotes
+                              .toList();
+                          return recent.isEmpty
+                              ? const Center(child: Text('暂无历史表情'))
+                              : _buildEmoteGrid(theme, recent, 60);
+                        }),
+                        ...response.map((package) {
+                          final emotes = package.emote;
+                          if (emotes == null || emotes.isEmpty) {
                             return const SizedBox.shrink();
                           }
-                          final flag = emote.first.meta?.size == 1;
-                          final size = flag ? 40.0 : 60.0;
-                          final isTextEmote = e.type == 4;
-                          return GridView.builder(
-                            physics: platformClampingPhysics,
-                            padding: const EdgeInsets.only(
-                              left: 12,
-                              right: 12,
-                              bottom: 12,
-                            ),
-                            gridDelegate:
-                                SliverGridDelegateWithMaxCrossAxisExtent(
-                                  maxCrossAxisExtent: isTextEmote ? 100 : size,
-                                  crossAxisSpacing: 8,
-                                  mainAxisSpacing: 8,
-                                  mainAxisExtent: size,
-                                ),
-                            itemCount: emote.length,
-                            itemBuilder: (context, index) {
-                              final item = emote[index];
-                              Widget child = Padding(
-                                padding: const EdgeInsets.all(6),
-                                child: isTextEmote
-                                    ? Center(
-                                        child: Text(
-                                          item.text ?? '',
-                                          overflow: TextOverflow.clip,
-                                          maxLines: 1,
-                                        ),
-                                      )
-                                    : NetworkImgLayer(
-                                        src: item.url,
-                                        width: size,
-                                        height: size,
-                                        type: ImageType.emote,
-                                        fit: BoxFit.contain,
-                                      ),
-                              );
-                              if (!isTextEmote) {
-                                child = emoteTooltipBuilder(
-                                  enable: true,
-                                  size: 70,
-                                  colorScheme: theme.colorScheme,
-                                  url: item.url,
-                                  emote: item.text,
-                                  triggerMode: kTriggerMode,
-                                  child: child,
-                                );
-                              }
-                              return Material(
-                                type: MaterialType.transparency,
-                                child: InkWell(
-                                  borderRadius: const BorderRadius.all(
-                                    Radius.circular(6),
-                                  ),
-                                  onTap: () => widget.onChoose(
-                                    item,
+                          final small = emotes.first.meta?.size == 1;
+                          final isTextEmote = package.type == 4;
+                          return _buildEmoteGrid(
+                            theme,
+                            emotes
+                                .map(
+                                  (emote) => RecentEmote(
+                                    emote,
                                     isTextEmote
                                         ? null
-                                        : flag
+                                        : small
                                         ? 24
                                         : 42,
-                                    null,
                                   ),
-                                  child: child,
-                                ),
-                              );
-                            },
+                                )
+                                .toList(),
+                            small ? 40 : 60,
+                            isTextPackage: isTextEmote,
                           );
-                        },
-                      ).toList(),
+                        }),
+                      ],
                     ),
                   ),
                   Divider(
@@ -162,19 +119,25 @@ class _EmotePanelState extends State<EmotePanel>
                           dividerColor: Colors.transparent,
                           dividerHeight: 0,
                           isScrollable: true,
-                          tabs: response
-                              .map(
-                                (e) => Padding(
-                                  padding: const EdgeInsets.all(8),
-                                  child: NetworkImgLayer(
-                                    width: 24,
-                                    height: 24,
-                                    type: ImageType.emote,
-                                    src: e.url,
-                                  ),
+                          tabs: [
+                            const Tab(
+                              icon: Tooltip(
+                                message: '历史表情',
+                                child: Icon(Icons.history, size: 24),
+                              ),
+                            ),
+                            ...response.map(
+                              (e) => Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: NetworkImgLayer(
+                                  width: 24,
+                                  height: 24,
+                                  type: ImageType.emote,
+                                  src: e.url,
                                 ),
-                              )
-                              .toList(),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -186,6 +149,68 @@ class _EmotePanelState extends State<EmotePanel>
       Error(:final errMsg) => _errorWidget(errMsg),
     };
   }
+
+  Widget _buildEmoteGrid(
+    ThemeData theme,
+    List<RecentEmote> entries,
+    double size, {
+    bool isTextPackage = false,
+  }) => GridView.builder(
+    physics: platformClampingPhysics,
+    padding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
+    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+      maxCrossAxisExtent: isTextPackage ? 100 : size,
+      crossAxisSpacing: 8,
+      mainAxisSpacing: 8,
+      mainAxisExtent: size,
+    ),
+    itemCount: entries.length,
+    itemBuilder: (context, index) {
+      final entry = entries[index];
+      final item = entry.emote;
+      final isTextEmote = entry.width == null;
+      Widget child = Padding(
+        padding: const EdgeInsets.all(6),
+        child: isTextEmote
+            ? Center(
+                child: Text(
+                  item.text ?? '',
+                  overflow: TextOverflow.clip,
+                  maxLines: 1,
+                ),
+              )
+            : NetworkImgLayer(
+                src: item.url,
+                width: size,
+                height: size,
+                type: ImageType.emote,
+                fit: BoxFit.contain,
+              ),
+      );
+      if (!isTextEmote) {
+        child = emoteTooltipBuilder(
+          enable: true,
+          size: 70,
+          colorScheme: theme.colorScheme,
+          url: item.url,
+          emote: item.text,
+          triggerMode: kTriggerMode,
+          child: child,
+        );
+      }
+      return Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: const BorderRadius.all(Radius.circular(6)),
+          onTap: () {
+            widget.onChoose(item, entry.width, null);
+            _emotePanelController.recordEmote(item, entry.width);
+          },
+          child: child,
+        ),
+      );
+    },
+  );
 
   Widget _errorWidget([String? errMsg]) => Center(
     child: TextButton.icon(
