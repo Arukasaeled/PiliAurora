@@ -29,6 +29,117 @@ void main() {
     recovery.dispose();
   });
 
+  testWidgets('原生重连后播放与缓冲同时推进，不再重载健康媒体', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(milliseconds: 196600),
+      buffer: const Duration(milliseconds: 209960),
+    );
+    var retries = 0;
+    final recovery =
+        PlaybackNetworkRecovery(
+            isCurrent: () => true,
+            readState: () => state,
+            reload: (_) async => retries++,
+            onError: (error) => fail('$error'),
+          )
+          ..schedule(tryNextCdn: true)
+          // 同一错误还会经过 stream.error，但不能抹掉原始断流时的观察值。
+          ..schedule(requireEmptyBuffer: true);
+    state = (
+      buffering: false,
+      position: const Duration(milliseconds: 199600),
+      buffer: const Duration(milliseconds: 213040),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 0);
+    recovery.dispose();
+  });
+
+  testWidgets('取消未执行的重载后，新断流仍可获得恢复机会', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(seconds: 10),
+      buffer: const Duration(seconds: 30),
+    );
+    var retries = 0;
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (_) async => retries++,
+      onError: (error) => fail('$error'),
+    )..schedule(throttle: true);
+    state = (
+      buffering: false,
+      position: const Duration(seconds: 13),
+      buffer: const Duration(seconds: 33),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 0);
+    recovery.schedule(throttle: true);
+    state = (
+      buffering: false,
+      position: const Duration(seconds: 16),
+      buffer: const Duration(seconds: 33),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 1);
+    recovery.dispose();
+  });
+
+  testWidgets('播放时钟推进但缓冲不再增长，仍恢复终止读取', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(seconds: 10),
+      buffer: const Duration(seconds: 30),
+    );
+    var retries = 0;
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (_) async => retries++,
+      onError: (error) => fail('$error'),
+    )..schedule();
+    state = (
+      buffering: false,
+      position: const Duration(seconds: 13),
+      buffer: const Duration(seconds: 30),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 1);
+    recovery.dispose();
+  });
+
+  testWidgets('恢复窗口内再次断流，以最新故障的缓冲位置判断', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(seconds: 10),
+      buffer: const Duration(seconds: 30),
+    );
+    var retries = 0;
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (_) async => retries++,
+      onError: (error) => fail('$error'),
+    )..schedule();
+    await tester.pump(const Duration(seconds: 1));
+    state = (
+      buffering: false,
+      position: const Duration(seconds: 11),
+      buffer: const Duration(seconds: 31),
+    );
+    recovery.schedule();
+    state = (
+      buffering: false,
+      position: const Duration(seconds: 13),
+      buffer: const Duration(seconds: 31),
+    );
+    await tester.pump(const Duration(seconds: 2));
+    expect(retries, 1);
+    recovery.dispose();
+  });
+
   testWidgets('缓冲耗尽时恢复，无需等待另一条错误事件', (tester) async {
     var state = (
       buffering: true,
