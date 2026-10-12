@@ -8,29 +8,32 @@ class PlayIcon extends StatelessWidget {
   final double size;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    label: '播放',
-    textDirection: TextDirection.ltr,
-    child: SizedBox.square(
-      dimension: size,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // 资源的 60px 图形四周保留 12px 阴影；布局尺寸仍按图形计算。
-          final extent = constraints.biggest.shortestSide * 84 / 60;
-          return OverflowBox(
-            minWidth: extent,
-            maxWidth: extent,
-            minHeight: extent,
-            maxHeight: extent,
-            child: Image.asset(
-              Assets.playIcon,
-              width: extent,
-              height: extent,
-              excludeFromSemantics: true,
-              filterQuality: FilterQuality.medium,
-            ),
-          );
-        },
+  Widget build(BuildContext context) => IgnorePointer(
+    // 图标是封面的装饰，点击交由下层封面的播放手势处理。
+    child: Semantics(
+      label: '播放',
+      textDirection: TextDirection.ltr,
+      child: SizedBox.square(
+        dimension: size,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // 资源的 60px 图形四周保留 12px 阴影；布局尺寸仍按图形计算。
+            final extent = constraints.biggest.shortestSide * 84 / 60;
+            return OverflowBox(
+              minWidth: extent,
+              maxWidth: extent,
+              minHeight: extent,
+              maxHeight: extent,
+              child: Image.asset(
+                Assets.playIcon,
+                width: extent,
+                height: extent,
+                excludeFromSemantics: true,
+                filterQuality: FilterQuality.medium,
+              ),
+            );
+          },
+        ),
       ),
     ),
   );
