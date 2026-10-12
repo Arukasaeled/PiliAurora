@@ -24,27 +24,54 @@ String? localDependency(File file, String uri) {
 }
 
 void main() {
-  test(
-    'playback scheduling and recovery are independent of UI and network',
-    () {
-      for (final name in ['playback_session', 'network_recovery']) {
-        final file = File('lib/plugin/pl_player/playback/$name.dart');
-        expect(
-          dependencies(file).where(
-            (uri) =>
-                uri.startsWith('package:flutter/') ||
-                uri.startsWith('package:get/') ||
-                uri.startsWith('package:dio/') ||
-                uri.contains('/pages/') ||
-                uri.contains('/http/') ||
-                uri.contains('/storage'),
+  const sharedRestrictions = [
+    'package:flutter/',
+    'package:get/',
+    '/pages/',
+    '/http/',
+  ];
+  const coreRestrictions = [
+    ...sharedRestrictions,
+    'package:dio/',
+    '/storage',
+  ];
+  const rules = <String, List<String>>{
+    'plugin/pl_player/playback/playback_session.dart': coreRestrictions,
+    'plugin/pl_player/playback/network_recovery.dart': coreRestrictions,
+    'services/download/download_repository.dart': [
+      ...coreRestrictions,
+      '/logger.dart',
+    ],
+    'services/settings/settings_backup.dart': [
+      ...sharedRestrictions,
+      'package:dio/',
+      '/utils/storage',
+      '/logger.dart',
+    ],
+    'services/settings/webdav_sync.dart': [
+      ...sharedRestrictions,
+      'package:flutter_smart_dialog/',
+      '/utils/storage',
+      '/device_utils',
+    ],
+    'services/download/download_manager.dart': ['/http/'],
+  };
+  for (final entry in rules.entries) {
+    test('${entry.key} respects its dependency boundary', () {
+      final file = File('lib/${entry.key}');
+      expect(
+        dependencies(file).where(
+          (uri) => entry.value.any(
+            (restriction) => restriction.startsWith('package:')
+                ? uri.startsWith(restriction)
+                : uri.contains(restriction),
           ),
-          isEmpty,
-          reason: file.path,
-        );
-      }
-    },
-  );
+        ),
+        isEmpty,
+        reason: file.path,
+      );
+    });
+  }
   test(
     'main and app composition modules are never imported by lower layers',
     () {
@@ -65,74 +92,6 @@ void main() {
         }
       }
       expect(violations, isEmpty, reason: violations.join('\n'));
-    },
-  );
-
-  test(
-    'download persistence has no direct application, UI or network dependency',
-    () {
-      final file = File('lib/services/download/download_repository.dart');
-      expect(
-        dependencies(file).where(
-          (uri) =>
-              uri.startsWith('package:flutter/') ||
-              uri.startsWith('package:get/') ||
-              uri.startsWith('package:dio/') ||
-              uri.contains('/pages/') ||
-              uri.contains('/http/') ||
-              uri.contains('/storage') ||
-              uri.contains('/logger.dart'),
-        ),
-        isEmpty,
-      );
-    },
-  );
-
-  test(
-    'settings backup has no application, UI or global storage dependency',
-    () {
-      final file = File('lib/services/settings/settings_backup.dart');
-      expect(
-        dependencies(file).where(
-          (uri) =>
-              uri.startsWith('package:flutter/') ||
-              uri.startsWith('package:get/') ||
-              uri.startsWith('package:dio/') ||
-              uri.contains('/pages/') ||
-              uri.contains('/http/') ||
-              uri.contains('/utils/storage') ||
-              uri.contains('/logger.dart'),
-        ),
-        isEmpty,
-      );
-    },
-  );
-
-  test('WebDAV settings sync has no UI or global configuration dependency', () {
-    final file = File('lib/services/settings/webdav_sync.dart');
-    expect(
-      dependencies(file).where(
-        (uri) =>
-            uri.startsWith('package:flutter/') ||
-            uri.startsWith('package:get/') ||
-            uri.startsWith('package:flutter_smart_dialog/') ||
-            uri.contains('/pages/') ||
-            uri.contains('/http/') ||
-            uri.contains('/utils/storage') ||
-            uri.contains('/device_utils'),
-      ),
-      isEmpty,
-    );
-  });
-
-  test(
-    'download executor cannot obtain its client from the global request layer',
-    () {
-      final file = File('lib/services/download/download_manager.dart');
-      expect(
-        dependencies(file).where((uri) => uri.contains('/http/')),
-        isEmpty,
-      );
     },
   );
 }

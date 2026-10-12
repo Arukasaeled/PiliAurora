@@ -94,10 +94,15 @@ class TestFeedNotifier extends FeedNotifier<int> {
 }
 
 void main() {
+  late MessagingSession session;
+
+  setUp(() => session = sessionFixture());
+  tearDown(() => session.dispose());
+
   test('会话已读同步到所有列表，旧刷新不会覆盖操作结果', () async {
-    final session = sessionFixture();
     final adapter = FakeSessionAdapter();
     final sessions = Sessions(session, adapter: adapter);
+    addTearDown(sessions.dispose);
     final home = sessions.list(SessionFolder.home);
     final secondary = sessions.list(SessionFolder.unfollowed);
     final first = home.loadIfNeeded();
@@ -113,14 +118,12 @@ void main() {
     await refresh;
     expect(home.state.value.entries.first.unread.isUnread, isFalse);
     expect(secondary.state.value.entries.single.unread.isUnread, isFalse);
-    sessions.dispose();
-    session.dispose();
   });
 
   test('删除会话后在途列表结果不能恢复已删除项', () async {
-    final session = sessionFixture();
     final adapter = FakeSessionAdapter();
     final sessions = Sessions(session, adapter: adapter);
+    addTearDown(sessions.dispose);
     final home = sessions.list(SessionFolder.home);
     final initial = home.loadIfNeeded();
     adapter.requests[0].complete(sessionPage([1, 2]));
@@ -130,13 +133,12 @@ void main() {
     adapter.requests[1].complete(sessionPage([1, 2]));
     await refresh;
     expect(home.state.value.entries.map((e) => e.key.primary), [2]);
-    sessions.dispose();
-    session.dispose();
   });
 
   test('账号切换重建会话订阅，旧账号响应不进入新列表', () async {
-    final oldSession = sessionFixture();
+    final oldSession = session;
     final newSession = sessionFixture();
+    addTearDown(newSession.dispose);
     final adapters = {
       oldSession: FakeSessionAdapter(),
       newSession: FakeSessionAdapter(),
@@ -156,6 +158,7 @@ void main() {
         }),
       ],
     );
+    addTearDown(container.dispose);
     final provider = sessionListSnapshotProvider(SessionFolder.home);
     final subscription = container.listen(provider, (_, next) {});
     oldSession.dispose();
@@ -168,27 +171,24 @@ void main() {
     await settle();
     expect(container.read(provider).entries.single.key.primary, 2);
     subscription.close();
-    container.dispose();
-    newSession.dispose();
   });
 
   test('Riverpod 快照桥接同步更新，释放后取消监听', () {
     final values = ValueNotifier(1);
+    addTearDown(values.dispose);
     final provider = snapshotProvider<int>((ref) => values);
     final container = ProviderContainer();
+    addTearDown(container.dispose);
     final subscription = container.listen(provider, (_, next) {});
     expect(container.read(provider), 1);
     values.value = 2;
     expect(container.read(provider), 2);
     subscription.close();
     container.dispose();
-    values
-      ..value = 3
-      ..dispose();
+    values.value = 3;
   });
 
   test('Feed Notifier 首次创建可安全加载并发布状态', () async {
-    final session = sessionFixture();
     final container = ProviderContainer(
       overrides: [
         messagingSessionProvider.overrideWith(
@@ -196,16 +196,14 @@ void main() {
         ),
       ],
     );
+    addTearDown(container.dispose);
     final subscription = container.listen(testFeedProvider, (_, next) {});
     await settle();
     expect(container.read(testFeedProvider).loadingState.data, [1]);
     subscription.close();
-    container.dispose();
-    session.dispose();
   });
 
   test('点赞刷新重新开放分页，并保留 latest 与 total 分组', () async {
-    final session = sessionFixture();
     int calls = 0;
     final feed = LikeFeedHandle(
       session: session,
@@ -223,6 +221,7 @@ void main() {
       delete: (account, id) async => const Success(null),
       setNoticeRequest: (account, id, state) async => const Success(null),
     );
+    addTearDown(feed.dispose);
     await feed.refresh();
     expect(feed.canLoadMore, isFalse);
     await feed.refresh();
@@ -231,12 +230,9 @@ void main() {
     final groups = feed.state.value.loadingState.data;
     expect(groups.latest.single.id, 1);
     expect(groups.total.map((m) => m.id), [3, 4]);
-    feed.dispose();
-    session.dispose();
   });
 
   test('未读合并重复刷新，阅读后旧结果失效', () async {
-    final session = sessionFixture();
     final requests = <Completer<UnreadQueryResult>>[];
     final overview = UnreadOverview(
       session,
@@ -246,6 +242,7 @@ void main() {
         return request.future;
       },
     );
+    addTearDown(overview.dispose);
     final first = overview.refresh();
     final repeated = overview.refresh();
     expect(identical(first, repeated), isTrue);
@@ -257,12 +254,9 @@ void main() {
     requests[0].complete(const UnreadQueryResult({MsgUnReadType.reply: 9}));
     await first;
     expect(overview.state.value.counts[MsgUnReadType.reply], 0);
-    overview.dispose();
-    session.dispose();
   });
 
   test('查询失败保留旧数值，缺失分类保持未知', () async {
-    final session = sessionFixture();
     int count = 0;
     final overview = UnreadOverview(
       session,
@@ -270,17 +264,15 @@ void main() {
           ? const UnreadQueryResult({MsgUnReadType.reply: 4})
           : const UnreadQueryResult({}, errors: {MsgUnReadType.reply: '失败'}),
     );
+    addTearDown(overview.dispose);
     await overview.refresh();
     await overview.refresh();
     expect(overview.state.value.counts[MsgUnReadType.reply], 4);
     expect(overview.state.value.counts[MsgUnReadType.pm], isNull);
     expect(overview.state.value.errors[MsgUnReadType.reply], '失败');
-    overview.dispose();
-    session.dispose();
   });
 
   test('账号释放后在途响应返回失效', () async {
-    final session = sessionFixture();
     final response = Completer<LoadingState<int>>();
     final result = session.run((account) => response.future);
     session.dispose();
@@ -289,12 +281,10 @@ void main() {
   });
 
   group('聊天', () {
-    late MessagingSession session;
     late FakeConversationAdapter adapter;
     late Conversation chat;
 
     setUp(() {
-      session = sessionFixture();
       adapter = FakeConversationAdapter();
       chat = Conversation(
         session: session,
@@ -302,10 +292,7 @@ void main() {
         adapter: adapter,
       );
     });
-    tearDown(() {
-      chat.dispose();
-      session.dispose();
-    });
+    tearDown(() => chat.dispose());
     test('发送成功后的刷新应查询发送后的记录', () async {
       final initial = chat.open();
       expect((await chat.sendText('new message')).isSuccess, isTrue);
@@ -416,12 +403,12 @@ void main() {
   });
 
   test('聊天缓存不会驱逐在用会话，释放后回收空闲会话', () {
-    final session = sessionFixture();
     final cache = ConversationCache(
       session: session,
       adapter: FakeConversationAdapter(),
       maximumEntries: 1,
     );
+    addTearDown(cache.dispose);
     final first = cache.acquire(const ConversationTarget(talkerId: 1));
     final second = cache.acquire(const ConversationTarget(talkerId: 2));
     final same = cache.acquire(const ConversationTarget(talkerId: 1));
@@ -432,8 +419,6 @@ void main() {
     expect(identical(first.conversation, recreated.conversation), isFalse);
     second.release();
     recreated.release();
-    cache.dispose();
-    session.dispose();
   });
 
   test('结构化内容递归不可变且不共享输入集合', () {
@@ -450,7 +435,6 @@ void main() {
   });
 
   test('Feed 刷新废弃旧分页，删除使用稳定 ID', () async {
-    final session = sessionFixture();
     final requests = <Completer<LoadingState<FeedPage<int>>>>[];
     final feed = FeedHandle<int>(
       session: session,
@@ -462,6 +446,7 @@ void main() {
       },
       delete: (account, id) async => const Success(null),
     );
+    addTearDown(feed.dispose);
     final initial = feed.refresh();
     requests[0].complete(
       Success(FeedPage(items: const [1, 2], cursor: const FeedCursor(id: 2))),
@@ -477,7 +462,5 @@ void main() {
     await older;
     await feed.remove(2);
     expect(feed.state.value.loadingState.data, [3]);
-    feed.dispose();
-    session.dispose();
   });
 }
