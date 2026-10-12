@@ -633,6 +633,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       _epid = epid;
       _seasonId = seasonId;
       _pgcType = pgcType;
+      // 共享播放器切源后按当前媒体重新选择默认超分，避免沿用上一视频。
+      superResolutionType.value = isAnim
+          ? Pref.superResolutionType
+          : SuperResolutionType.disable;
 
       if (showSeekPreview) {
         _clearPreview();
@@ -693,7 +697,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     );
   }
 
-  late final isAnim = _pgcType == 1 || _pgcType == 4;
+  bool get isAnim => _pgcType == 1 || _pgcType == 4;
   late final Rx<SuperResolutionType> superResolutionType =
       (isAnim ? Pref.superResolutionType : SuperResolutionType.disable).obs;
   Future<void> setShader([SuperResolutionType? type, NativePlayer? pp]) async {
@@ -753,8 +757,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     if (player == null || !isCurrent()) return false;
     if (_subscriptions == null) {
       _startListeners(player);
-      if (isAnim && superResolutionType.value != .disable) await setShader();
     }
+    // 原生播放器跨媒体复用；关闭超分时也要清除已有 shader。
+    await setShader();
     if (!isCurrent()) return false;
 
     final Map<String, String> extras = {
