@@ -23,6 +23,7 @@ import 'package:pili_aurora/models/common/live/live_contribution_rank_type.dart'
 import 'package:pili_aurora/models/remote/live/live_room_info_h5/data.dart';
 import 'package:pili_aurora/models/remote/live/live_superchat/item.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
+import 'package:pili_aurora/pages/danmaku/frame_rate_setting.dart';
 import 'package:pili_aurora/pages/live_room/contribution_rank/controller.dart';
 import 'package:pili_aurora/pages/live_room/contribution_rank/view.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
@@ -1074,20 +1075,27 @@ class _LiveDanmakuState extends State<LiveDanmaku> {
   @override
   Widget build(BuildContext context) {
     final option = DanmakuOptions.get(notFullscreen: widget.notFullscreen);
-    return Obx(
-      () => AnimatedOpacity(
-        opacity: plPlayerController.enableShowLiveDanmaku.value
-            ? plPlayerController.danmakuOpacity.value
-            : 0,
-        duration: const Duration(milliseconds: 100),
-        child: DanmakuScreen<DanmakuExtra>(
-          frameRate: Pref.danmakuFrameRate,
-          createdController: (e) {
-            widget.liveRoomController.danmakuController =
-                plPlayerController.danmakuController = e;
-          },
-          option: option,
-          size: widget.size,
+    return DanmakuFrameRateSetting(
+      builder: (context, frameRate) => Obx(
+        () => AnimatedOpacity(
+          opacity: plPlayerController.enableShowLiveDanmaku.value
+              ? plPlayerController.danmakuOpacity.value
+              : 0,
+          duration: const Duration(milliseconds: 100),
+          child: TickerMode(
+            enabled:
+                plPlayerController.enableShowLiveDanmaku.value &&
+                plPlayerController.danmakuOpacity.value > 0,
+            child: DanmakuScreen<DanmakuExtra>(
+              frameRate: frameRate,
+              createdController: (e) {
+                widget.liveRoomController.danmakuController =
+                    plPlayerController.danmakuController = e;
+              },
+              option: option,
+              size: widget.size,
+            ),
+          ),
         ),
       ),
     );

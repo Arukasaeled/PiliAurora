@@ -511,10 +511,10 @@ List<SettingsModel> get playEnhancementSettings => [
 ];
 
 NormalModel get danmakuFrameRateSetting => NormalModel(
-  title: '弹幕帧率',
+  title: '弹幕帧率（实验性）',
   leading: const Icon(Icons.speed_outlined),
   getSubtitle: () =>
-      '${Pref.danmakuFrameRate == 0 ? '跟随屏幕' : '${Pref.danmakuFrameRate} FPS'}；重新打开播放页面后生效',
+      '${Pref.danmakuFrameRate == 0 ? '跟随屏幕' : '${Pref.danmakuFrameRate} FPS'}；立即生效',
   onTap: _showDanmakuFrameRateDialog,
 );
 
@@ -680,7 +680,7 @@ Future<void> _showDanmakuFrameRateDialog(
   final result = await showDialog<int>(
     context: context,
     builder: (context) => SelectDialog<int>(
-      title: '弹幕帧率',
+      title: '弹幕帧率（实验性）',
       value: Pref.danmakuFrameRate,
       values: const [
         (0, '跟随屏幕'),
@@ -690,7 +690,7 @@ Future<void> _showDanmakuFrameRateDialog(
         (120, '120 FPS'),
       ],
       subtitleBuilder: (_, index) => Text(
-        index == 0 ? '沿用屏幕刷新节奏；重新打开播放页面后生效' : '限制弹幕刷新频率，降低绘制开销；重新打开播放页面后生效',
+        index == 0 ? '沿用屏幕刷新节奏；立即生效' : '尝试限制弹幕刷新频率；同步期间可能出现短暂波动；立即生效',
       ),
     ),
   );

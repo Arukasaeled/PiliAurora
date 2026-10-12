@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/controller.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
+import 'package:pili_aurora/pages/danmaku/frame_rate_setting.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
 import 'package:pili_aurora/pages/danmaku/render_guard.dart';
 import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
@@ -278,46 +279,48 @@ class _PlDanmakuState extends State<PlDanmaku> {
       notFullscreen: widget.notFullscreen,
       speed: playerController.playbackSpeed,
     );
-    return Obx(
-      () {
-        final opacity = playerController.enableShowDanmaku.value
-            ? playerController.danmakuOpacity.value
-            : 0.0;
-        if (PlatformUtils.isDesktop && _windowsPreprocess) {
-          return WindowsDanmakuScreen<DanmakuExtra>(
-            frameRate: Pref.danmakuFrameRate,
+    return DanmakuFrameRateSetting(
+      builder: (context, frameRate) => Obx(
+        () {
+          final opacity = playerController.enableShowDanmaku.value
+              ? playerController.danmakuOpacity.value
+              : 0.0;
+          if (PlatformUtils.isDesktop && _windowsPreprocess) {
+            return WindowsDanmakuScreen<DanmakuExtra>(
+              frameRate: frameRate,
+              option: option,
+              size: widget.size,
+              opacity: opacity,
+              createdRenderer: (renderer) {
+                _windowsRenderer = renderer;
+                playerController.danmakuController = _controller =
+                    renderer.controller;
+                if (!playerController.playerStatus.isPlaying) renderer.pause();
+              },
+            );
+          }
+          final child = DanmakuScreen<DanmakuExtra>(
+            frameRate: frameRate,
+            createdController: (e) {
+              playerController.danmakuController = _controller = e;
+            },
             option: option,
             size: widget.size,
+          );
+          if (opacity == 0) {
+            // 关闭时不绘制弹幕，也暂停其 ticker；状态仍保留以便快速恢复。
+            return TickerMode(
+              enabled: false,
+              child: Offstage(child: child),
+            );
+          }
+          return AnimatedOpacity(
             opacity: opacity,
-            createdRenderer: (renderer) {
-              _windowsRenderer = renderer;
-              playerController.danmakuController = _controller =
-                  renderer.controller;
-              if (!playerController.playerStatus.isPlaying) renderer.pause();
-            },
+            duration: const Duration(milliseconds: 100),
+            child: child,
           );
-        }
-        final child = DanmakuScreen<DanmakuExtra>(
-          frameRate: Pref.danmakuFrameRate,
-          createdController: (e) {
-            playerController.danmakuController = _controller = e;
-          },
-          option: option,
-          size: widget.size,
-        );
-        if (opacity == 0) {
-          // 关闭时不绘制弹幕，也暂停其 ticker；状态仍保留以便快速恢复。
-          return TickerMode(
-            enabled: false,
-            child: Offstage(child: child),
-          );
-        }
-        return AnimatedOpacity(
-          opacity: opacity,
-          duration: const Duration(milliseconds: 100),
-          child: child,
-        );
-      },
+        },
+      ),
     );
   }
 }

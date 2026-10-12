@@ -1,8 +1,44 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('60 FPS 弹幕复用同相位 Dart 帧，帧内耗时不应错过下一帧', (tester) async {
+    final ticks = <Duration>[];
+    final animation = Ticker((_) {})..start();
+    final ticker = FrameRateTicker((elapsed) {
+      ticks.add(elapsed);
+      // 模拟更新弹幕时的同步耗时；其它 Dart 动画继续提供帧回调。
+      (tester.binding as AutomatedTestWidgetsFlutterBinding).elapseBlocking(
+        const Duration(milliseconds: 1),
+      );
+    }, frameRate: 60)..start();
+    await tester.pump();
+    await tester.pump(const Duration(microseconds: 15667));
+    expect(ticks, [Duration.zero, const Duration(microseconds: 16667)]);
+    ticker.dispose();
+    animation.dispose();
+  });
+
+  testWidgets('同相位 Dart 帧承载弹幕后取消后续定时刷新请求', (tester) async {
+    final ticks = <Duration>[];
+    final ticker = FrameRateTicker((elapsed) {
+      ticks.add(elapsed);
+      (tester.binding as AutomatedTestWidgetsFlutterBinding).elapseBlocking(
+        const Duration(milliseconds: 1),
+      );
+    }, frameRate: 60)..start();
+    await tester.pump();
+    // 模拟外部请求下一张 Dart 帧，没有持续运行的 Flutter 动画。
+    tester.binding.scheduleFrame();
+    await tester.pump(const Duration(microseconds: 15667));
+    await tester.binding.delayed(const Duration(milliseconds: 2));
+    expect(ticks.length, 2);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    ticker.dispose();
+  });
+
   testWidgets('移动端弹幕屏幕在 TickerMode 静音后停止请求帧', (tester) async {
     late DanmakuController<void> controller;
     Widget screen(bool enabled) => Directionality(

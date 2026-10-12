@@ -24,13 +24,13 @@ void main() {
 
   testWidgets('弹幕帧率提供固定档位并支持恢复跟随屏幕', (tester) async {
     final item = danmakuExtraSettings.whereType<NormalModel>().singleWhere(
-      (item) => item.title == '弹幕帧率',
+      (item) => item.title == '弹幕帧率（实验性）',
     );
     await tester.pumpWidget(
       GetMaterialApp(home: Scaffold(body: item.widget)),
     );
     expect(Pref.danmakuFrameRate, 0);
-    await tester.tap(find.text('弹幕帧率'));
+    await tester.tap(find.text('弹幕帧率（实验性）'));
     await tester.pumpAndSettle();
     for (final fps in [30, 60, 90, 120]) {
       expect(find.text('$fps FPS'), findsOneWidget);
@@ -38,8 +38,8 @@ void main() {
     await tester.tap(find.text('60 FPS'));
     await tester.pumpAndSettle();
     expect(Pref.danmakuFrameRate, 60);
-    expect(find.textContaining('60 FPS；重新打开播放页面后生效'), findsOneWidget);
-    await tester.tap(find.text('弹幕帧率'));
+    expect(find.textContaining('60 FPS；立即生效'), findsOneWidget);
+    await tester.tap(find.text('弹幕帧率（实验性）'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('跟随屏幕'));
     await tester.pumpAndSettle();
