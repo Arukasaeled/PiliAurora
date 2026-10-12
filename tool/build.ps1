@@ -73,6 +73,9 @@ function Resolve-FvmFlutterRoot {
 }
 
 if ($Platform -eq "android") {
+    # Gradle 启动器在 JDK 25 下加载原生库需要显式启用原生访问。
+    $env:JAVA_OPTS = (@($env:JAVA_OPTS, "--enable-native-access=ALL-UNNAMED") |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join " "
     $gradleTemp = Join-Path $Workspace ".gradle-tmp"
     New-Item -ItemType Directory -Force $gradleTemp | Out-Null
     $env:TEMP = $gradleTemp

@@ -40,6 +40,9 @@ jobs:
         if: ${{ (github.event_name == 'pull_request' && github.repository == 'wallpap/PiliAurora') || github.event.inputs.build_android == 'true' }}
         name: Release Android
         runs-on: ubuntu-latest
+        env:
+            # CI 不复用目录监听状态，避免 Linux runner 重复注册同一路径。
+            GRADLE_OPTS: "--enable-native-access=ALL-UNNAMED -Dorg.gradle.vfs.watch=false"
         permissions: write-all
 
         steps:

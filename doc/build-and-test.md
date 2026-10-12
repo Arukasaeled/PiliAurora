@@ -101,3 +101,9 @@ fvm flutter build apk --debug --no-pub
 ```
 
 这是本机临时目录相关的 Java socket 故障处理方式；若仍失败，检查实际堆栈并重新定位原因。IPv4 参数或 `--no-daemon` 未能解决本机这一故障。
+
+### Gradle 原生访问与目录监听
+
+JDK 25 下，Gradle 启动器使用 `--enable-native-access=ALL-UNNAMED` 显式允许加载原生库，避免原生访问警告。`tool/build.ps1 -Platform android` 通过 `JAVA_OPTS` 传递此参数；Android CI 通过 `GRADLE_OPTS` 传递。直接运行 Flutter 或 Gradle 时，可在当前终端的 `JAVA_OPTS` 中追加此参数。
+
+Android CI 另设置 `-Dorg.gradle.vfs.watch=false`，绕过重复目录监听异常 `Already watching path`。这会关闭跨构建保留文件系统状态的优化，本地构建保留默认监听行为。
