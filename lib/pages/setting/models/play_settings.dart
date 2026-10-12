@@ -510,14 +510,16 @@ List<SettingsModel> get playEnhancementSettings => [
   ),
 ];
 
+NormalModel get danmakuFrameRateSetting => NormalModel(
+  title: '弹幕帧率',
+  leading: const Icon(Icons.speed_outlined),
+  getSubtitle: () =>
+      '${Pref.danmakuFrameRate == 0 ? '跟随屏幕' : '${Pref.danmakuFrameRate} FPS'}；重载播放器后生效',
+  onTap: _showDanmakuFrameRateDialog,
+);
+
 List<SettingsModel> get danmakuExtraSettings => [
-  NormalModel(
-    title: '弹幕帧率',
-    leading: const Icon(Icons.speed_outlined),
-    getSubtitle: () =>
-        Pref.danmakuFrameRate == 0 ? '跟随屏幕' : '${Pref.danmakuFrameRate} FPS',
-    onTap: _showDanmakuFrameRateDialog,
-  ),
+  danmakuFrameRateSetting,
   NormalModel(
     title: '弹幕行高',
     subtitle: '默认1.6',
@@ -534,23 +536,28 @@ List<SettingsModel> get danmakuExtraSettings => [
     setKey: SettingBoxKey.showVipDanmaku,
     defaultVal: true,
   ),
+  ...danmakuMergeSettings,
+];
+
+/// 设置页与播放器弹幕面板共用合并选项及持久化逻辑。
+List<SettingsModel> get danmakuMergeSettings => [
   const SwitchModel(
     title: '合并弹幕',
-    subtitle: '合并20秒内相同或相似的弹幕；重新打开播放器生效',
+    subtitle: '合并20秒内相同或相似的弹幕；重载播放器后生效',
     leading: Icon(Icons.merge),
     setKey: SettingBoxKey.mergeDanmaku,
     defaultVal: false,
   ),
   const SwitchModel(
     title: '合并弹幕字号放大',
-    subtitle: '按重复数量放大，最高两倍；重新打开播放器生效',
+    subtitle: '按重复数量放大，最高两倍；重载播放器后生效',
     leading: Icon(Icons.format_size),
     setKey: SettingBoxKey.mergeDanmakuScale,
     defaultVal: true,
   ),
   NormalModel(
     title: '合并弹幕放大阈值',
-    getSubtitle: () => '重复数量超过${Pref.mergeDanmakuThreshold}条时放大',
+    getSubtitle: () => '重复数量超过${Pref.mergeDanmakuThreshold}条时放大；重载播放器后生效',
     leading: const Icon(Icons.filter_7_outlined),
     onTap: (context, setState) =>
         _showMergeScaleDialog(context, setState, threshold: true),
@@ -558,7 +565,7 @@ List<SettingsModel> get danmakuExtraSettings => [
   NormalModel(
     title: '合并弹幕放大速度',
     getSubtitle: () =>
-        '对数底数 ${Pref.mergeDanmakuLogBase.toStringAsFixed(1)}，越小放大越快',
+        '对数底数 ${Pref.mergeDanmakuLogBase.toStringAsFixed(1)}，越小放大越快；重载播放器后生效',
     leading: const Icon(Icons.speed),
     onTap: (context, setState) =>
         _showMergeScaleDialog(context, setState, threshold: false),
@@ -683,7 +690,7 @@ Future<void> _showDanmakuFrameRateDialog(
         (120, '120 FPS'),
       ],
       subtitleBuilder: (_, index) => Text(
-        index == 0 ? '沿用屏幕刷新节奏' : '限制弹幕刷新频率，降低绘制开销；重新打开播放器生效',
+        index == 0 ? '沿用屏幕刷新节奏；重载播放器后生效' : '限制弹幕刷新频率，降低绘制开销；重载播放器后生效',
       ),
     ),
   );

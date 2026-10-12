@@ -1,3 +1,4 @@
+import 'package:pili_aurora/pages/setting/models/play_settings.dart';
 import 'package:pili_aurora/common/widgets/button/icon_button.dart';
 import 'package:pili_aurora/pages/video/introduction/ugc/widgets/menu_row.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
@@ -217,6 +218,12 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                           onChanged: updateDanmakuWeight,
                         ),
                       ),
+                    ],
+                    danmakuFrameRateSetting.widget,
+                    if (!isLive) ...[
+                      for (final setting in danmakuMergeSettings)
+                        setting.widget,
+                      const SizedBox(height: 16),
                     ],
                     const Text('按类型屏蔽'),
                     SingleChildScrollView(

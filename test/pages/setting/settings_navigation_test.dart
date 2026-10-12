@@ -38,7 +38,7 @@ void main() {
     await tester.tap(find.text('60 FPS'));
     await tester.pumpAndSettle();
     expect(Pref.danmakuFrameRate, 60);
-    expect(find.text('60 FPS'), findsOneWidget);
+    expect(find.textContaining('60 FPS；重载播放器后生效'), findsOneWidget);
     await tester.tap(find.text('弹幕帧率'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('跟随屏幕'));
