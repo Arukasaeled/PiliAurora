@@ -1,10 +1,21 @@
 get_filename_component(LIBMPV_PACKAGE_DIR "${CMAKE_CURRENT_LIST_DIR}" REALPATH)
-set(LIBMPV_LOCAL_DIR "${LIBMPV_PACKAGE_DIR}/../../../build/local-libmpv")
-if(EXISTS "${LIBMPV_LOCAL_DIR}/SHA256SUMS")
-  include("${CMAKE_CURRENT_LIST_DIR}/libmpv-local.cmake")
-  return()
+set(LIBMPV_BUILD_PACKAGE "${LIBMPV_PACKAGE_DIR}/../../mpv")
+set(LIBMPV_PREBUILT "${LIBMPV_BUILD_PACKAGE}/prebuilt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${LIBMPV_PREBUILT}/SHA256SUMS" "${LIBMPV_PREBUILT}/windows-x64.zip")
+file(READ "${LIBMPV_PREBUILT}/SHA256SUMS" archive_manifest)
+string(SUBSTRING "${archive_manifest}" 0 64 expected_archive_hash)
+file(SHA256 "${LIBMPV_PREBUILT}/windows-x64.zip" archive_hash)
+if(NOT archive_hash STREQUAL expected_archive_hash)
+  message(FATAL_ERROR "Prebuilt libmpv archive SHA256 mismatch")
 endif()
-
-message(FATAL_ERROR
-  "Required temporary libmpv fix is missing: ${LIBMPV_LOCAL_DIR}/SHA256SUMS. "
-  "See third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md (#18603 + #18604).")
+set(LIBMPV_LOCAL_DIR "${CMAKE_BINARY_DIR}/libmpv-prebuilt-${archive_hash}")
+if(NOT EXISTS "${LIBMPV_LOCAL_DIR}/SHA256SUMS")
+  file(MAKE_DIRECTORY "${LIBMPV_LOCAL_DIR}")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E tar xf "${LIBMPV_PREBUILT}/windows-x64.zip"
+    WORKING_DIRECTORY "${LIBMPV_LOCAL_DIR}" RESULT_VARIABLE extract_result)
+  if(NOT extract_result EQUAL 0)
+    message(FATAL_ERROR "Prebuilt libmpv extraction failed: ${extract_result}")
+  endif()
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/libmpv-local.cmake")

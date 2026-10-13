@@ -1,7 +1,14 @@
-# 临时本地包同时提供 mpv、ANGLE 与动态依赖，避免混用两套运行库。
-file(SHA256 "${LIBMPV_LOCAL_DIR}/libmpv-2.dll" local_mpv_hash)
-if(NOT local_mpv_hash STREQUAL "cfc7af7483a509826f5cc4e4b1033a597814d6f14ab97bc4cca57301cc65e536")
-  message(FATAL_ERROR "Local libmpv does not match the validated #18603 + #18604 build")
+# 预编译包同时提供 mpv、ANGLE 与动态依赖，保持运行库来源一致。
+file(READ "${LIBMPV_LOCAL_DIR}/BUILD_INPUTS" recorded_inputs)
+set(current_inputs "")
+foreach(name source.tar.gz source.json build.sh packages.txt package-runtime.py windows-test-names.patch)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${LIBMPV_BUILD_PACKAGE}/${name}")
+  file(SHA256 "${LIBMPV_BUILD_PACKAGE}/${name}" input_hash)
+  string(APPEND current_inputs "${input_hash}  ${name}\n")
+endforeach()
+if(NOT recorded_inputs STREQUAL current_inputs)
+  message(FATAL_ERROR "libmpv build inputs changed; rebuild with third_party/mpv/build.sh")
 endif()
 file(STRINGS "${LIBMPV_LOCAL_DIR}/SHA256SUMS" local_manifest)
 set(LIBMPV_LOCAL_RUNTIME)
@@ -20,6 +27,8 @@ foreach(entry IN LISTS local_manifest)
     message(FATAL_ERROR "Local libmpv SHA256 mismatch: ${name}")
   endif()
   if(name MATCHES "\\.dll$")
+    # ZIP 使用固定时间戳；刷新校验后的 DLL，确保增量安装覆盖旧运行库。
+    file(TOUCH_NOCREATE "${path}")
     list(APPEND LIBMPV_LOCAL_RUNTIME "${path}")
   endif()
 endforeach()
@@ -28,4 +37,8 @@ file(MAKE_DIRECTORY "${LIBMPV_SRC}/include")
 configure_file("${LIBMPV_LOCAL_DIR}/libmpv-2.dll" "${LIBMPV_SRC}/libmpv-2.dll" COPYONLY)
 configure_file("${LIBMPV_LOCAL_DIR}/libmpv.dll.a" "${LIBMPV_SRC}/libmpv.dll.a" COPYONLY)
 file(COPY "${LIBMPV_LOCAL_DIR}/include/mpv/" DESTINATION "${LIBMPV_SRC}/include")
-message(STATUS "Using temporary local libmpv (#18603 + #18604): ${LIBMPV_LOCAL_DIR}")
+install(DIRECTORY "${LIBMPV_LOCAL_DIR}/licenses/"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/mpv-licenses" COMPONENT Runtime)
+install(FILES "${LIBMPV_LOCAL_DIR}/PACKAGES.txt" "${LIBMPV_LOCAL_DIR}/SHA256SUMS"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}/mpv-licenses" COMPONENT Runtime)
+message(STATUS "Using verified prebuilt libmpv: ${LIBMPV_LOCAL_DIR}")

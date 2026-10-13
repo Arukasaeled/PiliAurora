@@ -76,6 +76,15 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tool/run-ci-tests.ps1 -FlutterTool path
 
+      - name: Set up Python for native package verification
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Verify prebuilt libmpv
+        shell: pwsh
+        run: python third_party/mpv/package-runtime.py verify third_party/mpv
+
       - name: Build Windows release
         run: |
           fastforge package --platform windows --targets exe --flutter-build-args="dart-define-from-file=pili_release.json,no-pub" --skip-clean

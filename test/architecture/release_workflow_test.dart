@@ -7,6 +7,45 @@ Map<dynamic, dynamic> workflow(String name) =>
     loadYaml(File('.github/workflows/$name.yml').readAsStringSync()) as Map;
 
 void main() {
+  test('Windows verifies prebuilt libmpv before packaging Flutter', () {
+    final steps =
+        workflow('win_x64')['jobs']['build-windows-app']['steps'] as List;
+    final nativeIndex = steps.indexWhere(
+      (step) => step['name'] == 'Verify prebuilt libmpv',
+    );
+    final flutterIndex = steps.indexWhere(
+      (step) => step['name'] == 'Build Windows release',
+    );
+    expect(nativeIndex, greaterThanOrEqualTo(0));
+    expect(flutterIndex, greaterThan(nativeIndex));
+    expect(steps[nativeIndex]['run'], contains('package-runtime.py verify'));
+    expect(
+      File('third_party/mpv/prebuilt/windows-x64.zip').existsSync(),
+      isTrue,
+    );
+    expect(File('third_party/mpv/prebuilt/SHA256SUMS').existsSync(), isTrue);
+    expect(File('third_party/mpv/source.tar.gz').existsSync(), isTrue);
+  });
+
+  test(
+    'Native library rebuilding stays separate from application packaging',
+    () {
+      final config = workflow('mpv');
+      expect((config['on'] as Map).keys, contains('workflow_dispatch'));
+      final steps = config['jobs']['build-mpv']['steps'] as List;
+      final buildIndex = steps.indexWhere(
+        (step) => step['name'] == 'Build and test libmpv',
+      );
+      final uploadIndex = steps.indexWhere(
+        (step) => step['name'] == 'Upload prebuilt package',
+      );
+      expect(buildIndex, greaterThanOrEqualTo(0));
+      expect(uploadIndex, greaterThan(buildIndex));
+      expect(steps[buildIndex]['run'], 'bash third_party/mpv/build.sh');
+      expect(steps[uploadIndex]['with']['path'], 'third_party/mpv/prebuilt/');
+    },
+  );
+
   for (final (name, event) in [
     ('build', 'workflow_dispatch'),
     ('win_x64', 'workflow_call'),

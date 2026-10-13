@@ -1,6 +1,6 @@
-# Windows libmpv 临时本地替换
+# Windows libmpv 历史验证记录
 
-2026-10-13 为 Windows x86_64 的 Debug、Profile、Release 构建接入必需的临时修复包，修复同样存在于正式版的 mpv 问题。等待上游修复进入可验收的固定发行归档后再替换这份临时补丁。
+2026-10-13 验证过的本机临时修复包及应用播放结果如下。当前构建改用[仓库内的 mpv 固定源码](../mpv/README.md)，下述 DLL 校验值、测试与设备测量对应历史构建。
 
 ## 修复与来源
 
@@ -13,22 +13,9 @@
 
 合并修复 DLL SHA-256：`cfc7af7483a509826f5cc4e4b1033a597814d6f14ab97bc4cca57301cc65e536`。
 
-## 本机启用与恢复
+## 历史临时包
 
-临时包位于仓库 `build/local-libmpv/`，包含合并修复的 `libmpv-2.dll`、`libmpv.dll.a`、`include/mpv/*.h` 及之前完整源码验证使用的配套动态 DLL；`SHA256SUMS` 固定每个文件的校验值。整个目录由 Git 忽略，其他机器不会自动获取它。
-
-Windows CMake 要求该目录的 `SHA256SUMS` 存在，校验所有登记文件，将 mpv 头文件和导入库同步到构建目录，并打包该运行库集合。ANGLE 仍使用原有开发头文件与导入库，运行时采用本地包的配套 DLL。缺失或校验失败会终止配置，避免正式版构建回退到仍有泄漏的原归档。其他机器和 CI 需要先准备相同的临时包。
-
-本机重新构建：
-
-```powershell
-fvm flutter build windows --debug --no-pub
-fvm flutter build windows --release --no-pub
-```
-
-恢复固定发行归档前，应先取得包含两处修复的发行版本，更新 `libmpv.cmake` 的固定来源和校验值并移除临时包要求；重新构建时使用空的输出目录，避免临时包的动态 DLL 残留。当前 `20260819` 归档保留为历史来源，禁止自动回退。本次未修改 Dart 包版本、pubspec 或锁文件。
-
-本次临时包的 FFmpeg、ANGLE 等依赖与原固定发行归档不同，临时替换范围包含配套原生运行库，正式版采用相同的修复包。跨机器构建所需的包分发及这些二进制的完整来源与许可证登记仍需补齐。Android 继续使用现有原生库。
+以下记录对应 `build/local-libmpv/` 中曾使用的本机修复包与配套 DLL。该路径已退出当前 CMake 构建流程，当前源码与运行库准备方式见[mpv 构建入口](../mpv/README.md)。旧文件和日志保留用于对照，新构建不依赖它们。
 
 ## 验证
 
@@ -43,3 +30,9 @@ fvm flutter build windows --release --no-pub
 正式版 `fvm flutter build windows --release --no-pub` 构建通过，`build/windows/x64/runner/Release/libmpv-2.dll` 与修复包 SHA-256 一致。正式版输出目录的播放探针通过硬解、出帧和设备引用归零检查。构建日志为 `build/local-libmpv-windows-release-build.log`，探针日志为 `build/local-libmpv-release-probe.log`，结果为 `build/local-libmpv-release-validation/results.jsonl`。
 
 长时间播放、实际音频输出、更多 GPU/驱动、应用 UI 中反复开关播放页面与 Android 行为未包含在本次验证中。
+
+## 应用超分切换记录
+
+2026-10-13，使用 `tool/probes/playback/windows_shader_switch.dart` 运行实际 Flutter 视频输出。本机带音轨片段验证了八次重建、硬解、出帧及暂停恢复；关闭后私有内存从质量模式约 900 MiB 回落至约 445 MiB，接近初始约 451 MiB。暂停重建存在约 0.33 秒时间线回退；实际音频输出与长时间播放尚未验证。
+
+这些数值对应本机样本；运行条件与命令见[平台探针](../../tool/probes/README.md#windows-超分切换探针)。
