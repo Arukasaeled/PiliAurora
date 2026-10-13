@@ -12,6 +12,7 @@ import 'package:pili_aurora/pages/emote/controller.dart';
 import 'package:pili_aurora/utils/extension/theme_ext.dart';
 import 'package:pili_aurora/utils/theme_utils.dart';
 import 'package:get/get.dart';
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 
 class EmotePanel extends StatefulWidget {
@@ -113,32 +114,34 @@ class _EmotePanelState extends State<EmotePanel>
                         ),
                       ),
                       Expanded(
-                        child: TabBar(
-                          controller: _emotePanelController.tabController,
-                          padding: const EdgeInsets.only(right: 60),
-                          dividerColor: Colors.transparent,
-                          dividerHeight: 0,
-                          isScrollable: true,
-                          tabAlignment: TabAlignment.start,
-                          tabs: [
-                            const Tab(
-                              icon: Tooltip(
-                                message: '历史表情',
-                                child: Icon(Icons.history, size: 24),
-                              ),
-                            ),
-                            ...response.map(
-                              (e) => Padding(
-                                padding: const EdgeInsets.all(8),
-                                child: NetworkImgLayer(
-                                  width: 24,
-                                  height: 24,
-                                  type: ImageType.emote,
-                                  src: e.url,
+                        child: _WheelScrollableTabs(
+                          child: TabBar(
+                            controller: _emotePanelController.tabController,
+                            padding: const EdgeInsets.only(right: 60),
+                            dividerColor: Colors.transparent,
+                            dividerHeight: 0,
+                            isScrollable: true,
+                            tabAlignment: TabAlignment.start,
+                            tabs: [
+                              const Tab(
+                                icon: Tooltip(
+                                  message: '历史表情',
+                                  child: Icon(Icons.history, size: 24),
                                 ),
                               ),
-                            ),
-                          ],
+                              ...response.map(
+                                (e) => Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: NetworkImgLayer(
+                                    width: 24,
+                                    height: 24,
+                                    type: ImageType.emote,
+                                    src: e.url,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -220,4 +223,42 @@ class _EmotePanelState extends State<EmotePanel>
       label: Text(errMsg ?? '没有数据'),
     ),
   );
+}
+
+class _WheelScrollableTabs extends StatefulWidget {
+  const _WheelScrollableTabs({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_WheelScrollableTabs> createState() => _WheelScrollableTabsState();
+}
+
+class _WheelScrollableTabsState extends State<_WheelScrollableTabs> {
+  ScrollPosition? _position;
+
+  @override
+  Widget build(BuildContext context) =>
+      NotificationListener<ScrollMetricsNotification>(
+        onNotification: (notification) {
+          _position = Scrollable.of(notification.context).position;
+          return false;
+        },
+        child: Listener(
+          onPointerSignal: (event) {
+            final position = _position;
+            if (event is PointerScrollEvent && position != null) {
+              GestureBinding.instance.pointerSignalResolver.register(event, (
+                _,
+              ) {
+                final delta = event.scrollDelta.dx != 0
+                    ? event.scrollDelta.dx
+                    : event.scrollDelta.dy;
+                position.pointerScroll(delta);
+              });
+            }
+          },
+          child: widget.child,
+        ),
+      );
 }
