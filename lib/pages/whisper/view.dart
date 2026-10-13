@@ -12,9 +12,7 @@ import 'package:pili_aurora/pages/whisper/widgets/item.dart';
 import 'package:pili_aurora/services/messaging/overview.dart';
 import 'package:pili_aurora/services/messaging/session_models.dart';
 import 'package:pili_aurora/services/messaging/session_providers.dart';
-import 'package:pili_aurora/utils/extension/theme_ext.dart';
 import 'package:pili_aurora/utils/extension/three_dot_ext.dart';
-import 'package:pili_aurora/utils/theme_utils.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -25,7 +23,6 @@ class WhisperPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
     final padding = MediaQuery.viewPaddingOf(context);
     final sessions = ref.watch(sessionsProvider);
     final controller = WhisperController(sessions: sessions);
@@ -38,11 +35,8 @@ class WhisperPage extends ConsumerWidget {
           IconButton(
             tooltip: '新增粉丝',
             onPressed: () => Get.toNamed(
-              '/webview',
-              parameters: {
-                'url':
-                    'https://www.bilibili.com/h5/follow/newFans?navhide=1&${ThemeUtils.themeUrl(theme.isDark)}',
-              },
+              '/fan',
+              arguments: {'newFans': true},
             ),
             icon: const Icon(Icons.account_circle_outlined),
           ),

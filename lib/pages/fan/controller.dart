@@ -2,14 +2,16 @@ import 'package:pili_aurora/http/fan.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/http/video.dart';
 import 'package:pili_aurora/models/remote/follow/data.dart';
+import 'package:pili_aurora/models/remote/follow/list.dart';
 import 'package:pili_aurora/pages/follow_type/controller.dart';
 import 'package:pili_aurora/utils/accounts.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 
 class FansController extends FollowTypeController {
-  FansController(this.showName);
+  FansController(this.showName, {this.newFans = false});
   final bool showName;
+  final bool newFans;
   late final bool isOwner;
 
   @override
@@ -33,8 +35,24 @@ class FansController extends FollowTypeController {
   Future<LoadingState<FollowData>> customGetData() => FanHttp.fans(
     vmid: mid,
     pn: page,
-    orderType: 'attention',
+    orderType: newFans ? null : 'attention',
   );
+
+  Future<void> onFollowBack(FollowItemModel item) async {
+    final res = await VideoHttp.relationMod(
+      mid: item.mid,
+      act: 1,
+      reSrc: 107,
+    );
+    if (isClosed) return;
+    if (res.isSuccess) {
+      item.attribute = 6;
+      loadingState.refresh();
+      SmartDialog.showToast('回关成功');
+    } else {
+      await res.toast();
+    }
+  }
 
   Future<void> onRemoveFan(int index, int mid) async {
     final res = await VideoHttp.relationMod(
