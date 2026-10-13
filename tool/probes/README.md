@@ -132,4 +132,12 @@ fvm flutter build windows --debug --no-pub --target tool/probes/playback/windows
 
 路径含空格时，将整个 `--dart-define=...` 参数放在引号内。探针创建输出目录，写入 `results.json` 和 `PASS` 或 `FAIL`，执行完毕自动退出。构建时增加 `--dart-define=SHADER_PROBE_RESET=false` 可对照直接更新 shader 的行为；默认启用重建。
 
-入口要求实际后端为 `d3d11va`，输入画面需有可识别的明暗变化，片段长度应覆盖完整切换流程。探针使用 `ao=null`，音频时间线断言不验证扬声器声音。历史本机结果与暂停回退现象见[本地 libmpv 记录](../../third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md#应用超分切换记录)。完成后按[构建与测试](../../doc/build-and-test.md#构建)重新构建应用默认入口。
+入口要求实际后端为 `d3d11va`，输入画面需有可识别的明暗变化，片段长度应覆盖完整切换流程。探针开启与应用一致的 16 秒、前后各 4 MiB 缓存，默认从 4.3 秒开始播放，并检查切换期间的解码错误。可用 `--dart-define=SHADER_PROBE_START_MS=<毫秒>` 指定起点。
+
+AV1 重建回归需使用关键帧间隔较长的片段，例如 90 秒、30 fps、300 帧 GOP 的合成视频。准备好 FFmpeg 后可生成：
+
+```powershell
+ffmpeg -f lavfi -i "testsrc2=size=640x360:rate=30" -f lavfi -i "sine=frequency=440:sample_rate=48000" -t 90 -c:v libsvtav1 -preset 10 -crf 38 -g 300 -svtav1-params "lp=4" -c:a aac -b:a 64k build/av1-shader-fixture.mp4
+```
+
+探针使用 `ao=null`，音频时间线断言不验证扬声器声音。历史本机结果与暂停回退现象见[本地 libmpv 记录](../../third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md#应用超分切换记录)。完成后按[构建与测试](../../doc/build-and-test.md#构建)重新构建应用默认入口。

@@ -19,6 +19,8 @@ Windows 通过 media_kit 的 libmpv 渲染接口和 ANGLE 共享纹理输出视�
 3. 提交新的 `glsl-shaders` 列表。
 4. 在 `finally` 中恢复 `vo=libmpv`；重建后的纹理等待 mpv 通知实际视频帧后发布。
 
+切换 `vo` 会同时重建 mpv 的视频解码链。固定原生库通过 `vo-reinit-seek.patch` 在重建后、返回播放循环前完成补偿 seek，使缓存读取位置和解码状态先恢复到关键帧。否则缓存中的非关键包可能耗尽解码器的 96 包等待额度，产生 AV1 参考帧错误并触发硬解回退。
+
 该过程保留 Player 和媒体。Android、未就绪的 Windows 输出直接更新 shader；软件输出跳过原生重建。控制器退出时，使 shader 队列失效并等待当前操作结束，再销毁播放器。
 
 ## 原生库与验证

@@ -25,13 +25,25 @@ Future<void> main() async {
     'SHADER_PROBE_RESET',
     defaultValue: true,
   );
+  const startMs = int.fromEnvironment(
+    'SHADER_PROBE_START_MS',
+    defaultValue: 4300,
+  );
   if (!File(media).existsSync()) throw ArgumentError('Local media is required');
   await output.create(recursive: true);
   MediaKit.ensureInitialized();
   final player = await Player.create(
     configuration: const PlayerConfiguration(
-      logLevel: .error,
-      options: {'ao': 'null', 'gpu-dumb-mode': 'no', 'video-sync': 'audio'},
+      logLevel: .warn,
+      options: {
+        'ao': 'null',
+        'gpu-dumb-mode': 'no',
+        'video-sync': 'audio',
+        'cache': 'yes',
+        'cache-secs': '16',
+        'demuxer-max-bytes': '4194304',
+        'demuxer-max-back-bytes': '4194304',
+      },
     ),
   );
   final video = await VideoController.create(
@@ -64,6 +76,12 @@ Future<void> main() async {
   final metrics = ProcessMetrics();
   final results = <Map<String, Object?>>[];
   final originalHandle = player.handle;
+  final decoderErrors = <String>[];
+  final logSubscription = player.stream.log.listen((log) {
+    if (log.prefix == 'vd' || log.prefix == 'ffmpeg/video') {
+      decoderErrors.add('${log.prefix}: ${log.text.trim()}');
+    }
+  });
   int resets = 0;
 
   void check(bool condition, String message) {
@@ -85,6 +103,7 @@ Future<void> main() async {
     final beforeAudio = double.tryParse(player.getProperty('audio-pts'));
     final beforePosition = double.parse(player.getProperty('time-pos'));
     final wasPlaying = player.state.playing;
+    final beforeErrors = decoderErrors.length;
     final beforeResets = resets;
     final names = mode == SuperResolutionType.efficiency
         ? Assets.mpvAnime4KShadersLite
@@ -108,6 +127,11 @@ Future<void> main() async {
     });
     if (resets > beforeResets) await waitFor(() => video.id.value != beforeId);
     await Future<void>.delayed(Duration(seconds: seconds));
+    check(
+      decoderErrors.length == beforeErrors,
+      'Decode errors during shader switch: '
+      '${decoderErrors.skip(beforeErrors).join('; ')}',
+    );
     check(player.handle == originalHandle, 'Player was replaced');
     check(
       player.getProperty('hwdec-current') == 'd3d11va',
@@ -165,6 +189,9 @@ Future<void> main() async {
   try {
     await player.open(const Media(media));
     await waitFor(() => player.state.width > 0 && video.rect.value != null);
+    if (startMs > 0) {
+      await player.seek(const Duration(milliseconds: startMs));
+    }
     await Future<void>.delayed(const Duration(seconds: 3));
     await select(SuperResolutionType.disable);
     await select(SuperResolutionType.efficiency);
@@ -182,6 +209,7 @@ Future<void> main() async {
     updates.dispose();
     await updates.drained;
     await player.dispose();
+    await logSubscription.cancel();
     await File('${output.path}/PASS')
         .writeAsString('Shader memory, texture, pause and audio checks passed');
     exit(0);
@@ -190,6 +218,7 @@ Future<void> main() async {
     updates.dispose();
     await updates.drained;
     await player.dispose();
+    await logSubscription.cancel();
     exit(1);
   }
 }

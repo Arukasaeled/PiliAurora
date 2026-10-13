@@ -1,7 +1,7 @@
 # 预编译包同时提供 mpv、ANGLE 与动态依赖，保持运行库来源一致。
 file(READ "${LIBMPV_LOCAL_DIR}/BUILD_INPUTS" recorded_inputs)
 set(current_inputs "")
-foreach(name source.tar.gz source.json build.sh packages.txt package-runtime.py windows-test-names.patch)
+foreach(name source.tar.gz source.json build.sh packages.txt package-runtime.py windows-test-names.patch vo-reinit-seek.patch)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${LIBMPV_BUILD_PACKAGE}/${name}")
   file(SHA256 "${LIBMPV_BUILD_PACKAGE}/${name}" input_hash)

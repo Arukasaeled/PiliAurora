@@ -21,8 +21,29 @@ def inputs(package):
     return '\n'.join(
         f'{sha256(package / name)}  {name}'
         for name in ['source.tar.gz', 'source.json', 'build.sh',
-                     'packages.txt', 'package-runtime.py', 'windows-test-names.patch']
+                     'packages.txt', 'package-runtime.py', 'windows-test-names.patch',
+                     'vo-reinit-seek.patch']
     ) + '\n'
+
+
+def apply_source_patch(target, patch):
+    # 本地补丁各含一个 hunk；上下文参与匹配，避免命中相似的其他调用链。
+    lines = patch.read_text(encoding='utf-8').splitlines()
+    hunks = [i for i, line in enumerate(lines) if line.startswith('@@ ')]
+    if len(hunks) != 1:
+        raise RuntimeError(f'Expected a single-hunk source patch: {patch.name}')
+    body = lines[hunks[0] + 1:]
+    header = re.fullmatch(r'@@ -\d+,(\d+) \+\d+,(\d+) @@', lines[hunks[0]])
+    before = [line[1:] for line in body if line.startswith((' ', '-'))]
+    after = [line[1:] for line in body if line.startswith((' ', '+'))]
+    if not header or (len(before), len(after)) != tuple(map(int, header.groups())):
+        raise RuntimeError(f'Invalid source patch hunk: {patch.name}')
+    original, patched = '\n'.join(before), '\n'.join(after)
+    text = target.read_text(encoding='utf-8')
+    if text.count(original) == 1:
+        target.write_text(text.replace(original, patched), encoding='utf-8', newline='\n')
+    elif text.count(patched) != 1:
+        raise RuntimeError(f'Source patch no longer applies: {patch.name}')
 
 
 def extract(package, build):
@@ -38,18 +59,10 @@ def extract(package, build):
             archive.extractall(build / 'source', filter='data')
         stamp.write_text(source['source_sha256'] + '\n', newline='\n')
     # 测试程序避免 .mkv.exe 双后缀；保留 fixture、用例名和断言。
-    samples = build / 'source/mpv/test/samples/meson.build'
-    patch = (package / 'windows-test-names.patch').read_text(encoding='utf-8').splitlines()
-    removed = [line[1:] for line in patch if line.startswith('-') and not line.startswith('---')]
-    added = [line[1:] for line in patch if line.startswith('+') and not line.startswith('+++')]
-    if len(removed) != 1 or len(added) != 1:
-        raise RuntimeError('Expected the single-line Windows test-name patch')
-    original, patched = removed[0], added[0]
-    text = samples.read_text(encoding='utf-8')
-    if original in text:
-        samples.write_text(text.replace(original, patched), encoding='utf-8', newline='\n')
-    elif patched not in text:
-        raise RuntimeError('Windows test-name patch no longer applies')
+    apply_source_patch(build / 'source/mpv/test/samples/meson.build',
+                       package / 'windows-test-names.patch')
+    apply_source_patch(build / 'source/mpv/player/command.c',
+                       package / 'vo-reinit-seek.patch')
 
 
 def package_runtime(package, build, prefix):

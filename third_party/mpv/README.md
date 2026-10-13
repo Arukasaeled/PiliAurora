@@ -2,7 +2,9 @@
 
 此目录提供 Windows x64 应用使用的 libmpv 源码与构建入口。源码固定到 mpv 提交 `8fa4c6877abe110a1c07f696ff3792f56b81ccf4`，包含 #18603 的 D3D11 设备引用释放修复，并加入 #18604 的首选语言遍历修复。来源与源码归档 SHA-256 见 [source.json](source.json)。
 
-`source.tar.gz` 保存带修复的源码、生成脚本和单元测试，剔除本机编译目录、上游 CI 和开发缓存。归档中的代码保留版权；许可见 [Copyright](Copyright)、[LICENSE.GPL](LICENSE.GPL) 和 [LICENSE.LGPL](LICENSE.LGPL)。预编译交付包集中保存在 `prebuilt/`，工具链与编译缓存保存在 `build/`。
+`source.tar.gz` 保存带修复的源码、生成脚本和单元测试，剔除本机编译目录、上游 CI 和开发缓存。提取后应用两个本地补丁：`windows-test-names.patch` 调整 Windows 测试程序名；`vo-reinit-seek.patch` 在输出切换重建视频链后立即执行补偿 seek，避免新解码器在 seek 前消费缓存中的非关键包，引发 AV1 参考帧错误和硬解回退。补丁与其余构建材料共同计入 `BUILD_INPUTS`，源码重提取会验证补丁匹配，已应用时保持原样。
+
+归档中的代码保留版权；许可见 [Copyright](Copyright)、[LICENSE.GPL](LICENSE.GPL) 和 [LICENSE.LGPL](LICENSE.LGPL)。预编译交付包集中保存在 `prebuilt/`，工具链与编译缓存保存在 `build/`。
 
 ## 直接使用预编译包
 
