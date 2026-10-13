@@ -85,7 +85,6 @@ class _EmotePanelState extends State<EmotePanel>
                                 )
                                 .toList(),
                             small ? 40 : 60,
-                            isTextPackage: isTextEmote,
                           );
                         }),
                       ],
@@ -157,63 +156,65 @@ class _EmotePanelState extends State<EmotePanel>
   Widget _buildEmoteGrid(
     ThemeData theme,
     List<RecentEmote> entries,
-    double size, {
-    bool isTextPackage = false,
-  }) => GridView.builder(
+    double size,
+  ) => SingleChildScrollView(
     physics: platformClampingPhysics,
     padding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
-    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-      maxCrossAxisExtent: isTextPackage ? 100 : size,
-      crossAxisSpacing: 8,
-      mainAxisSpacing: 8,
-      mainAxisExtent: size,
-    ),
-    itemCount: entries.length,
-    itemBuilder: (context, index) {
-      final entry = entries[index];
-      final item = entry.emote;
-      final isTextEmote = entry.width == null;
-      Widget child = Padding(
-        padding: const EdgeInsets.all(6),
-        child: isTextEmote
-            ? Center(
-                child: Text(
-                  item.text ?? '',
-                  overflow: TextOverflow.clip,
-                  maxLines: 1,
+    child: Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: entries.map((entry) {
+        final item = entry.emote;
+        final isTextEmote = entry.width == null;
+        Widget child = Padding(
+          padding: const EdgeInsets.all(6),
+          child: isTextEmote
+              ? SizedBox(
+                  height: size - 12,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(item.text ?? '', maxLines: 1),
+                  ),
+                )
+              : SizedBox(
+                  width: size - 12,
+                  height: size - 12,
+                  child: Center(
+                    child: NetworkImgLayer(
+                      src: item.url,
+                      width: entry.width!,
+                      height: entry.width!,
+                      type: ImageType.emote,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
                 ),
-              )
-            : NetworkImgLayer(
-                src: item.url,
-                width: size,
-                height: size,
-                type: ImageType.emote,
-                fit: BoxFit.contain,
-              ),
-      );
-      if (!isTextEmote) {
-        child = emoteTooltipBuilder(
-          enable: true,
-          size: 70,
-          colorScheme: theme.colorScheme,
-          url: item.url,
-          emote: item.text,
-          triggerMode: kTriggerMode,
-          child: child,
         );
-      }
-      return Material(
-        type: MaterialType.transparency,
-        child: InkWell(
-          borderRadius: const BorderRadius.all(Radius.circular(6)),
-          onTap: () {
-            widget.onChoose(item, entry.width, null);
-            _emotePanelController.recordEmote(item, entry.width);
-          },
-          child: child,
-        ),
-      );
-    },
+        if (!isTextEmote) {
+          child = emoteTooltipBuilder(
+            enable: true,
+            size: 70,
+            colorScheme: theme.colorScheme,
+            url: item.url,
+            emote: item.text,
+            triggerMode: kTriggerMode,
+            child: child,
+          );
+        }
+        return Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: const BorderRadius.all(Radius.circular(6)),
+            onTap: () {
+              widget.onChoose(item, entry.width, null);
+              _emotePanelController.recordEmote(item, entry.width);
+            },
+            child: child,
+          ),
+        );
+      }).toList(),
+    ),
   );
 
   Widget _errorWidget([String? errMsg]) => Center(
