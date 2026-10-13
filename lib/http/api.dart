@@ -197,6 +197,8 @@ abstract final class Api {
   static const String myEmote = '/x/emote/user/panel/web';
 
   static const String emoteSettingPanel = '/x/emote/setting/panel';
+  static const String myEmotePackages =
+      '/bapis/main.community.interface.emote.EmoteService/MyPackages';
 
   static const String addEmotePackage = '/x/emote/package/add';
 

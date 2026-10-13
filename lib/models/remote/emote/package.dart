@@ -7,7 +7,6 @@ class Package {
   int? type;
   List<Emote>? emote;
   EmotePackageFlags? flags;
-  String? subtitle;
 
   Package({
     this.id,
@@ -16,7 +15,6 @@ class Package {
     this.type,
     this.emote,
     this.flags,
-    this.subtitle,
   });
 
   factory Package.fromJson(Map<String, dynamic> json) => Package(
@@ -24,7 +22,6 @@ class Package {
     text: json['text'] as String?,
     url: json['url'] as String?,
     type: json['type'] as int?,
-    subtitle: json['package_sub_title'] as String?,
     emote: (json['emote'] as List<dynamic>?)
         ?.map((e) => Emote.fromJson(e as Map<String, dynamic>))
         .toList(),

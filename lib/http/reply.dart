@@ -171,6 +171,32 @@ abstract final class ReplyHttp {
     }
   }
 
+  static Future<LoadingState<List<Package>>> getMyEmotePackages({
+    required int type,
+  }) async {
+    final packages = <Package>[];
+    for (var page = 1; ; page++) {
+      final res = await Request().get(
+        Api.myEmotePackages,
+        queryParameters: {
+          'business': 'reply',
+          'type': type,
+          'pn': page,
+          'ps': 100,
+        },
+      );
+      if (res.data['code'] != 0) return Error(res.data['message']);
+      final data = res.data['data'] as Map<String, dynamic>;
+      final items = (data['packages'] as List?) ?? [];
+      packages.addAll(
+        items.map((item) => Package.fromJson(item as Map<String, dynamic>)),
+      );
+      if (items.isEmpty || packages.length >= (data['total'] as num)) {
+        return Success(packages);
+      }
+    }
+  }
+
   static Future<LoadingState<void>> addEmotePackage({
     required int packageId,
     String business = 'reply',

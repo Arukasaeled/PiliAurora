@@ -25,7 +25,12 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
   String? _error;
   bool _loading = true;
   String _keyword = '';
-  String? _category;
+  int _category = 0;
+  int _generation = 0;
+  final _categoryPackages = <int, List<Package>>{};
+  final _categoryErrors = <int, String>{};
+  final _loadingCategories = <int>{};
+  static const _categories = ['全部表情', '装扮商城', '会员专属', '包月充电'];
   static const _webUrl =
       'https://www.bilibili.com/h5/mall/emoji-package/home?navhide=1';
 
@@ -42,6 +47,10 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
   }
 
   Future<void> _load() async {
+    _generation++;
+    _categoryPackages.clear();
+    _categoryErrors.clear();
+    _loadingCategories.clear();
     setState(() {
       _loading = true;
       _error = null;
@@ -54,6 +63,27 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
         _panel = response;
       } else if (result case Error(:final errMsg)) {
         _error = errMsg ?? '加载失败';
+      }
+    });
+    if (_panel != null && _error == null) await _loadCategory(_category);
+  }
+
+  Future<void> _loadCategory(int category) async {
+    setState(() => _category = category);
+    if (_categoryPackages.containsKey(category) ||
+        !_loadingCategories.add(category)) {
+      return;
+    }
+    final generation = _generation;
+    setState(() => _categoryErrors.remove(category));
+    final result = await ReplyHttp.getMyEmotePackages(type: category);
+    if (!mounted || generation != _generation) return;
+    setState(() {
+      _loadingCategories.remove(category);
+      if (result case Success(:final response)) {
+        _categoryPackages[category] = response;
+      } else if (result case Error(:final errMsg)) {
+        _categoryErrors[category] = errMsg ?? '加载失败';
       }
     });
   }
@@ -77,8 +107,16 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
           if (!panel.allPackages.any((item) => item.id == id)) {
             panel.allPackages.add(package);
           }
+          final all = _categoryPackages[0];
+          if (all != null && !all.any((item) => item.id == id)) {
+            all.add(package);
+          }
         }
-        for (final item in [...panel.userPanelPackages, ...panel.allPackages]) {
+        for (final item in [
+          ...panel.userPanelPackages,
+          ...panel.allPackages,
+          ..._categoryPackages.values.expand((items) => items),
+        ]) {
           if (item.id == id) item.flags = EmotePackageFlags(added: add);
         }
       });
@@ -98,13 +136,12 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
             .toList() ??
         const <Package>[];
     final available =
-        panel?.allPackages
-            .where(
+        _categoryPackages[_category]
+            ?.where(
               (package) =>
                   (package.id ?? 0) > 0 &&
                   package.text != '收藏' &&
-                  !addedIds.contains(package.id) &&
-                  package.flags?.added != true,
+                  !addedIds.contains(package.id),
             )
             .toList() ??
         const <Package>[];
@@ -161,32 +198,28 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
                   Tab(text: '未添加 (${available.length})'),
                 ],
               ),
-              if (available.any(
-                (package) => package.subtitle?.isNotEmpty == true,
-              ))
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final category in <String?>{
-                        null,
-                        ...available
-                            .map((package) => package.subtitle)
-                            .whereType<String>()
-                            .where((label) => label.isNotEmpty),
-                      })
-                        Padding(
-                          padding: const EdgeInsets.all(4),
-                          child: ChoiceChip(
-                            label: Text(category ?? '全部表情'),
-                            selected: _category == category,
-                            onSelected: (_) =>
-                                setState(() => _category = category),
-                          ),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (
+                      var category = 0;
+                      category < _categories.length;
+                      category++
+                    )
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: ChoiceChip(
+                          label: Text(_categories[category]),
+                          selected: _category == category,
+                          onSelected: _loading
+                              ? null
+                              : (_) => _loadCategory(category),
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
+              ),
               Expanded(
                 child: _loading
                     ? m3eLoading
@@ -201,7 +234,18 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
                     : TabBarView(
                         children: [
                           _buildPackageList(added, add: false),
-                          _buildPackageList(available, add: true),
+                          _loadingCategories.contains(_category)
+                              ? m3eLoading
+                              : _categoryErrors.containsKey(_category)
+                              ? Center(
+                                  child: TextButton(
+                                    onPressed: () => _loadCategory(_category),
+                                    child: Text(
+                                      '${_categoryErrors[_category]}，点击重试',
+                                    ),
+                                  ),
+                                )
+                              : _buildPackageList(available, add: true),
                         ],
                       ),
               ),
@@ -216,12 +260,11 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
     final filtered = packages
         .where(
           (package) =>
-              (!add || _category == null || package.subtitle == _category) &&
               (_keyword.isEmpty ||
-                  (package.text?.toLowerCase().contains(
-                        _keyword.toLowerCase(),
-                      ) ??
-                      false)),
+              (package.text?.toLowerCase().contains(
+                    _keyword.toLowerCase(),
+                  ) ??
+                  false)),
         )
         .toList();
     if (filtered.isEmpty) {
@@ -247,7 +290,6 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
           title: Text(package.text ?? '未命名表情包'),
           subtitle: Text(
             [
-              if (package.subtitle?.isNotEmpty == true) package.subtitle!,
               if (package.emote != null) '${package.emote!.length} 个表情',
             ].join(' · '),
           ),
