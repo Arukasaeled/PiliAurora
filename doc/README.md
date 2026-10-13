@@ -1,22 +1,32 @@
-# 文档索引
+# 项目文档
 
-## 项目说明
+## 使用说明
 
-- [架构概览](architecture.md)：系统边界、目录职责、状态所有权和平台差异。
-- [运行流程图](runtime-flows.md)：启动、HTTP、播放器、下载、账号消息和直播消息的调用时序。
-- [功能领域地图](features.md)：按用户功能查找页面、接口、模型、服务和测试。
-- [Windows 播放窗口](windows-playback-windows.md)：独立点播与直播窗口、排列和声音控制。
-- [弹幕合并与帧率设置](danmaku-merge.md)：设置入口、生效方式、匹配规则和字号放大。
-- [消息、私信与分享](../lib/services/messaging/README.md)：账号隔离、Riverpod 订阅、会话列表、聊天、已读和分享结果。
-- [领域词汇表](glossary.md)：说明项目中容易混淆的业务和工程术语。
+- [项目介绍与下载](../README.md)：支持平台、主要功能和安装包入口。
+- [Windows 播放窗口](windows-playback-windows.md)：弹出视频与直播、排列窗口、调节音量和切换声音来源。
+- [弹幕合并与帧率](danmaku-merge.md)：设置入口、匹配规则、字号放大和轨道间距。
 
-## 开发参考
+## 开发与排障
 
-- [构建与测试](build-and-test.md)：环境要求、构建方式和验证范围。
-- [维护与排障](maintenance.md)：修改前检查、诊断入口、复现与问题报告信息。
-- [构建工具](../tool/README.md)：项目构建、JNI 生成和依赖检查工具。
-- [第三方依赖](../third_party/README.md)：依赖来源、许可证和维护方式。
+| 要做的事 | 文档 |
+| --- | --- |
+| 配置环境、构建应用或选择测试 | [构建与测试](build-and-test.md) |
+| 找到一个功能的代码入口 | [功能领域地图](features.md) |
+| 理解模块职责和状态所有权 | [架构概览](architecture.md) |
+| 追踪启动、播放、下载和消息调用 | [运行流程](runtime-flows.md) |
+| 排查问题、收集诊断和复现数据 | [维护与排障](maintenance.md) |
+| 修改 Windows 视频输出或超分切换 | [Windows 视频输出](windows-video-output.md) |
+| 修改消息、私信与分享 | [消息模块](../lib/services/messaging/README.md) |
+| 修改请求账号绑定与 Cookie | [账号拦截器](../lib/utils/accounts/account_manager/README.md) |
+| 更新依赖或核对来源与许可证 | [第三方依赖](../third_party/README.md) |
+| 查找术语 | [领域词汇表](glossary.md) |
 
-## 版本记录
+[工具入口](../tool/README.md)说明构建脚本、JNI 生成与依赖检查；[测试目录](../test/README.md)按模块索引自动化测试。[平台探针](../tool/probes/README.md)和[性能实验](../tool/experiments/README.md)各自列出运行条件与验证范围。
 
-正式版本的变更说明和下载附件见 [GitHub Releases](https://github.com/wallpap/PiliAurora/releases)。本地归档：[v1.2.0](releases/v1.2.0.md)。
+## 版本与维护记录
+
+发布附件见 [GitHub Releases](https://github.com/wallpap/PiliAurora/releases)。仓库保留 [v1.2.0](releases/v1.2.0.md)、[v1.0.13](releases/v1.0.13.md) 和 [v1.0.7](releases/v1.0.7.md) 的发布说明；其中的测试结果和行为描述对应当时版本。
+
+依赖迁移记录见 [首次迁移验收](../third_party/VALIDATION.md)与[依赖精简记录](../third_party/SIMPLIFICATION.md)。Windows 预编译包、源码和本地、CI 构建步骤见[mpv 构建入口](../third_party/mpv/README.md)，原临时 DLL 的测量见[历史验证记录](../third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md)。
+
+设备日志和未公开实验保存在 Git 忽略的 `doc/dev/`，临时产物写入 `build/`。

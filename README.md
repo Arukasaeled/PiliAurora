@@ -73,7 +73,7 @@
 
 ## 从源码构建
 
-项目使用 [.fvmrc](.fvmrc) 固定 Flutter 版本。Android 构建需要 Android SDK 和 JDK 25；Windows 构建需要安装启用了“使用 C++ 的桌面开发”工作负载的 Visual Studio。详细环境要求、平台构建和测试命令见[构建与测试](doc/build-and-test.md)。
+项目使用 [.fvmrc](.fvmrc) 固定 Flutter 版本。Android 构建需要 Android SDK 和 JDK 25；Windows 构建需要启用了“使用 C++ 的桌面开发”工作负载的 Visual Studio，运行库使用仓库内的 [mpv 预编译包](third_party/mpv/README.md)，本地与 GitHub Windows CI 均会校验并解压；更新原生库时可从固定源码重建。环境要求与验证命令见[构建与测试](doc/build-and-test.md)。
 
 ```powershell
 git clone https://github.com/wallpap/PiliAurora.git
@@ -85,16 +85,11 @@ pwsh -File tool/build.ps1 -Platform android -Mode debug
 
 ## 项目文档
 
-- [文档索引](doc/README.md)
-- [功能领域地图与性能说明](doc/features.md)
-- [弹幕合并与帧率设置](doc/danmaku-merge.md)
-- [Windows 独立播放窗口](doc/windows-playback-windows.md)
-- [消息、私信与分享](lib/services/messaging/README.md)
-- [架构说明](doc/architecture.md)
-- [运行流程图](doc/runtime-flows.md)
-- [构建与测试](doc/build-and-test.md)
-- [维护与排障](doc/maintenance.md)
-- [第三方依赖及许可证](third_party/README.md)
+[文档索引](doc/README.md)按使用说明、开发与排障、版本记录提供入口。常用文档：
+
+- 使用：[弹幕设置](doc/danmaku-merge.md)、[Windows 独立播放窗口](doc/windows-playback-windows.md)。
+- 开发：[构建与测试](doc/build-and-test.md)、[功能领域地图](doc/features.md)、[架构](doc/architecture.md)。
+- 排障：[维护指南](doc/maintenance.md)、[Windows 视频输出](doc/windows-video-output.md)、[消息模块](lib/services/messaging/README.md)。
 
 ## 参与贡献
 

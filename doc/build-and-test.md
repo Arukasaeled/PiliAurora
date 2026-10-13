@@ -15,6 +15,10 @@ Android Studio 的 Gradle JDK 和 `JAVA_HOME` 都设为 25。JDK 25 是构建工
 
 Windows 构建需要安装 Visual Studio，并启用“使用 C++ 的桌面开发”工作负载。Windows 开发建议使用 PowerShell 7。
 
+Windows 各构建模式使用 `third_party/mpv/prebuilt/` 中的预编译包，无需为普通应用构建安装 MSYS2。本地与 GitHub Windows CI 校验归档、构建材料和运行文件摘要；原生库更新时可在 UCRT64 终端或独立工作流中从固定源码重建，见[mpv 构建说明](../third_party/mpv/README.md)。
+
+Windows x64 另使用 [cnativeapi 预编译包](../third_party/nativeapi/README.md)，内部 nativeapi 已静态链接。普通应用构建跳过这两个库的源码编译；更新源码后按该说明重建。WebView NuGet 依赖按固定版本保存在 `build/windows/x64/packages/`，Windows CI 缓存该目录及 Flutter/Pub 缓存。
+
 ## 安装依赖
 
 ```powershell
@@ -42,7 +46,7 @@ fvm flutter analyze --no-pub lib test tool
 fvm flutter test
 ```
 
-常规分析覆盖应用、测试和工具代码。本地依赖包有各自的依赖上下文；更新依赖包时，按 [`third_party/README.md`](../third_party/README.md) 单独检查。
+常规分析覆盖应用、测试和工具代码。本地依赖包有各自的依赖上下文；更新依赖包时，按[依赖维护流程](../third_party/README.md)单独检查。无路径参数的全仓库分析还可能扫描本地实验和上游源码，其结果需按来源区分。
 
 依赖已准备后，可用统一入口运行 GitHub Actions 当前选择的测试文件：
 
@@ -88,6 +92,8 @@ fvm flutter test tool/experiments/danmaku/
 | Windows 窗口或 WebView | Windows 构建和对应平台测试 |
 
 测试和构建只覆盖实际运行过的环境。GPU、MediaCodec、驱动、真实 WebView 和音频输出还需要在目标设备上检查。
+
+Windows 输出与 shader 更新的验证入口见[视频输出说明](windows-video-output.md#原生库与验证)；设备探针的输入和副作用见[平台探针](../tool/probes/README.md)。
 
 ## 生成 Android JNI bindings
 

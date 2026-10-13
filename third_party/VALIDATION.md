@@ -1,6 +1,6 @@
 # 依赖迁移验收记录
 
-日期：2026-10-07。环境：Windows，Flutter 3.47.5 / Dart 3.13.4。
+日期：2026-10-07。环境：Windows，Flutter 3.47.5 / Dart 3.13.4。包数、版本与测试结果对应首次迁移时的基线；当前维护规则见[依赖指南](README.md)。
 
 ## 已确认的变更
 
@@ -39,3 +39,15 @@
 - 未构建 Android Release，未展示、修改或提交签名密钥；未上传、推送、合并或发布。
 - 本地定制包修订相对上一版本是否递增由维护 review 核对；校验工具不读取 Git 历史，也不校验源码与来源提交逐字相同（本地允许补丁）。
 - 普通依赖的进一步更新和定制包回归发布版，应分别作为后续、可独立回滚的变更。
+
+## 首轮直接迁移到发布版的包（历史记录）
+
+| 包 | 根约束 / 锁定版本 | 取舍 |
+| --- | --- | --- |
+| audio_session | `^0.2.4` / `0.2.4` | Dart 和原生实现与来源相同；回到发布版 Android Gradle/AndroidX 配置。 |
+| font_awesome_flutter | `^11.0.0` / `11.0.0` | 使用支持 final IconData 的正式字体包；调用使用 FaIconData.data 对接现有 IconData 接口，不再依赖 fork 的资源生成方式。 |
+| window_manager | `^0.5.2` / `0.5.2` | 使用正式版；应用暗色而系统亮色时，标题栏遵循上游系统暗色条件，不再保留 fork 的单行行为差异。 |
+| media_kit_libs_video | `1.0.5` / `1.0.5` | 使用发布版平台聚合包；Android/Windows 原生库仍由本地 override 提供。 |
+| media_kit_native_event_loop | 传递依赖 / `1.0.9` | 使用实现一致的发布版事件循环；移除 Git override。 |
+
+未将所有 fork 机械替换为同名发布版：`get` 等包的独立 UI 类型与 `rawValue`/转场扩展、弹幕绘制、HTML 选择器、旋转阈值和原生播放接口都已经被应用使用。逐包保留原因以登记表为准。未发布的 `flutter_sortable_wrap 1.0.6`、`material_design_icons_flutter 7.0.7447` 也不伪装成 hosted 版本。

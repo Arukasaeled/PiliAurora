@@ -1,6 +1,6 @@
 # audio_service 本地版本
 
-- 本地版本：`0.18.19+piliaurora.1`；来源包版本：`0.18.19`。
+- 本地版本：`0.18.19+piliaurora.2`；来源包版本：`0.18.19`。
 - 来源仓库：https://github.com/bggRGjQaUbCoE/audio_service.git
 - 来源提交：`9f91eb8d6aa0905661ab3914ebdd3c9fb5c37cc2`。
 - 来源子目录：`audio_service`。

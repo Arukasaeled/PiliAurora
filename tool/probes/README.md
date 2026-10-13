@@ -6,7 +6,7 @@
 | --- | --- |
 | `android/` | 暂停旋转测试入口、画面检查脚本和 Java 帧栅栏检查。 |
 | `windows/` | 窗口回调、尺寸通道、纹理首帧和输出确认探针。 |
-| `playback/` | 媒体加载烟测、跳转命令和断流恢复回放。 |
+| `playback/` | 媒体加载烟测、跳转命令、断流恢复与 Windows 超分切换。 |
 | `event_loop/` | 事件循环生命周期、ABI 检查与配套 C++ mock。 |
 
 运行前查看脚本参数和源码，确认目标平台、输入文件及输出目录。工具结果只覆盖它实际检查的内容；应用行为还要按[构建与测试说明](../../doc/build-and-test.md)在目标平台验证。
@@ -34,9 +34,22 @@ fvm dart tool/probes/event_loop/native_event_loop_abi_probe.dart build/probe-val
 
 ## 原生媒体加载烟测
 
-播放链路工具位于 `playback/`。`native_media_smoke.py` 的输入、独立音轨与跳转检查命令见[工具入口](../README.md#原生媒体加载烟测)。
+Windows 构建完成后，可用 Python 和 libmpv 检查独立音轨、特殊字符路径和媒体重载。
+传入数秒以上的本地视频即可运行；工具不访问网络，并将测试用静音 WAV 写入 `build/native-playback-smoke/`。
 
-增加 `--audio-reload` 可检查后台外部音轨重连：音频时钟恢复、视频继续输出新帧、媒体未重开或跳转，暂停状态保持。输入视频需要超过 3 秒并包含连续视频帧。探针使用 `vo=null`、`ao=null` 和本地生成的无声 WAV；视频帧依据当前 mpv 的 trace 日志计数，结果不覆盖 GPU 画面和真实扬声器输出。
+```powershell
+uv run --locked python tool/probes/playback/native_media_smoke.py --library build/windows/x64/runner/Debug/libmpv-2.dll --video <本地视频文件>
+```
+
+同一命令追加 `--audio-reload`，可验证后台音轨重连时音频时钟恢复、视频继续输出新帧，且媒体位置和暂停状态保持。输入需为超过 3 秒的连续视频；真实画面与声音仍需实机检查。
+
+传入 `--seek-target <秒数>` 可检查 Android 独立音轨的前进、后退和重复跳转命令。`tool/probes/playback/native_seek_command.dart` 会调用应用使用的命令构造器；烟测检查视频恢复后音轨等待是否小于 100 ms。视频长度应超过目标时间，目标时间应落在关键帧之间。`--keyframes-control` 使用旧策略作对照，预期会触发静音断言。
+
+```powershell
+uv run --locked python tool/probes/playback/native_media_smoke.py --library build/windows/x64/runner/Debug/libmpv-2.dll --video <本地视频文件> --seek-target 2.4
+```
+
+该检查通过 Windows libmpv、`vo=null`、`ao=null` 和软件解码运行，视频帧依据 mpv 的 trace 日志计数。它不覆盖 Android GPU/MediaCodec、真实扬声器或完整应用性能。画面和硬件解码仍需在目标设备上验证。
 
 ## 暂停旋转探针
 
@@ -107,3 +120,16 @@ uv run --locked python tool/probes/playback/playback_network_recovery_probe.py
 ```
 
 通过 FVM 运行 Flutter 测试，生成文件写入 `build/playback-network-diagnosis/` 下的临时目录，运行结束后自动清理。原生播放器由状态桩替代，真实网络传输、GPU、MediaCodec 和长时间播放需要实机验证。
+
+## Windows 超分切换探针
+
+`playback/windows_shader_switch.dart` 使用实际 Flutter、ANGLE 与 libmpv 检查 shader 切换、纹理更新、硬解、暂停状态、音频时间线和私有内存。先确认[mpv 预编译包](../../third_party/mpv/README.md)完整，并准备含音轨的本地视频，再构建专用入口：
+
+```powershell
+fvm flutter build windows --debug --no-pub --target tool/probes/playback/windows_shader_switch.dart --dart-define=SHADER_PROBE_ROOT=<仓库绝对路径> --dart-define=SHADER_PROBE_VIDEO=<本地视频绝对路径> --dart-define=SHADER_PROBE_OUTPUT=<输出目录绝对路径>
+& build/windows/x64/runner/Debug/PiliAurora.exe
+```
+
+路径含空格时，将整个 `--dart-define=...` 参数放在引号内。探针创建输出目录，写入 `results.json` 和 `PASS` 或 `FAIL`，执行完毕自动退出。构建时增加 `--dart-define=SHADER_PROBE_RESET=false` 可对照直接更新 shader 的行为；默认启用重建。
+
+入口要求实际后端为 `d3d11va`，输入画面需有可识别的明暗变化，片段长度应覆盖完整切换流程。探针使用 `ao=null`，音频时间线断言不验证扬声器声音。历史本机结果与暂停回退现象见[本地 libmpv 记录](../../third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md#应用超分切换记录)。完成后按[构建与测试](../../doc/build-and-test.md#构建)重新构建应用默认入口。

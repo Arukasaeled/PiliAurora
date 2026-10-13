@@ -20,18 +20,11 @@
 pwsh -NoProfile -File tool/run-ci-tests.ps1
 ```
 
-`run-ci-tests.ps1` 默认使用 FVM，只通过 `flutter test --no-pub` 执行 GitHub Actions 选择的测试文件，覆盖异常日志接入、设置导航和 CDN／播放源回退。依赖需预先准备；脚本不解析或安装依赖、不修改 Flutter SDK、不应用补丁，也不构建应用。GitHub Actions 由补丁步骤统一解析一次依赖，随后直接运行依赖验收工具并调用同一测试脚本；测试和构建阶段均使用 `--no-pub`。
+`run-ci-tests.ps1` 默认使用 FVM，只通过 `flutter test --no-pub` 执行 GitHub Actions 选择的测试文件，覆盖依赖政策、诊断、消息、设置、弹幕及播放恢复等模块；文件清单以脚本中的 `$ciTests` 为准。依赖需预先准备；脚本不解析或安装依赖、不修改 Flutter SDK、不应用补丁，也不构建应用。GitHub Actions 由补丁步骤统一解析一次依赖，随后直接运行依赖验收工具并调用同一测试脚本；测试和构建阶段均使用 `--no-pub`。
 
-## Python 工具环境
+## 平台构建
 
-Python 探针使用根目录的 `.python-version`、`pyproject.toml` 和 `uv.lock` 管理环境。首次准备环境时，在仓库根目录运行：
-
-```powershell
-uv python install 3.14
-uv sync --locked
-```
-
-之后用 `uv run --locked python ...` 启动 Python 探针。Pillow 是截图检查所需的唯一第三方 Python 工具依赖；其余探针只使用 Python 标准库。
+Windows 构建使用[仓库内的 mpv 预编译包](../third_party/mpv/README.md)，构建脚本自动校验和解压。工具链要求见[构建与测试](../doc/build-and-test.md)。
 
 项目使用 `.fvmrc` 指定的 Flutter 版本。安装 Android SDK 或 Visual Studio 后，在仓库根目录运行：
 
@@ -64,24 +57,20 @@ CI 直接调用 `lib/scripts/patch.ps1` 时，补丁脚本会先准备依赖；�
 fvm dart run tool/jnigen.dart
 ```
 
-## 原生媒体加载烟测
+## Python 工具环境
 
-Windows 构建完成后，可用 Python 和 libmpv 检查独立音轨、特殊字符路径和媒体重载。
-传入数秒以上的本地视频即可运行；工具不访问网络，并将测试用静音 WAV 写入 `build/native-playback-smoke/`。
-
-```powershell
-uv run --locked python tool/probes/playback/native_media_smoke.py --library build/windows/x64/runner/Debug/libmpv-2.dll --video <本地视频文件>
-```
-
-同一命令追加 `--audio-reload`，可验证后台音轨重连时音频时钟恢复、视频继续输出新帧，且媒体位置和暂停状态保持。输入需为超过 3 秒的连续视频；真实画面与声音仍需实机检查。
-
-传入 `--seek-target <秒数>` 可检查 Android 独立音轨的前进、后退和重复跳转命令。`tool/probes/playback/native_seek_command.dart` 会调用应用使用的命令构造器；烟测检查视频恢复后音轨等待是否小于 100 ms。视频长度应超过目标时间，目标时间应落在关键帧之间。`--keyframes-control` 使用旧策略作对照，预期会触发静音断言。
+Python 探针使用根目录的 `.python-version`、`pyproject.toml` 和 `uv.lock` 管理环境。首次准备环境时，在仓库根目录运行：
 
 ```powershell
-uv run --locked python tool/probes/playback/native_media_smoke.py --library build/windows/x64/runner/Debug/libmpv-2.dll --video <本地视频文件> --seek-target 2.4
+uv python install 3.14
+uv sync --locked
 ```
 
-该检查通过 Windows libmpv、空音视频输出和软件解码运行，不覆盖 Android GPU/MediaCodec、真实扬声器或完整应用性能。画面和硬件解码仍需在目标设备上验证。
+之后用 `uv run --locked python ...` 启动 Python 探针。Pillow 是截图检查所需的唯一第三方 Python 工具依赖；其余探针只使用 Python 标准库。
+
+## 原生与设备验证
+
+媒体加载、独立音轨、跳转、旋转、纹理首帧和超分切换的运行命令集中在[平台探针](probes/README.md)。探针分别使用模拟对象、原生库或测试设备，运行前按入口说明准备输入文件与输出目录。
 
 ## 依赖版本与来源检查
 
@@ -90,7 +79,7 @@ fvm dart run tool/check_dependencies.dart
 fvm flutter test --no-pub test/architecture/dependency_policy_test.dart test/common/widgets/font_awesome_icons_test.dart
 ```
 
-该工具只读工作区，检查 Git 来源、path 范围、来源 SHA、许可证、版本登记与锁文件，并核对合并依赖的目录和许可证信息。可用位置参数指定工作区。普通依赖更新和定制包维护流程见 `third_party/README.md`。本地构建和 CI 会在依赖解析后执行检查，依赖解析使用 `--enforce-lockfile`。更新版本时，运行 `flutter pub get` 或针对目标包执行 `flutter pub upgrade`，再提交锁文件。
+该工具只读工作区，检查 Git 来源、path 范围、来源 SHA、许可证、版本登记与锁文件，并核对合并依赖的目录和许可证信息。可用位置参数指定工作区。普通依赖更新和定制包维护流程见 `third_party/README.md`。本地构建和 CI 会在依赖解析后执行检查，依赖解析使用 `--enforce-lockfile`。更新版本时先修改精确约束，再运行 `fvm flutter pub get` 并核对锁文件差异。
 
 ## 播放图标资源
 

@@ -2,29 +2,17 @@
 
 Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.dev 的发布版本，解析结果保存在 `pubspec.lock` 中；需要定制的实现放在本目录，随应用源码维护。
 
-## 简单特性内化
+## 本地实现与包登记
 
-第二阶段已将按标签节流、尾沿防抖和 UUID v4 内化为小型标准库实现，并将图片缓存接口包合并回主包。当前本地包登记为 18 个；合并来源继续登记和保留许可证。范围、真实依赖减少量及验证见 [SIMPLIFICATION.md](SIMPLIFICATION.md)。
+按标签节流、尾沿防抖、UUID v4、应用日志和设置 WebDAV 传输由项目维护；图片缓存接口包已合并回主包。当前本地包登记为 19 个；合并来源继续登记和保留许可证。范围、真实依赖减少量及验证见 [SIMPLIFICATION.md](SIMPLIFICATION.md)。
 
 ## 版本与来源
 
 - `dependencies.json` 是本地包的登记表，记录本地版本、来源版本、仓库、完整提交 SHA、来源子目录、许可证和保留原因。
 - 根 `pubspec.yaml` 的直接定制依赖使用精确版本（例如 `1.1.11+piliaurora.1`），`dependency_overrides` 将实际源码指向本目录。传递定制包也必须登记和 override。
 - 每个本地包的 `pubspec.yaml` 使用独立的 `+piliaurora.N` 修订号，并设置 `publish_to: none`。这些包包含本地修改，与同名 pub.dev 版本有所区别。
-- 根版本声明本身不能约束 path override；`dart run tool/check_dependencies.dart` 会检查登记、本地声明和锁文件的一致性，并拒绝任何 Git 来源。
-- 每个包保留原许可证和来源版权信息。新导入包收录生产源码、构建配置和必要资源，不收录上游示例、测试、开发缓存及 Git 元数据。既有两个 Windows 包保持原有补丁。导入源码清理行尾空白，并补齐字幕文档模板闭合标签，不改写实现。
-
-## 首轮直接迁移到发布版的包（历史记录）
-
-| 包 | 根约束 / 锁定版本 | 取舍 |
-| --- | --- | --- |
-| audio_session | `^0.2.4` / `0.2.4` | Dart 和原生实现与来源相同；回到发布版 Android Gradle/AndroidX 配置。 |
-| font_awesome_flutter | `^11.0.0` / `11.0.0` | 使用支持 final IconData 的正式字体包；调用使用 FaIconData.data 对接现有 IconData 接口，不再依赖 fork 的资源生成方式。 |
-| window_manager | `^0.5.2` / `0.5.2` | 使用正式版；应用暗色而系统亮色时，标题栏遵循上游系统暗色条件，不再保留 fork 的单行行为差异。 |
-| media_kit_libs_video | `1.0.5` / `1.0.5` | 使用发布版平台聚合包；Android/Windows 原生库仍由本地 override 提供。 |
-| media_kit_native_event_loop | 传递依赖 / `1.0.9` | 使用实现一致的发布版事件循环；移除 Git override。 |
-
-未将所有 fork 机械替换为同名发布版：`get` 等包的独立 UI 类型与 `rawValue`/转场扩展、弹幕绘制、HTML 选择器、旋转阈值和原生播放接口都已经被应用使用。逐包保留原因以登记表为准。未发布的 `flutter_sortable_wrap 1.0.6`、`material_design_icons_flutter 7.0.7447` 也不伪装成 hosted 版本。
+- 根版本声明本身不能约束 path override；`fvm dart run tool/check_dependencies.dart` 会检查登记、本地声明和锁文件的一致性，并拒绝任何 Git 来源。
+- 每个包保留原许可证和来源版权信息。新导入包收录生产源码、构建配置和必要资源，不收录上游示例、测试、开发缓存及 Git 元数据。本地补丁和修订记录保存在各包的 `UPSTREAM.md`；包内上游 README、CHANGELOG 和许可证保留原始用途。
 
 ## 更新流程
 
@@ -32,7 +20,7 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 
 根 `dependencies` 和 `dev_dependencies` 的 hosted 包统一使用精确版本号，不使用 `^`、区间或 `any`；根 hosted override 也遵循相同规则。版本以已验收的 `pubspec.lock` 为准，不会自动跟随最新发布版。SDK 包由 `.fvmrc` 管理，第三方包自己的传递约束不机械改写，传递解析结果由锁文件和 `--enforce-lockfile` 固定。
 
-1. 修改目标包的精确版本号，再执行 `flutter pub get`，不要仅执行 `pub upgrade`（精确约束不会自动升级）。
+1. 修改目标包的精确版本号，再执行 `fvm flutter pub get` 解析目标版本。
 2. 审核 `pubspec.lock`，避免无关依赖更新；依赖校验必须确认根声明和锁定版本逐字一致，包括预发布与 build 后缀。
 3. 执行依赖检查、相关测试和对应平台构建后，一起提交声明与锁文件。
 
@@ -42,14 +30,14 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 2. 审查上游差异并移植仍需要的本地修改。保留所有许可及版权说明，核对资源和原生库校验值。
 3. 递增 `+piliaurora.N`（有上游升级时同时更改基础版本），同步根直接依赖版本、登记和包的 `UPSTREAM.md`。不要只改根版本号而保留旧源码。
 4. 如该包仅为传递依赖，仍需更新本地版本和登记；根 override 不得遗漏。
-5. `flutter pub get`，然后运行：
+5. `fvm flutter pub get`，然后按改动平台运行：
 
    ```powershell
-   dart run tool/check_dependencies.dart
-   flutter analyze --no-pub lib test tool
-   flutter test --no-pub
-   flutter build windows --debug --no-pub
-   flutter build apk --debug --no-pub
+   fvm dart run tool/check_dependencies.dart
+   fvm flutter analyze --no-pub lib test tool
+   fvm flutter test --no-pub
+   fvm flutter build windows --debug --no-pub
+   fvm flutter build apk --debug --no-pub
    ```
 
 6. 将单个更新及其适配、测试作为可独立回滚的提交。新版本若可以去掉定制，则切回已验证的发布版，并同时移除 override、本地源码和登记。
@@ -58,6 +46,17 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 
 ## 原生二进制与 SDK
 
-Windows 各构建模式（含正式版）均要求从 `build/local-libmpv/` 接入包含 mpv #18603/#18604 的临时原生运行库集合；该目录由 Git 忽略，准备条件、校验、来源与后续替换方式见 [临时 libmpv 替换](media_kit_libs_windows_video/LOCAL_LIBMPV.md)。以下 Windows 固定版本说明为临时修复前的历史记录。
+Windows 各构建模式使用 [mpv 预编译包](mpv/README.md)。源码、重建脚本、许可与 `prebuilt/` 中的归档和摘要均纳入 Git；工具链、编译缓存与解压目录保存在 `build/`。应用 CI 直接校验并使用预编译包，独立原生库工作流负责从固定源码重建。打包收集 libmpv、ANGLE 的 DLL 依赖闭包，并随应用交付许可与包来源记录。
 
-本次未升级 Flutter、Gradle/AGP 或 libmpv。Android 原生库仍使用来源的版本化下载地址与 SHA-256；Windows 继续使用既有 `20260819` 固定归档及 DLL/导入库校验。Flutter SDK 与 `material_ui` 的现有补丁脚本不属于 Git 依赖解析，本次未重写该流程，也不调用会重置 SDK 的补丁脚本进行验证。
+Android 原生库继续使用版本化下载地址与 SHA-256 校验。mpv 属于原生构建材料，不是额外的 Dart path 包；`dependencies.json` 仍登记 19 个本地 Dart/Flutter 包。
+
+Windows x64 的 cnativeapi 使用 [预编译入口](nativeapi/README.md)，内部 nativeapi 已静态链接。固定的 cnativeapi 0.3.0 源码保留在本地包中，重建产物位于 `nativeapi/prebuilt/`，许可随应用分发。
+
+Flutter SDK 与 `material_ui` 补丁由 `lib/scripts/patch.ps1` 管理，构建脚本按实际依赖解析路径应用补丁，详见[工具入口](../tool/README.md#平台构建)。
+
+## 历史记录
+
+- [首次迁移验收](VALIDATION.md)：2026-10-07 的来源迁移与验证。
+- [依赖精简与内化](SIMPLIFICATION.md)：随后各阶段的实现取舍、数量变化和验证。
+
+记录中的包数、版本和测试结果对应各阶段基线；当前版本以登记、包清单与锁文件为准。

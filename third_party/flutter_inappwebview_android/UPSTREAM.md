@@ -1,6 +1,6 @@
 # flutter_inappwebview_android 本地版本
 
-- 本地版本：`1.1.3+piliaurora.1`；来源包版本：`1.1.3`。
+- 本地版本：`1.1.3+piliaurora.2`；来源包版本：`1.1.3`。
 - 来源仓库：https://github.com/bggRGjQaUbCoE/flutter_inappwebview.git
 - 来源提交：`0bfa46dfff87f0d9e9d5e13cbd5c4a7c7310f8c9`。
 - 来源子目录：`flutter_inappwebview_android`。
