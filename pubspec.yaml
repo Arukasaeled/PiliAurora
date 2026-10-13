@@ -106,6 +106,8 @@ dependencies:
   window_manager: 0.5.2
 
 dependency_overrides:
+  cnativeapi:
+    path: third_party/cnativeapi
   # 定制包的来源、版本和保留原因见 third_party/dependencies.json。
   audio_service:
     path: third_party/audio_service

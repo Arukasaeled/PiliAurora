@@ -7,6 +7,16 @@ Map<dynamic, dynamic> workflow(String name) =>
     loadYaml(File('.github/workflows/$name.yml').readAsStringSync()) as Map;
 
 void main() {
+  test('Windows verifies cnativeapi before packaging', () {
+    final steps = workflow('win_x64')['jobs']['build-windows-app']['steps'] as List;
+    final verify = steps.indexWhere((s) => s['name'] == 'Verify prebuilt cnativeapi');
+    final build = steps.indexWhere((s) => s['name'] == 'Build Windows release');
+    expect(verify, greaterThanOrEqualTo(0));
+    expect(build, greaterThan(verify));
+    expect(steps[verify]['run'], 'python third_party/nativeapi/package.py verify');
+    expect(workflow('nativeapi')['on'], contains('workflow_dispatch'));
+  });
+
   test('Windows verifies prebuilt libmpv before packaging Flutter', () {
     final steps =
         workflow('win_x64')['jobs']['build-windows-app']['steps'] as List;

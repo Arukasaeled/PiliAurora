@@ -287,6 +287,22 @@
         "LICENSE"
       ],
       "reason": "保留按动画帧求值的动态索引 getter 和渲染修正。"
+    },
+    {
+      "name": "cnativeapi",
+      "version": "0.3.0+piliaurora.2",
+      "upstream_version": "0.3.0",
+      "path": "third_party/cnativeapi",
+      "source": {
+        "url": "https://github.com/libnativeapi/nativeapi-flutter.git",
+        "commit": "32ab4edc828d51094a3d87e0b04aff6abf815a73",
+        "path": "packages/cnativeapi"
+      },
+      "licenses": [
+        "LICENSE",
+        "cxx_impl/LICENSE"
+      ],
+      "reason": "固定 cnativeapi 与内含 nativeapi 源码，Windows 使用可校验的预编译 C ABI 库。"
     }
   ]
 }
