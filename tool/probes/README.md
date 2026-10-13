@@ -86,6 +86,18 @@ uv run --locked python tool/probes/windows/windows_texture_frame_probe.py --comp
 
 前者通过 FVM 运行 Flutter 测试；后者编译生产纹理方法，检查初始纹理、有效首帧和同尺寸提交。生成文件位于 `build/windows-playback-diagnosis/`，GPU 和播放器通道由模拟对象替代。
 
+## Windows 硬解画面采样探针
+
+`windows_video_sampling_probe.py` 使用本机 ANGLE、libmpv 和真实 GPU 解码帧，读取 media_kit 的生产渲染参数及应用初始化中的 Windows 参数，检查画面底部连续的绿色条带。先构建 Windows Release，再传入曾出现条带的本地 AV1／HEVC 片段：
+
+```powershell
+uv run --locked python tool/probes/windows/windows_video_sampling_probe.py --video <本地视频文件>
+```
+
+默认使用 `build/windows/x64/runner/Release/` 下的 DLL，以 `d3d11va` 解码并输出 `1920×1080`。可用 `--library-dir`、`--width`、`--height` 指定构建目录和输出尺寸；`--output-dir` 默认是 `build/windows-video-sampling/`，保存最后一帧 PNG、实际解码器日志与逐帧绿色行数 JSON。
+
+追加 `--control-dumb-mode=auto` 可对照修复前的自动简化渲染模式。退出码 0 表示 16 个采样帧均无绿色边带且实际使用指定硬解器；检测到条带、帧不足或硬解回退会退出 1。输入需有至少 20 帧，画面底部应有正常内容，避免原片自身纯绿色边带造成误判。探针只打开本地视频，不访问网络或账号；它覆盖 mpv／ANGLE 的像素输出，Flutter 合成、控件、全屏切换和长期性能仍需应用实测。
+
 ## 播放器断流恢复回归探针
 
 `playback_network_recovery_probe.py` 回放脱敏的 Windows curl 终止错误、Android HTTPS 提前结束和 MP4 截断错误，提取生产日志分发、播放器监听和重连方法，检查断流恢复、缓冲检查升级、错误合并、冷却窗口和媒体切换。暂停状态与 CDN 切换由 `test/plugin/pl_player/native_media_source_test.dart` 覆盖。

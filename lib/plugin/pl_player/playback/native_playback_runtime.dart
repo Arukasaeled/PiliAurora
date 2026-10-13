@@ -40,6 +40,9 @@ class NativePlaybackRuntime {
     if (_player != null) return _player;
     final options = {
       'video-sync': Pref.videoSync,
+      // ANGLE 硬解表面可能带有对齐填充；部分驱动上 mpv 简化渲染会采样到填充区。
+      // 使用完整渲染路径保留有效画面边界，解码器配置继续由 VideoController 管理。
+      if (Platform.isWindows) 'gpu-dumb-mode': 'no',
       if (Platform.isAndroid) 'ao': Pref.audioOutput,
       'volume': (PlatformUtils.isMobile ? Pref.playerVolume : volume * 100)
           .toString(),
