@@ -39,16 +39,17 @@ class FansController extends FollowTypeController {
   );
 
   Future<void> onFollowBack(FollowItemModel item) async {
+    final isFollowing = item.attribute == 2 || item.attribute == 6;
     final res = await VideoHttp.relationMod(
       mid: item.mid,
-      act: 1,
+      act: isFollowing ? 2 : 1,
       reSrc: 107,
     );
     if (isClosed) return;
     if (res.isSuccess) {
-      item.attribute = 6;
+      item.attribute = isFollowing ? 0 : 6;
       loadingState.refresh();
-      SmartDialog.showToast('回关成功');
+      SmartDialog.showToast(isFollowing ? '取消关注成功' : '回关成功');
     } else {
       await res.toast();
     }

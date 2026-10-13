@@ -116,7 +116,11 @@ class _FansPageState extends FollowTypePageState<FansPage> {
                       isFollowing: item.attribute == 2 || item.attribute == 6,
                       isBusy: _followingMids.contains(item.mid),
                       onTap: () => Get.toNamed('/member?mid=${item.mid}'),
-                      onFollowBack: item.attribute == 0
+                      onFollowBack:
+                          flag &&
+                              (item.attribute == 0 ||
+                                  item.attribute == 2 ||
+                                  item.attribute == 6)
                           ? () => _followBack(item)
                           : null,
                     );
@@ -235,7 +239,13 @@ class _NewFanItem extends StatelessWidget {
                     tapTargetSize: .shrinkWrap,
                     padding: const .symmetric(horizontal: 16),
                   ),
-                  child: Text(isBusy ? '处理中' : '回关'),
+                  child: Text(
+                    isBusy
+                        ? '处理中'
+                        : isFollowing
+                        ? '取消关注'
+                        : '回关',
+                  ),
                 )
               else if (isFollowing)
                 Text(
