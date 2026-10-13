@@ -5,7 +5,7 @@
 
 基于 [PiliPlus 2.1.5](https://github.com/bggRGjQaUbCoE/PiliPlus/tree/2.1.5) 继续开发的 Bilibili 第三方客户端，使用 Flutter 编写，主要维护 Android 和 Windows x64。
 
-[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.2.0.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
+[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.4.0.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
 
 ## 项目特点
 
