@@ -29,13 +29,28 @@ if(NOT NUGET)
 endif()
 
 add_custom_target(${PROJECT_NAME}_DEPENDENCIES_DOWNLOAD ALL)
+set(WEBVIEW_PACKAGES_READY TRUE)
+foreach(package_version
+    "Microsoft.Windows.ImplementationLibrary/${WIL_VERSION}"
+    "Microsoft.Web.WebView2/${WEBVIEW_VERSION}"
+    "nlohmann.json/${NLOHMANN_JSON}")
+  string(REPLACE "/" ";" parts "${package_version}")
+  list(GET parts 0 package_name)
+  list(GET parts 1 package_version)
+  if(NOT EXISTS "${CMAKE_BINARY_DIR}/packages/${package_name}.${package_version}/${package_name}.${package_version}.nupkg")
+    set(WEBVIEW_PACKAGES_READY FALSE)
+  endif()
+endforeach()
+# 本地与 CI 复用固定版本包；缺失时再调用 NuGet 恢复。
+if(NOT WEBVIEW_PACKAGES_READY)
 add_custom_command(
   TARGET ${PROJECT_NAME}_DEPENDENCIES_DOWNLOAD PRE_BUILD
-  COMMAND ${NUGET} install Microsoft.Windows.ImplementationLibrary -Version ${WIL_VERSION} -ExcludeVersion -OutputDirectory ${CMAKE_BINARY_DIR}/packages
-  COMMAND ${NUGET} install Microsoft.Web.WebView2 -Version ${WEBVIEW_VERSION} -ExcludeVersion -OutputDirectory ${CMAKE_BINARY_DIR}/packages
-  COMMAND ${NUGET} install nlohmann.json -Version ${NLOHMANN_JSON} -ExcludeVersion -OutputDirectory ${CMAKE_BINARY_DIR}/packages
+  COMMAND ${NUGET} install Microsoft.Windows.ImplementationLibrary -Version ${WIL_VERSION} -OutputDirectory ${CMAKE_BINARY_DIR}/packages
+  COMMAND ${NUGET} install Microsoft.Web.WebView2 -Version ${WEBVIEW_VERSION} -OutputDirectory ${CMAKE_BINARY_DIR}/packages
+  COMMAND ${NUGET} install nlohmann.json -Version ${NLOHMANN_JSON} -OutputDirectory ${CMAKE_BINARY_DIR}/packages
   DEPENDS ${NUGET}
 )
+endif()
 
 # Any new source files that you add to the plugin should be added here.
 list(APPEND PLUGIN_SOURCES
@@ -194,9 +209,9 @@ function(FLUTTER_INAPPWEBVIEW_WINDOWS_APPLY_STANDARD_SETTINGS TARGET)
 endfunction()
 flutter_inappwebview_windows_apply_standard_settings(${PLUGIN_NAME})
 
-target_link_libraries(${PLUGIN_NAME} PRIVATE ${CMAKE_BINARY_DIR}/packages/Microsoft.Web.WebView2/build/native/Microsoft.Web.WebView2.targets)
-target_link_libraries(${PLUGIN_NAME} PRIVATE ${CMAKE_BINARY_DIR}/packages/Microsoft.Windows.ImplementationLibrary/build/native/Microsoft.Windows.ImplementationLibrary.targets)
-target_link_libraries(${PLUGIN_NAME} PRIVATE ${CMAKE_BINARY_DIR}/packages/nlohmann.json/build/native/nlohmann.json.targets)
+target_link_libraries(${PLUGIN_NAME} PRIVATE ${CMAKE_BINARY_DIR}/packages/Microsoft.Web.WebView2.${WEBVIEW_VERSION}/build/native/Microsoft.Web.WebView2.targets)
+target_link_libraries(${PLUGIN_NAME} PRIVATE ${CMAKE_BINARY_DIR}/packages/Microsoft.Windows.ImplementationLibrary.${WIL_VERSION}/build/native/Microsoft.Windows.ImplementationLibrary.targets)
+target_link_libraries(${PLUGIN_NAME} PRIVATE ${CMAKE_BINARY_DIR}/packages/nlohmann.json.${NLOHMANN_JSON}/build/native/nlohmann.json.targets)
 
 # Symbols are hidden by default to reduce the chance of accidental conflicts
 # between plugins. This should not be removed; any symbols that should be

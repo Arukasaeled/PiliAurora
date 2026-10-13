@@ -1,16 +1,18 @@
 # 本地 Windows WebView 补丁
 
 - 来源包：flutter_inappwebview_windows 0.6.0。
-- 本地版本：`0.6.0+piliaurora.1`，登记见 `../dependencies.json`。
+- 本地版本：`0.6.0+piliaurora.2`，登记见 `../dependencies.json`。
 - 来源：bggRGjQaUbCoE/flutter_inappwebview。
 - 固定提交：0bfa46dfff87f0d9e9d5e13cbd5c4a7c7310f8c9。
 - 仅复制该包的 lib、windows、pubspec、analysis_options 与许可/版本说明；不复制 example、开发缓存或 Git 仓库。
 - 不升级 Dart/WebView2/WIL 版本，不修改共享 Pub 缓存。
 - 补丁目的：在最后一个 manager 销毁时释放静态图形资源，不留到 DLL 静态析构阶段。
 - Dart 维护修正：方法通道异常使用 Flutter 日志输出；补充本地 HTML 资源与 JavaScript 纯文本回退的说明。
-- 实验结果和多 engine/队列关闭边界由 tool/reports 的 20261003 跟进报告记录。
+- 本机顺序重建、DOM/容器清理与短播放退出的验证记录对应 2026-10-03；多 engine 和异步队列关闭的边界见下文。
 
 ## 补丁范围与边界
+
+- `0.6.0+piliaurora.3`：NuGet 包按名称和固定版本分目录保存；完整包存在时跳过恢复命令。Windows CI 缓存该目录，版本或 CMake 配置变化时使用新缓存键。
 
 - plugin 析构先清理 headless/browser 容器，再释放普通 manager 和 environment。
 - manager_count_ 归零时释放 compositor、graphics_context、dispatcher_queue_controller、rohelper。
@@ -18,4 +20,3 @@
 - 未新增异步队列 drain，当前验证覆盖本机顺序重建、DOM/容器清理和短播放退出。
 - 移除仅用于上游 example 的可选 GoogleTest target 和测试夹具；不属于应用生产插件目标。
 - 功能补丁仅修改 3 个生产 C++ 文件；另清理 4 个上游文件中的 5 行尾空白（空行或注释）。Dart 业务逻辑、NuGet 版本及原许可证保持不变。
-- 完整结果：tool/reports/windows-webview-cache-experiment-20261003.md。

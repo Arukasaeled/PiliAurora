@@ -140,7 +140,7 @@
     },
     {
       "name": "flutter_inappwebview_windows",
-      "version": "0.6.0+piliaurora.2",
+      "version": "0.6.0+piliaurora.3",
       "upstream_version": "0.6.0",
       "path": "third_party/flutter_inappwebview_windows",
       "source": {

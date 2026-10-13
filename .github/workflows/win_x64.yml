@@ -43,6 +43,13 @@ jobs:
         with:
           channel: stable
           flutter-version-file: pubspec.yaml
+          cache: true
+
+      - name: Cache WebView NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: build/windows/x64/packages
+          key: windows-x64-webview-${{ hashFiles('third_party/flutter_inappwebview_windows/windows/CMakeLists.txt') }}
 
       - name: Install fastforge and Inno Setup
         shell: pwsh
