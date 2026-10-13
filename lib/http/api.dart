@@ -196,6 +196,12 @@ abstract final class Api {
   //https://api.bilibili.com/x/emote/user/panel/web?business=reply
   static const String myEmote = '/x/emote/user/panel/web';
 
+  static const String emoteSettingPanel = '/x/emote/setting/panel';
+
+  static const String addEmotePackage = '/x/emote/package/add';
+
+  static const String removeEmotePackage = '/x/emote/package/remove';
+
   // 获取用户信息
   static const String userInfo = '/x/web-interface/nav';
 

@@ -27,7 +27,7 @@ class RecentEmote {
 }
 
 class EmotePanelController extends CommonListController<List<Package>?, Package>
-    with GetSingleTickerProviderStateMixin {
+    with GetTickerProviderStateMixin {
   TabController? tabController;
   final recentEmotes = <RecentEmote>[].obs;
 
@@ -58,11 +58,17 @@ class EmotePanelController extends CommonListController<List<Package>?, Package>
 
   @override
   bool customHandleResponse(bool isRefresh, Success<List<Package>?> response) {
-    if (response.response?.isNotEmpty == true) {
+    final previousIndex = tabController?.index;
+    tabController?.dispose();
+    tabController = null;
+    final packages = response.response;
+    if (packages?.isNotEmpty == true) {
+      final length = packages!.length + 1;
+      final preferredIndex = previousIndex ?? (recentEmotes.isEmpty ? 1 : 0);
       tabController = TabController(
-        length: response.response!.length + 1,
+        length: length,
         vsync: this,
-        initialIndex: recentEmotes.isEmpty ? 1 : 0,
+        initialIndex: preferredIndex.clamp(0, length - 1).toInt(),
       );
     }
     loadingState.value = response;

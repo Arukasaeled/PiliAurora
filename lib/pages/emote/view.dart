@@ -9,8 +9,7 @@ import 'package:pili_aurora/models/common/image_type.dart';
 import 'package:pili_aurora/models/remote/emote/emote.dart';
 import 'package:pili_aurora/models/remote/emote/package.dart';
 import 'package:pili_aurora/pages/emote/controller.dart';
-import 'package:pili_aurora/utils/extension/theme_ext.dart';
-import 'package:pili_aurora/utils/theme_utils.dart';
+import 'package:pili_aurora/pages/emote/manage.dart';
 import 'package:get/get.dart';
 import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
@@ -102,13 +101,10 @@ class _EmotePanelState extends State<EmotePanel>
                           iconSize: 20,
                           iconColor: theme.colorScheme.onSurfaceVariant
                               .withValues(alpha: 0.8),
-                          onPressed: () => Get.toNamed(
-                            '/webview',
-                            parameters: {
-                              'url':
-                                  'https://www.bilibili.com/h5/mall/emoji-package/home?navhide=1&${ThemeUtils.themeUrl(theme.isDark)}',
-                            },
-                          ),
+                          onPressed: () async {
+                            await Get.to(() => const EmoteManagePage());
+                            if (mounted) _emotePanelController.onReload();
+                          },
                           icon: const Icon(Icons.settings),
                         ),
                       ),

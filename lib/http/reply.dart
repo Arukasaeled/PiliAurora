@@ -4,6 +4,7 @@ import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/remote/emote/data.dart';
 import 'package:pili_aurora/models/remote/emote/package.dart';
+import 'package:pili_aurora/models/remote/emote/setting_panel.dart';
 import 'package:pili_aurora/models/remote/reply/data.dart';
 import 'package:pili_aurora/models/remote/reply2reply/data.dart';
 import 'package:pili_aurora/models/remote/reply_interaction/data.dart';
@@ -149,6 +150,61 @@ abstract final class ReplyHttp {
     );
     if (res.data['code'] == 0) {
       return Success(EmoteModelData.fromJson(res.data['data']).packages);
+    } else {
+      return Error(res.data['message']);
+    }
+  }
+
+  static Future<LoadingState<EmoteSettingPanel>> getEmoteSettingPanel({
+    String business = 'reply',
+  }) async {
+    final res = await Request().get(
+      Api.emoteSettingPanel,
+      queryParameters: {'business': business},
+    );
+    if (res.data['code'] == 0) {
+      return Success(
+        EmoteSettingPanel.fromJson(res.data['data'] as Map<String, dynamic>),
+      );
+    } else {
+      return Error(res.data['message']);
+    }
+  }
+
+  static Future<LoadingState<void>> addEmotePackage({
+    required int packageId,
+    String business = 'reply',
+  }) => _changeEmotePackage(
+    Api.addEmotePackage,
+    packageId: packageId,
+    business: business,
+  );
+
+  static Future<LoadingState<void>> removeEmotePackage({
+    required int packageId,
+    String business = 'reply',
+  }) => _changeEmotePackage(
+    Api.removeEmotePackage,
+    packageId: packageId,
+    business: business,
+  );
+
+  static Future<LoadingState<void>> _changeEmotePackage(
+    String api, {
+    required int packageId,
+    required String business,
+  }) async {
+    final res = await Request().post(
+      api,
+      data: {
+        'package_id': packageId,
+        'business': business,
+        'csrf': Accounts.main.csrf,
+      },
+      options: Options(contentType: Headers.formUrlEncodedContentType),
+    );
+    if (res.data['code'] == 0) {
+      return const Success(null);
     } else {
       return Error(res.data['message']);
     }
