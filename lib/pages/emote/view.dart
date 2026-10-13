@@ -1,5 +1,6 @@
 import 'package:pili_aurora/common/widgets/button/icon_button.dart';
 import 'package:pili_aurora/common/widgets/emote_tooltip.dart';
+import 'package:pili_aurora/common/widgets/horizontal_wheel_scroll.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/common/widgets/loading_widget/loading_widget.dart';
 import 'package:pili_aurora/common/widgets/scroll_physics.dart'
@@ -11,7 +12,6 @@ import 'package:pili_aurora/models/remote/emote/package.dart';
 import 'package:pili_aurora/pages/emote/controller.dart';
 import 'package:pili_aurora/pages/emote/manage.dart';
 import 'package:get/get.dart';
-import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 
 class EmotePanel extends StatefulWidget {
@@ -109,7 +109,7 @@ class _EmotePanelState extends State<EmotePanel>
                         ),
                       ),
                       Expanded(
-                        child: _WheelScrollableTabs(
+                        child: HorizontalWheelScroll(
                           child: TabBar(
                             controller: _emotePanelController.tabController,
                             padding: const EdgeInsets.only(right: 60),
@@ -220,42 +220,4 @@ class _EmotePanelState extends State<EmotePanel>
       label: Text(errMsg ?? '没有数据'),
     ),
   );
-}
-
-class _WheelScrollableTabs extends StatefulWidget {
-  const _WheelScrollableTabs({required this.child});
-
-  final Widget child;
-
-  @override
-  State<_WheelScrollableTabs> createState() => _WheelScrollableTabsState();
-}
-
-class _WheelScrollableTabsState extends State<_WheelScrollableTabs> {
-  ScrollPosition? _position;
-
-  @override
-  Widget build(BuildContext context) =>
-      NotificationListener<ScrollMetricsNotification>(
-        onNotification: (notification) {
-          _position = Scrollable.of(notification.context).position;
-          return false;
-        },
-        child: Listener(
-          onPointerSignal: (event) {
-            final position = _position;
-            if (event is PointerScrollEvent && position != null) {
-              GestureBinding.instance.pointerSignalResolver.register(event, (
-                _,
-              ) {
-                final delta = event.scrollDelta.dx != 0
-                    ? event.scrollDelta.dx
-                    : event.scrollDelta.dy;
-                position.pointerScroll(delta);
-              });
-            }
-          },
-          child: widget.child,
-        ),
-      );
 }

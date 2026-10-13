@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:pili_aurora/common/assets.dart';
+import 'package:pili_aurora/common/widgets/horizontal_wheel_scroll.dart';
 import 'package:pili_aurora/common/style.dart';
 import 'package:pili_aurora/common/widgets/flutter/list_tile.dart';
 import 'package:pili_aurora/common/widgets/flutter/refresh_indicator.dart';
@@ -513,45 +514,47 @@ class _MediaPageState extends CommonPageState<MinePage>
           bool flag = (controller.favFolderCount ?? 0) > favFolderList.length;
           return SizedBox(
             height: 200,
-            child: ListView.separated(
-              controller: controller.scrollController,
-              padding: const .only(left: 20, top: 10, right: 20),
-              itemCount: response.list.length + (flag ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (flag && index == favFolderList.length) {
-                  return Padding(
-                    padding: const .only(bottom: 35),
-                    child: Center(
-                      child: IconButton(
-                        tooltip: '查看更多',
-                        style: ButtonStyle(
-                          padding: const WidgetStatePropertyAll(.zero),
-                          backgroundColor: WidgetStatePropertyAll(
-                            theme.colorScheme.secondaryContainer.withValues(
-                              alpha: 0.5,
+            child: HorizontalWheelScroll(
+              child: ListView.separated(
+                controller: controller.scrollController,
+                padding: const .only(left: 20, top: 10, right: 20),
+                itemCount: response.list.length + (flag ? 1 : 0),
+                itemBuilder: (context, index) {
+                  if (flag && index == favFolderList.length) {
+                    return Padding(
+                      padding: const .only(bottom: 35),
+                      child: Center(
+                        child: IconButton(
+                          tooltip: '查看更多',
+                          style: ButtonStyle(
+                            padding: const WidgetStatePropertyAll(.zero),
+                            backgroundColor: WidgetStatePropertyAll(
+                              theme.colorScheme.secondaryContainer.withValues(
+                                alpha: 0.5,
+                              ),
                             ),
                           ),
-                        ),
-                        onPressed: () =>
-                            Get.toNamed('/fav')?.whenComplete(_autoRefresh),
-                        icon: Icon(
-                          Icons.arrow_forward_ios,
-                          size: 18,
-                          color: secondary,
+                          onPressed: () =>
+                              Get.toNamed('/fav')?.whenComplete(_autoRefresh),
+                          icon: Icon(
+                            Icons.arrow_forward_ios,
+                            size: 18,
+                            color: secondary,
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                } else {
-                  return FavFolderItem(
-                    heroTag: Utils.generateRandomString(8),
-                    item: response.list[index],
-                    onPop: _autoRefresh,
-                  );
-                }
-              },
-              scrollDirection: .horizontal,
-              separatorBuilder: (_, _) => const SizedBox(width: 14),
+                    );
+                  } else {
+                    return FavFolderItem(
+                      heroTag: Utils.generateRandomString(8),
+                      item: response.list[index],
+                      onPop: _autoRefresh,
+                    );
+                  }
+                },
+                scrollDirection: .horizontal,
+                separatorBuilder: (_, _) => const SizedBox(width: 14),
+              ),
             ),
           );
         },
