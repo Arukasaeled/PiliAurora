@@ -119,6 +119,7 @@ class _EmotePanelState extends State<EmotePanel>
                           dividerColor: Colors.transparent,
                           dividerHeight: 0,
                           isScrollable: true,
+                          tabAlignment: TabAlignment.start,
                           tabs: [
                             const Tab(
                               icon: Tooltip(
