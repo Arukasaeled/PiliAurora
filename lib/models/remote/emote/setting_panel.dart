@@ -19,5 +19,5 @@ class EmoteSettingPanel {
       ? value
             .map((item) => Package.fromJson(item as Map<String, dynamic>))
             .toList()
-      : const [];
+      : [];
 }
