@@ -47,6 +47,10 @@ abstract class PlatformVideoController {
   /// * “With great power comes great responsibility”
   Future<void>? setSize({int? width, int? height});
 
+  /// 重建 Windows 视频渲染资源；调用者先将 mpv 的 vo 切到 null，完成后恢复。
+  Future<void> resetRenderer() =>
+      Future.error(UnsupportedError('Renderer reset is unavailable'));
+
   /// A [Future] that completes when the first video frame has been rendered.
   Future<void> get waitUntilFirstFrameRendered =>
       waitUntilFirstFrameRenderedCompleter.future;

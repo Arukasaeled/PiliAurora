@@ -172,6 +172,15 @@ class NativeVideoController extends PlatformVideoController {
   }
 
   bool _sizeReady = true;
+
+  @override
+  Future<void> resetRenderer() async {
+    if (!Platform.isWindows) return super.resetRenderer();
+    await _channel.invokeMethod<void>('VideoOutputManager.ResetRenderer', {
+      'handle': player.handle.toString(),
+    });
+  }
+
   int _sizeRevision = 0;
   Future<void>? _pendingSize;
 

@@ -10,6 +10,7 @@
 #define VIDEO_OUTPUT_H_
 
 #include <optional>
+#include <atomic>
 
 #include <client.h>
 #include <render.h>
@@ -79,7 +80,15 @@ class VideoOutput {
 
   void SetSourceSize(int64_t width, int64_t height);
 
+  void ResetRenderer(std::function<void(bool)> on_ready);
+
  private:
+  bool CreateRenderContext(int64_t width, int64_t height);
+
+  void ReleaseRenderContext();
+
+  void SetRenderUpdateCallback();
+
   void NotifyRender();
 
   void NotifyTextureUpdate(int64_t id, int64_t width, int64_t height);
@@ -103,7 +112,8 @@ class VideoOutput {
   mpv_handle* handle_ = nullptr;
   mpv_render_context* render_context_ = nullptr;
   int64_t texture_id_ = 0;
-  bool texture_update_pending_ = false;
+  std::atomic<bool> texture_update_pending_ = false;
+  bool renderer_reset_pending_ = false;
   flutter::PluginRegistrarWindows* registrar_ = nullptr;
   ThreadPool* thread_pool_ref_ = nullptr;
   // For preventing any asynchronous operations (primarily texture objects

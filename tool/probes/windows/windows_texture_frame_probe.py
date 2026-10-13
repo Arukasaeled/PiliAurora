@@ -29,6 +29,10 @@ static int render_status=0;
 static int render_calls=0;
 static bool reject_frame=false;
 static bool core_waiting_for_render=false;
+static uint64_t render_update_flags=MPV_RENDER_UPDATE_FRAME;
+extern "C" uint64_t mpv_render_context_update(mpv_render_context*) {
+  return render_update_flags;
+}
 extern "C" int mpv_get_property(mpv_handle*, const char*, mpv_format, void*) {
   if(core_waiting_for_render) throw std::runtime_error("render thread waited for mpv core before drawing first frame");
   return MPV_ERROR_PROPERTY_UNAVAILABLE;
@@ -88,7 +92,7 @@ class VideoOutput {
   void SetSourceSize(int64_t,int64_t);
   void SetSize(std::optional<int64_t>,std::optional<int64_t>,std::function<void(bool)>);
   FakeRegistrar registrar; FakeRegistrar* registrar_=&registrar;
-  int64_t texture_id_=0; bool destroyed_=false,texture_update_pending_=false;
+  int64_t texture_id_=0; bool destroyed_=false,texture_update_pending_=false,renderer_reset_pending_=false;
   std::mutex textures_mutex_,callback_mutex_;
   std::unique_ptr<FakeSurface> surface_manager_=std::make_unique<FakeSurface>();
   std::unique_ptr<uint8_t[]> pixel_buffer_;
@@ -96,7 +100,8 @@ class VideoOutput {
   std::unordered_map<int64_t,std::unique_ptr<FlutterDesktopGpuSurfaceDescriptor>> textures_;
   std::unordered_map<int64_t,std::unique_ptr<FlutterDesktopPixelBuffer>> pixel_buffer_textures_;
   std::function<void(int64_t,int64_t,int64_t)> texture_update_callback_=[](auto,auto,auto){};
-  mpv_render_context* render_context_=nullptr;
+  // Fake the successfully initialized renderer created by the real constructor.
+  mpv_render_context* render_context_=reinterpret_cast<mpv_render_context*>(1);
   int64_t width() {return surface_manager_ ? surface_manager_->width() : pixel_buffer_textures_.at(texture_id_)->width;}
   int64_t height() {return surface_manager_ ? surface_manager_->height() : pixel_buffer_textures_.at(texture_id_)->height;}
   void Resize(int64_t,int64_t);
@@ -158,6 +163,21 @@ int main() {
     if(initial!=1) {std::cout<<"FAIL first texture was not delivered before pending render work\n";failed++;}
     else std::cout<<"PASS initial texture does not wait for video playback to begin\n";
     output.pool.deferred=false;output.pool.Drain();
+  }
+
+  {
+    VideoOutput output;
+    output.source_width_=640;output.source_height_=360;
+    output.Resize(640,360);output.renderer_reset_pending_=true;
+    render_update_flags=0;
+    auto before=render_calls;
+    if(output.Render() || render_calls!=before || !output.texture_update_pending_) {
+      std::cout<<"FAIL renderer reset published before an mpv video frame\n";failed++;
+    }
+    render_update_flags=MPV_RENDER_UPDATE_FRAME;
+    if(!output.Render() || output.renderer_reset_pending_ || output.texture_update_pending_) {
+      std::cout<<"FAIL renderer reset did not publish its actual first video frame\n";failed++;
+    } else std::cout<<"PASS renderer reset waits for an actual video frame\n";
   }
   for (bool hardware : {true,false}) {
     VideoOutput output;

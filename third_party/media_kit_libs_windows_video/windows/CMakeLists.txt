@@ -132,6 +132,10 @@ target_link_libraries(
   flutter_wrapper_plugin
 )
 
+if(LIBMPV_LOCAL_RUNTIME)
+  set(media_kit_libs_windows_video_bundled_libraries
+    ${LIBMPV_LOCAL_RUNTIME} PARENT_SCOPE)
+else()
 set(
   media_kit_libs_windows_video_bundled_libraries
   "${LIBMPV_SRC}/libmpv-2.dll"
@@ -143,3 +147,4 @@ set(
   "${ANGLE_SRC}/zlib.dll"
   PARENT_SCOPE
 )
+endif()

@@ -14,6 +14,10 @@
 
 `lib/pages/video/` → `lib/http/video.dart` 和视频模型 → `lib/plugin/pl_player/` → `media_kit` 与平台库。排查时区分地址解析、网络、解码、渲染和窗口阶段。播放器诊断入口在 `lib/services/diagnostics/player_diagnostics.dart`；切源与网络恢复见[播放器流程图](runtime-flows.md#播放器切源与网络恢复)。
 
+Windows 超分辨率场景的 D3D11/EGL 设备引用泄漏已有本机临时 libmpv 修复，同时包含首选语言遍历修复。接入条件、源码与二进制校验值、恢复方式见 [临时本地替换说明](../third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md)。
+
+Windows 超分模式切换会暂时使用空视频输出，重建原生渲染上下文并提交 shader 列表，再恢复视频输出，以释放旧 D3D11 设备保留的纹理分配。切换复用现有串行队列，退出时等待当前操作完成；Android 沿用直接更新 shader 的路径。实际 Flutter 验证入口为 `tool/probes/playback/windows_shader_switch.dart`。 本机带音轨片段验证了八次重建、硬解、出帧及暂停恢复；关闭后私有内存从质量模式约 900 MiB 回落至约 445 MiB，接近初始约 451 MiB。暂停重建存在约 0.33 秒时间线回退；实际音频输出与长时间播放尚未验证。
+
 ### 视频弹幕
 
 视频详情或播放器 → 弹幕 API 与解析 → 弹幕状态和渲染。Windows 高密度场景请记录编码、分辨率、输出尺寸、弹幕密度、硬件解码状态、构建模式和复现时长。

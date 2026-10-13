@@ -58,4 +58,6 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 
 ## 原生二进制与 SDK
 
+Windows 各构建模式（含正式版）均要求从 `build/local-libmpv/` 接入包含 mpv #18603/#18604 的临时原生运行库集合；该目录由 Git 忽略，准备条件、校验、来源与后续替换方式见 [临时 libmpv 替换](media_kit_libs_windows_video/LOCAL_LIBMPV.md)。以下 Windows 固定版本说明为临时修复前的历史记录。
+
 本次未升级 Flutter、Gradle/AGP 或 libmpv。Android 原生库仍使用来源的版本化下载地址与 SHA-256；Windows 继续使用既有 `20260819` 固定归档及 DLL/导入库校验。Flutter SDK 与 `material_ui` 的现有补丁脚本不属于 Git 依赖解析，本次未重写该流程，也不调用会重置 SDK 的补丁脚本进行验证。

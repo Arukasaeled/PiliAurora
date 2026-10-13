@@ -33,6 +33,8 @@ import 'package:pili_aurora/plugin/pl_player/utils/native_media_source.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_playback_runtime.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/playback_load_queue.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/network_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/playback_network_recovery.dart';
@@ -707,6 +709,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   bool get isAnim => _pgcType == 1 || _pgcType == 4;
   late final Rx<SuperResolutionType> superResolutionType =
       (isAnim ? Pref.superResolutionType : SuperResolutionType.disable).obs;
+  final _shaderUpdates = PlaybackLoadQueue();
   Future<void> setShader([SuperResolutionType? type, NativePlayer? pp]) async {
     if (type == null) {
       type = superResolutionType.value;
@@ -716,31 +719,49 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         setting.put(SettingBoxKey.superResolutionType, type.index);
       }
     }
-    pp ??= _videoPlayerController!;
-    switch (type) {
-      case SuperResolutionType.disable:
-        return pp.command(const ['change-list', 'glsl-shaders', 'clr', '']);
-      case SuperResolutionType.efficiency:
-        return pp.command([
-          'change-list',
-          'glsl-shaders',
-          'set',
-          PathUtils.buildShadersAbsolutePath(
-            await copyShadersToExternalDirectory,
-            Assets.mpvAnime4KShadersLite,
-          ),
-        ]);
-      case SuperResolutionType.quality:
-        return pp.command([
-          'change-list',
-          'glsl-shaders',
-          'set',
-          PathUtils.buildShadersAbsolutePath(
-            await copyShadersToExternalDirectory,
-            Assets.mpvAnime4KShaders,
-          ),
-        ]);
-    }
+    final player = pp ?? _videoPlayerController;
+    if (player == null) return;
+    final mode = type;
+    final shaders = mode == SuperResolutionType.efficiency
+        ? Assets.mpvAnime4KShadersLite
+        : Assets.mpvAnime4KShaders;
+    _diagnostics?.event(
+      'shader.update.requested',
+      details: {'mode': mode.name},
+    );
+    await _shaderUpdates.run((isCurrent) async {
+      final paths = mode == SuperResolutionType.disable
+          ? ''
+          : PathUtils.buildShadersAbsolutePath(
+              await copyShadersToExternalDirectory,
+              shaders,
+            );
+      if (!isCurrent() ||
+          _session.isDisposed ||
+          (pp == null && !identical(player, _videoPlayerController))) {
+        return;
+      }
+      final output = _videoController;
+      final reset =
+          Platform.isWindows &&
+          output != null &&
+          player.state.width > 0 &&
+          identical(player, _videoPlayerController);
+      await applyShaderList(
+        paths,
+        command: player.command,
+        resetRenderer: reset ? output.resetRenderer : null,
+      );
+      final actual = player.getProperty('glsl-shaders');
+      _diagnostics?.event(
+        'shader.update.completed',
+        details: {
+          'mode': mode.name,
+          'shaderCount': actual.isEmpty ? 0 : actual.split(';').length,
+          'rendererReset': reset,
+        },
+      );
+    });
   }
 
   // 配置播放器
@@ -1862,6 +1883,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
     _playerCount = 0;
     _session.dispose();
+    _shaderUpdates.dispose();
     _networkRecovery?.dispose();
     _networkRecovery = null;
     _audioRecovery?.dispose();
@@ -1907,7 +1929,14 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     _stopWakeLockTimer();
     WakelockPlus.disable();
     logger.d('dispose player');
-    _runtime.dispose(after: _session.drained).catchError(Utils.reportError);
+    _runtime
+        .dispose(
+          after: Future.wait([
+            _session.drained,
+            _shaderUpdates.drained,
+          ]).then((_) {}),
+        )
+        .catchError(Utils.reportError);
     _instance = null;
     videoPlayerServiceHandler?.clear();
   }

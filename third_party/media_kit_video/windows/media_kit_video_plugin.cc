@@ -125,6 +125,23 @@ void MediaKitVideoPlugin::HandleMethodCall(
     auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
     video_output_manager_->Dispose(handle_value);
     result->Success(flutter::EncodableValue(std::monostate{}));
+  } else if (method_call.method_name() == "VideoOutputManager.ResetRenderer") {
+    const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
+    const auto handle = std::get<std::string>(
+        arguments.at(flutter::EncodableValue("handle")));
+    auto completion = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+        std::move(result));
+    video_output_manager_->ResetRenderer(
+        std::stoll(handle),
+        [completion, post = platform_dispatcher_->post()](bool ready) {
+          post([completion, ready]() {
+            if (ready) {
+              completion->Success(flutter::EncodableValue(std::monostate{}));
+            } else {
+              completion->Error("video_output_reset", "Renderer reset failed");
+            }
+          });
+        });
   } else if (method_call.method_name().compare("VideoOutputManager.SetSize") ==
              0) {
     auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());

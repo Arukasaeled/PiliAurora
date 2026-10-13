@@ -52,6 +52,19 @@ void VideoOutputManager::SetSourceSize(int64_t handle, int64_t width,
   }).detach();
 }
 
+void VideoOutputManager::ResetRenderer(int64_t handle,
+                                       std::function<void(bool)> on_ready) {
+  std::thread([=]() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto output = video_outputs_.find(handle);
+    if (output == video_outputs_.end()) {
+      on_ready(false);
+    } else {
+      output->second->ResetRenderer(on_ready);
+    }
+  }).detach();
+}
+
 void VideoOutputManager::Dispose(int64_t handle) {
   std::thread([=]() {
     std::lock_guard<std::mutex> lock(mutex_);

@@ -43,6 +43,8 @@ class VideoOutputManager {
 
   void SetSourceSize(int64_t handle, int64_t width, int64_t height);
 
+  void ResetRenderer(int64_t handle, std::function<void(bool)> on_ready);
+
   // Destroys the |VideoOutput| with given handle.
   void Dispose(int64_t handle);
 

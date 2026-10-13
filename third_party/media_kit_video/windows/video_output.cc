@@ -34,79 +34,137 @@ VideoOutput::VideoOutput(int64_t handle,
   auto future = thread_pool_ref_->Post([&]() {
     mpv_set_option_string(handle_, "video-sync", "audio");
     mpv_set_option_string(handle_, "video-timing-offset", "0");
-    // First try to initialize video playback with hardware acceleration &
-    // |ANGLESurfaceManager|, use S/W API as fallback.
-    auto is_hardware_acceleration_enabled = false;
-    // Attempt to use H/W rendering.
-    if (configuration.enable_hardware_acceleration) {
-      try {
-        // OpenGL context needs to be set before |mpv_render_context_create|.
-        surface_manager_ = std::make_unique<ANGLESurfaceManager>(
-            static_cast<int32_t>(width_.value_or(1)),
-            static_cast<int32_t>(height_.value_or(1)));
-        surface_manager_->MakeCurrent(true);
-        mpv_opengl_init_params gl_init_params{
-            [](auto, auto name) {
-              return reinterpret_cast<void*>(eglGetProcAddress(name));
-            },
-            nullptr,
-        };
-        mpv_render_param params[] = {
-            {MPV_RENDER_PARAM_API_TYPE, MPV_RENDER_API_TYPE_OPENGL},
-            {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init_params},
-            {MPV_RENDER_PARAM_INVALID, nullptr},
-        };
-        // Create render context.
-        if (mpv_render_context_create(&render_context_, handle_, params) == 0) {
-          // Set flag to true, indicating that H/W rendering is supported.
-          is_hardware_acceleration_enabled = true;
-          std::cout << "media_kit: VideoOutput: Using H/W rendering."
-                    << std::endl;
-        }
-      } catch (...) {
-        // Do nothing.
-        // Likely received an |std::runtime_error| from |ANGLESurfaceManager|,
-        // which indicates that H/W rendering is not supported.
-      }
-    }
-    if (!is_hardware_acceleration_enabled) {
-      // 后端确定前不注册纹理；回退时释放 GL 资源，保持软硬输出互斥。
-      if (render_context_ != nullptr) {
-        mpv_render_context_free(render_context_);
-        render_context_ = nullptr;
-      }
-      surface_manager_.reset();
-      std::cout << "media_kit: VideoOutput: Using S/W rendering." << std::endl;
-      // Allocate a "large enough" buffer ahead of time.
-      pixel_buffer_ =
-          std::make_unique<uint8_t[]>(SW_RENDERING_PIXEL_BUFFER_SIZE);
-      // 初始固定尺寸也必须遵守软件缓冲区容量。
-      if (width_) {
-        width_ = std::clamp(*width_, int64_t{1},
-                            int64_t{SW_RENDERING_MAX_WIDTH});
-      }
-      if (height_) {
-        height_ = std::clamp(*height_, int64_t{1},
-                             int64_t{SW_RENDERING_MAX_HEIGHT});
-      }
-      mpv_render_param params[] = {
-          {MPV_RENDER_PARAM_API_TYPE, MPV_RENDER_API_TYPE_SW},
-          {MPV_RENDER_PARAM_INVALID, nullptr},
-      };
-      mpv_render_context_create(&render_context_, handle_, params);
-    }
+    CreateRenderContext(width_.value_or(1), height_.value_or(1));
     Resize(width_.value_or(1), height_.value_or(1));
-    if (render_context_ != nullptr) {
-      mpv_render_context_set_update_callback(
-          render_context_,
-          [](void* context) {
-            auto that = reinterpret_cast<VideoOutput*>(context);
-            that->NotifyRender();
-          },
-          reinterpret_cast<void*>(this));
-    }
+    SetRenderUpdateCallback();
   });
   future.wait();
+}
+
+bool VideoOutput::CreateRenderContext(int64_t width, int64_t height) {
+  // First try to initialize video playback with hardware acceleration &
+  // |ANGLESurfaceManager|, use S/W API as fallback.
+  auto is_hardware_acceleration_enabled = false;
+  // Attempt to use H/W rendering.
+  if (configuration_.enable_hardware_acceleration) {
+    try {
+      // OpenGL context needs to be set before |mpv_render_context_create|.
+      surface_manager_ = std::make_unique<ANGLESurfaceManager>(
+          static_cast<int32_t>(width),
+          static_cast<int32_t>(height));
+      surface_manager_->MakeCurrent(true);
+      mpv_opengl_init_params gl_init_params{
+          [](auto, auto name) {
+            return reinterpret_cast<void*>(eglGetProcAddress(name));
+          },
+          nullptr,
+      };
+      mpv_render_param params[] = {
+          {MPV_RENDER_PARAM_API_TYPE, MPV_RENDER_API_TYPE_OPENGL},
+          {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init_params},
+          {MPV_RENDER_PARAM_INVALID, nullptr},
+      };
+      // Create render context.
+      if (mpv_render_context_create(&render_context_, handle_, params) == 0) {
+        // Set flag to true, indicating that H/W rendering is supported.
+        is_hardware_acceleration_enabled = true;
+        std::cout << "media_kit: VideoOutput: Using H/W rendering."
+                  << std::endl;
+      }
+    } catch (...) {
+      // Do nothing.
+      // Likely received an |std::runtime_error| from |ANGLESurfaceManager|,
+      // which indicates that H/W rendering is not supported.
+    }
+  }
+  if (!is_hardware_acceleration_enabled) {
+    // 后端确定前不注册纹理；回退时释放 GL 资源，保持软硬输出互斥。
+    if (render_context_ != nullptr) {
+      mpv_render_context_free(render_context_);
+      render_context_ = nullptr;
+    }
+    surface_manager_.reset();
+    std::cout << "media_kit: VideoOutput: Using S/W rendering." << std::endl;
+    // Allocate a "large enough" buffer ahead of time.
+    pixel_buffer_ =
+        std::make_unique<uint8_t[]>(SW_RENDERING_PIXEL_BUFFER_SIZE);
+    // 初始固定尺寸也必须遵守软件缓冲区容量。
+    if (width_) {
+      width_ = std::clamp(*width_, int64_t{1},
+                          int64_t{SW_RENDERING_MAX_WIDTH});
+    }
+    if (height_) {
+      height_ = std::clamp(*height_, int64_t{1},
+                           int64_t{SW_RENDERING_MAX_HEIGHT});
+    }
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_API_TYPE, MPV_RENDER_API_TYPE_SW},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+    mpv_render_context_create(&render_context_, handle_, params);
+  }
+  return render_context_ != nullptr;
+}
+
+void VideoOutput::SetRenderUpdateCallback() {
+  if (render_context_ != nullptr) {
+    mpv_render_context_set_update_callback(
+        render_context_,
+        [](void* context) {
+          auto that = reinterpret_cast<VideoOutput*>(context);
+          that->NotifyRender();
+        },
+        reinterpret_cast<void*>(this));
+  }
+}
+
+void VideoOutput::ReleaseRenderContext() {
+  if (surface_manager_) surface_manager_->MakeCurrent(true);
+  if (render_context_) {
+    mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
+    mpv_render_context_free(render_context_);
+    render_context_ = nullptr;
+  }
+  if (surface_manager_) surface_manager_->MakeCurrent(false);
+  surface_manager_.reset();
+  pixel_buffer_.reset();
+}
+
+void VideoOutput::ResetRenderer(std::function<void(bool)> on_ready) {
+  thread_pool_ref_->Post([this, on_ready]() {
+    if (destroyed_) {
+      on_ready(false);
+      return;
+    }
+    // 软件输出没有 D3D11 纹理分配池。
+    if (!surface_manager_) {
+      on_ready(true);
+      return;
+    }
+    auto output_width = width(), output_height = height();
+    bool ready = false;
+    try {
+      // Dart 已解除 vo 的借用；GL 删除必须早于 EGL/设备销毁。
+      {
+        std::lock_guard<std::mutex> lock(textures_mutex_);
+        texture_update_pending_ = true;
+        renderer_reset_pending_ = true;
+        ReleaseRenderContext();
+        ready = CreateRenderContext(output_width, output_height);
+      }
+      if (ready) {
+        if (pixel_buffer_) {
+          output_width = (std::min)(output_width, int64_t{SW_RENDERING_MAX_WIDTH});
+          output_height = (std::min)(output_height, int64_t{SW_RENDERING_MAX_HEIGHT});
+        }
+        Resize(output_width, output_height);
+        SetRenderUpdateCallback();
+      }
+    } catch (...) {
+      ready = false;
+    }
+    on_ready(ready);
+  });
 }
 
 VideoOutput::~VideoOutput() {
@@ -135,7 +193,7 @@ VideoOutput::~VideoOutput() {
             // pool. This will ensure synchronized EGL or ANGLE usage & won't
             // conflict with |Render| or |CheckAndResize| of other
             // |VideoOutput|s.
-            surface_manager_.reset(nullptr);
+            ReleaseRenderContext();
             promise.set_value();
           });
         });
@@ -144,9 +202,6 @@ VideoOutput::~VideoOutput() {
   promise.get_future().wait();
   texture_id_ = 0;
 
-  thread_pool_ref_->Post([render_context = render_context_]() {
-    mpv_render_context_free(render_context);
-  });
 }
 
 void VideoOutput::NotifyRender() {
@@ -159,6 +214,11 @@ void VideoOutput::NotifyRender() {
 
 bool VideoOutput::Render() {
   if (texture_id_ && render_context_ != nullptr) {
+    // 重建后的配置回调可能早于新视频帧；保留旧画面直到 mpv 提供真正的帧。
+    if (renderer_reset_pending_ &&
+        !(mpv_render_context_update(render_context_) & MPV_RENDER_UPDATE_FRAME)) {
+      return false;
+    }
     int render_status = -1;
     // H/W
     if (surface_manager_ != nullptr) {
@@ -202,6 +262,7 @@ bool VideoOutput::Render() {
       // Keep the protective frame if rendering/registration failed.
       return false;
     }
+    renderer_reset_pending_ = false;
     if (texture_update_pending_ && source_width_ > 0 && source_height_ > 0 &&
         GetVideoWidth() > 0 && GetVideoHeight() > 0) {
       texture_update_pending_ = false;
@@ -365,7 +426,7 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
         std::make_unique<flutter::TextureVariant>(flutter::GpuSurfaceTexture(
             kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle, [&](auto, auto) {
               std::lock_guard<std::mutex> lock(textures_mutex_);
-              if (texture_id_) {
+              if (texture_id_ && surface_manager_ && !texture_update_pending_) {
                 surface_manager_->Read();
                 return textures_.at(texture_id_).get();
               } else {
