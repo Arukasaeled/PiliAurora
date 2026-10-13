@@ -444,7 +444,9 @@ abstract final class Pref {
       _setting.get(SettingBoxKey.defaultPicQa, defaultValue: 10);
 
   static double get danmakuLineHeight =>
-      _setting.get(SettingBoxKey.danmakuLineHeight, defaultValue: 1.6);
+      (_setting.get(SettingBoxKey.danmakuLineHeight, defaultValue: 1.6) as num)
+          .toDouble()
+          .clamp(1.0, 3.0);
 
   static bool get showArgueMsg =>
       _setting.get(SettingBoxKey.showArgueMsg, defaultValue: true);

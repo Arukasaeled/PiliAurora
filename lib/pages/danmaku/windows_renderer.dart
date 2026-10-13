@@ -85,6 +85,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
   final staticDanmaku = <DanmakuItem<T>?>[];
   final specialDanmaku = <DanmakuItem<T>>[];
   final _entries = <DanmakuItem<T>, _PreparedEntry>{};
+  final _expandedEntries = <DanmakuItem<T>, _PreparedEntry>{};
   final _pending = <DanmakuRasterKey, DanmakuContentItem<T>>{};
   final _prewarmPolicy = adaptivePrewarm ? DanmakuPrewarmPolicy() : null;
   final _random = math.Random(0);
@@ -165,13 +166,25 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
         text: '弹幕',
         style: TextStyle(
           fontSize: _option.fontSize,
+          fontWeight: FontWeight.values[_option.fontWeight],
+          fontFamily: rasters.fontFamily,
           height: _option.lineHeight,
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    _trackHeight = painter.height;
+    canvas_danmaku.DmUtils.fontFamily = rasters.fontFamily;
+    final paragraph = canvas_danmaku.DmUtils.generateParagraph(
+      content: DanmakuContentItem<T>('弹幕'),
+      fontSize: _option.fontSize,
+      fontWeight: _option.fontWeight,
+    );
+    _trackHeight = math.max(
+      painter.height,
+      paragraph.height + _option.strokeWidth,
+    );
     painter.dispose();
+    paragraph.dispose();
     final count = _size.isEmpty || _trackHeight <= 0
         ? 0
         : math.max(
@@ -193,28 +206,50 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       (_size.width + (_option.scrollFixedVelocity ? 0 : width)) /
       _option.durationInMilliseconds;
 
+  int _trackSpan(double height) {
+    return math.max(1, (height / _trackHeight).ceil());
+  }
+
+  bool _fitsTrack(int track, double height) {
+    final span = _trackSpan(height);
+    return track >= 0 && track + span <= scrollDanmaku.length;
+  }
+
+  bool _overlapsExpandedEntry(DanmakuTrajectory trajectory) {
+    final expanded = trajectory.height > _trackHeight;
+    final entries = expanded ? _entries.values : _expandedEntries.values;
+    for (final entry in entries) {
+      if (trajectory.overlapsDuring(
+        entry.trajectory,
+        padding: 1 / rasters.devicePixelRatio,
+      )) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   DanmakuTrajectory _trajectory(
-    DanmakuItem<T> item,
+    double width,
+    double height,
     int track,
     bool scrolling, {
     double? startX,
     double? staticRemaining,
   }) {
-    final velocity = scrolling ? _velocity(item.width) : 0.0;
-    final x = scrolling
-        ? startX ?? _size.width
-        : (_size.width - item.width) / 2;
+    final velocity = scrolling ? _velocity(width) : 0.0;
+    final x = scrolling ? startX ?? _size.width : (_size.width - width) / 2;
     return DanmakuTrajectory(
       startMs: tick.toDouble(),
       endMs:
           tick +
           (scrolling
-              ? (x + item.width) / velocity
+              ? (x + width) / velocity
               : staticRemaining ?? _option.staticDurationInMilliseconds),
       startX: x,
       y: track * _trackHeight,
-      width: item.width,
-      height: item.height,
+      width: width,
+      height: height,
       velocity: velocity,
     );
   }
@@ -309,7 +344,16 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
         final candidate = content.type == DanmakuItemType.bottom
             ? staticDanmaku.length - index - 1
             : index;
-        if (staticDanmaku[candidate] == null) {
+        if (staticDanmaku[candidate] == null &&
+            _fitsTrack(candidate, raster.height) &&
+            !_overlapsExpandedEntry(
+              _trajectory(
+                raster.width,
+                raster.height,
+                candidate,
+                false,
+              ),
+            )) {
           track = candidate;
           break;
         }
@@ -322,20 +366,40 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
     if (scrolling) {
       final velocity = _velocity(raster.width);
       for (var index = 0; index < scrollDanmaku.length; index++) {
+        if (!_fitsTrack(index, raster.height)) continue;
         final previous = scrollDanmaku[index].lastOrNull;
-        if (previous == null ||
-            _entries[previous]!.trajectory.canBeFollowedBy(
-              raster.width,
-              velocity,
-              _size.width,
-              tick.toDouble(),
-            )) {
+        final candidateTrajectory = _trajectory(
+          raster.width,
+          raster.height,
+          index,
+          true,
+        );
+        if (!_overlapsExpandedEntry(candidateTrajectory) &&
+            (previous == null ||
+                _entries[previous]!.trajectory.canBeFollowedBy(
+                  raster.width,
+                  velocity,
+                  _size.width,
+                  tick.toDouble(),
+                ))) {
           track = index;
           break;
         }
       }
       if (track < 0 && (content.selfSend || _option.massiveMode)) {
-        track = content.selfSend ? 0 : _random.nextInt(scrollDanmaku.length);
+        final candidate = content.selfSend
+            ? 0
+            : _random.nextInt(scrollDanmaku.length);
+        final trajectory = _trajectory(
+          raster.width,
+          raster.height,
+          candidate,
+          true,
+        );
+        if (_fitsTrack(candidate, raster.height) &&
+            !_overlapsExpandedEntry(trajectory)) {
+          track = candidate;
+        }
       }
     }
     if (track < 0) {
@@ -351,10 +415,17 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       image: image.clone(),
       drawTick: tick,
     );
-    final trajectory = _trajectory(item, track, scrolling);
+    final trajectory = _trajectory(
+      item.width,
+      item.height,
+      track,
+      scrolling,
+    );
     item.xPosition = trajectory.startX;
     _recordOverlap(trajectory);
-    _entries[item] = _PreparedEntry(trajectory, track, scrolling);
+    final entry = _PreparedEntry(trajectory, track, scrolling);
+    _entries[item] = entry;
+    if (trajectory.height > _trackHeight) _expandedEntries[item] = entry;
     if (scrolling) {
       scrollDanmaku[track].add(item);
     } else {
@@ -479,6 +550,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
     final previousCount = _entries.length + specialDanmaku.length;
     _entries.removeWhere((item, entry) {
       if (tick >= entry.trajectory.endMs) {
+        _expandedEntries.remove(item);
         if (entry.scrolling) {
           if (entry.track < scrollDanmaku.length) {
             scrollDanmaku[entry.track].remove(item);
@@ -560,6 +632,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
     _layoutTracks();
     final retained = _entries.entries.toList();
     _entries.clear();
+    _expandedEntries.clear();
     _unsafeUntilMs = 0;
     for (final record in retained) {
       final item = record.key;
@@ -588,8 +661,13 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
           ..height = raster.height;
         activeBytes += raster.bytes;
       }
+      if (!_fitsTrack(entry.track, item.height)) {
+        _disposeItem(item);
+        continue;
+      }
       entry.trajectory = _trajectory(
-        item,
+        item.width,
+        item.height,
         entry.track,
         entry.scrolling,
         startX: _size.width - progress * (_size.width + item.width),
@@ -600,9 +678,16 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
               _option.staticDurationInMilliseconds,
         ),
       );
+      if (_overlapsExpandedEntry(entry.trajectory)) {
+        _disposeItem(item);
+        continue;
+      }
       item.xPosition = entry.trajectory.startX;
       _recordOverlap(entry.trajectory);
       _entries[item] = entry;
+      if (entry.trajectory.height > _trackHeight) {
+        _expandedEntries[item] = entry;
+      }
     }
     _removeDisposed();
     specialDanmaku.removeWhere((item) {
@@ -733,6 +818,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       _disposeItem(item);
     }
     _entries.clear();
+    _expandedEntries.clear();
     specialDanmaku.clear();
     _removeDisposed();
     _pending.clear();

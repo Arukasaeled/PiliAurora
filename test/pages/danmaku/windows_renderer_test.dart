@@ -14,11 +14,13 @@ DanmakuContentItem<void> _text(
   String text, {
   DanmakuItemType type = DanmakuItemType.scroll,
   bool selfSend = false,
+  double fontSizeScale = 1,
 }) => DanmakuContentItem<void>(
   text,
   color: const Color(0xFFFFFFFF),
   type: type,
   selfSend: selfSend,
+  fontSizeScale: fontSizeScale,
 );
 
 Future<List<int>> _pixels(void Function(Canvas) paint) async {
@@ -893,6 +895,75 @@ void main() {
     );
     expect(renderer.add(_text('burst')), isTrue);
     expect(renderer.statistics['rejectedByTrack'], 1);
+  });
+
+  test('expanded scrolling text reserves intersecting rows and normal text stays compact', () {
+    const size = Size(320, 160);
+    final renderer = WindowsDanmakuRenderer<void>(
+      option: _option.copyWith(safeArea: false, massiveMode: true),
+      size: size,
+    );
+    addTearDown(renderer.dispose);
+
+    final expanded = _text('large', fontSizeScale: 2);
+    final normal = _text('normal');
+    expect(renderer.add(expanded), isTrue);
+    expect(renderer.add(normal), isTrue);
+    expect(
+      renderer.scrollDanmaku[0].single.height,
+      greaterThan(renderer.rasters.get(normal)!.height),
+    );
+    expect(renderer.scrollDanmaku[1], isEmpty);
+    expect(renderer.scrollDanmaku[2].single.content, same(normal));
+
+    renderer.advance(const Duration(milliseconds: 100));
+    expect(renderer.scrollDanmaku[0].single.xPosition, lessThan(size.width));
+    expect(renderer.scrollDanmaku[2].single.xPosition, lessThan(size.width));
+  });
+
+  test(
+    'lineHeight 1 lets normal static text use adjacent base rows',
+    () {
+      const size = Size(320, 140);
+      final renderer = WindowsDanmakuRenderer<void>(
+        option: _option.copyWith(
+          lineHeight: 1,
+          safeArea: false,
+          massiveMode: true,
+        ),
+        size: size,
+      );
+      addTearDown(renderer.dispose);
+
+      final first = _text('first', type: DanmakuItemType.top);
+      final second = _text('second', type: DanmakuItemType.top);
+      expect(renderer.add(first), isTrue);
+      expect(renderer.add(second), isTrue);
+      expect(renderer.staticDanmaku[0]!.content, same(first));
+      expect(renderer.staticDanmaku[1]!.content, same(second));
+      expect(renderer.staticDanmaku[2], isNull);
+    },
+  );
+
+  test('expanded static text leaves its covered rows unavailable to scrolling text', () {
+    const size = Size(320, 160);
+    final renderer = WindowsDanmakuRenderer<void>(
+      option: _option.copyWith(safeArea: false, massiveMode: true),
+      size: size,
+    );
+    addTearDown(renderer.dispose);
+
+    final expanded = _text(
+      'large static',
+      type: DanmakuItemType.top,
+      fontSizeScale: 2,
+    );
+    final normal = _text('normal');
+    expect(renderer.add(expanded), isTrue);
+    expect(renderer.add(normal), isTrue);
+    expect(renderer.scrollDanmaku[0], isEmpty);
+    expect(renderer.scrollDanmaku[1], isEmpty);
+    expect(renderer.scrollDanmaku[2].single.content, same(normal));
   });
 
   test('eviction pressure reasons differ from payload counts and clones keep pixels', () async {

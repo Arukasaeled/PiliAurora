@@ -90,8 +90,6 @@ class _PlDanmakuState extends State<PlDanmaku> {
         !DanmakuOptions.sameFontScale) {
       _controller?.updateOption(
         DanmakuOptions.get(
-          mergedFontScale:
-              playerController.mergeDanmaku && Pref.mergeDanmakuScale,
           notFullscreen: widget.notFullscreen,
           speed: playerController.playbackSpeed,
         ),
@@ -275,7 +273,6 @@ class _PlDanmakuState extends State<PlDanmaku> {
   @override
   Widget build(BuildContext context) {
     final option = DanmakuOptions.get(
-      mergedFontScale: playerController.mergeDanmaku && Pref.mergeDanmakuScale,
       notFullscreen: widget.notFullscreen,
       speed: playerController.playbackSpeed,
     );

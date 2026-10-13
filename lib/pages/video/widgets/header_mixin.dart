@@ -5,7 +5,6 @@ import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/utils/extension/num_ext.dart';
 import 'package:pili_aurora/utils/page_utils.dart';
-import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/theme_utils.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -72,8 +71,6 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
 
         void setOptions() => danmakuController?.updateOption(
           DanmakuOptions.get(
-            mergedFontScale:
-                plPlayerController.mergeDanmaku && Pref.mergeDanmakuScale,
             notFullscreen: !isFullScreen,
             speed: plPlayerController.playbackSpeed,
           ),
@@ -447,7 +444,7 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('弹幕行高 ${DanmakuOptions.danmakuLineHeight}'),
+                        Text('轨道间距 ${DanmakuOptions.danmakuLineHeight} 倍'),
                         resetBtn(theme, 1.6, () => updateLineHeight(1.6)),
                       ],
                     ),
@@ -456,6 +453,7 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                       child: Slider(
                         min: 1.0,
                         max: 3.0,
+                        divisions: 20,
                         value: DanmakuOptions.danmakuLineHeight,
                         onChanged: updateLineHeight,
                       ),

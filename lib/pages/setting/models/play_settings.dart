@@ -1,5 +1,4 @@
 import 'dart:io' show Platform;
-import 'dart:math' show max;
 
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -18,9 +17,9 @@ import 'package:pili_aurora/pages/setting/widgets/slider_dialog.dart';
 import 'package:pili_aurora/plugin/pl_player/models/bottom_progress_behavior.dart';
 import 'package:pili_aurora/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/utils/extension/num_ext.dart';
-import 'package:pili_aurora/utils/filtering_text.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
@@ -521,8 +520,8 @@ NormalModel get danmakuFrameRateSetting => NormalModel(
 List<SettingsModel> get danmakuExtraSettings => [
   danmakuFrameRateSetting,
   NormalModel(
-    title: '弹幕行高',
-    subtitle: '默认1.6',
+    title: '弹幕轨道间距',
+    subtitle: '1–3 倍，默认 1.6；数值越小，同屏轨道越多',
     leading: const Icon(CustomIcons.dm_settings),
     getTrailing: (theme) => Text(
       Pref.danmakuLineHeight.toString(),
@@ -699,44 +698,23 @@ Future<void> _showDanmakuFrameRateDialog(
   if (context.mounted) setState();
 }
 
-void _showDmHeightDialog(BuildContext context, VoidCallback setState) {
-  String danmakuLineHeight = Pref.danmakuLineHeight.toString();
-  showDialog(
+Future<void> _showDmHeightDialog(
+  BuildContext context,
+  VoidCallback setState,
+) async {
+  final result = await showDialog<double>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('弹幕行高'),
-      content: TextFormField(
-        autofocus: true,
-        initialValue: danmakuLineHeight,
-        keyboardType: const .numberWithOptions(decimal: true),
-        onChanged: (value) => danmakuLineHeight = value,
-        inputFormatters: FilteringText.decimal,
-      ),
-      actions: [
-        TextButton(
-          onPressed: Get.back,
-          child: Text(
-            '取消',
-            style: TextStyle(color: ColorScheme.of(context).outline),
-          ),
-        ),
-        TextButton(
-          onPressed: () async {
-            try {
-              final val = max(
-                1.0,
-                double.parse(danmakuLineHeight).toPrecision(1),
-              );
-              Get.back();
-              await GStorage.setting.put(SettingBoxKey.danmakuLineHeight, val);
-              setState();
-            } catch (e) {
-              SmartDialog.showToast(e.toString());
-            }
-          },
-          child: const Text('确定'),
-        ),
-      ],
+    builder: (_) => SliderDialog(
+      title: const Text('弹幕轨道间距'),
+      value: Pref.danmakuLineHeight,
+      min: 1,
+      max: 3,
+      divisions: 20,
+      suffix: ' 倍',
     ),
   );
+  if (result == null) return;
+  await GStorage.setting.put(SettingBoxKey.danmakuLineHeight, result);
+  DanmakuOptions.danmakuLineHeight = result;
+  if (context.mounted) setState();
 }
