@@ -15,7 +15,6 @@ import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/http/live.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/http/video.dart';
-import 'package:pili_aurora/models/common/super_resolution_type.dart';
 import 'package:pili_aurora/models/common/video/audio_quality.dart';
 import 'package:pili_aurora/models/common/video/cdn_type.dart';
 import 'package:pili_aurora/models/common/video/video_decode_type.dart';
@@ -36,6 +35,7 @@ import 'package:pili_aurora/pages/video/introduction/ugc/widgets/action_item.dar
 import 'package:pili_aurora/pages/video/introduction/ugc/widgets/menu_row.dart';
 import 'package:pili_aurora/pages/video/widgets/header_mixin.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/super_resolution_menu_tile.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/desktop_playback_menu.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/desktop_window_controls.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
@@ -470,27 +470,13 @@ class HeaderControlState extends State<HeaderControl>
                     title: const Text('重载视频', style: titleStyle),
                   ),
                 ],
-                PopupListTile<SuperResolutionType>(
-                  dense: true,
-                  leading: const Icon(
-                    Icons.stay_current_landscape_outlined,
-                    size: 20,
+                Obx(
+                  () => SuperResolutionMenuTile(
+                    availability:
+                        plPlayerController.superResolutionAvailability,
+                    value: plPlayerController.superResolutionType.value,
+                    onSelected: plPlayerController.setShader,
                   ),
-                  title: const Text('超分辨率', style: titleStyle),
-                  titleStyle: theme.textTheme.bodyLarge,
-                  value: () {
-                    final value = plPlayerController.superResolutionType.value;
-                    return (value, value.label);
-                  },
-                  itemBuilder: (_) => enumItemBuilder(
-                    SuperResolutionType.values,
-                  ),
-                  onSelected: (value, setState) {
-                    plPlayerController.setShader(value);
-                    setState();
-                  },
-                  descPosType: .subtitle,
-                  descStyle: subTitleStyle,
                 ),
                 if (PlatformUtils.isMobile)
                   if (plPlayerController.videoPlayerController

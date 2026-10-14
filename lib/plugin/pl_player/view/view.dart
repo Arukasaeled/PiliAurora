@@ -568,43 +568,52 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
           final type = plPlayerController.superResolutionType.value;
           final availability = plPlayerController.superResolutionAvailability;
           final canEnable = availability == SuperResolutionEligibility.allowed;
-          return PopupMenuButton<SuperResolutionType>(
-            tooltip: switch (availability) {
-              SuperResolutionEligibility.allowed => '超分辨率',
-              SuperResolutionEligibility.resolutionTooHigh => '视频分辨率过高，无法开启超分',
-              SuperResolutionEligibility.unknownSize => '等待视频和屏幕尺寸，暂无法开启超分',
-            },
-            requestFocus: false,
-            initialValue: type,
-            color: Colors.black.withValues(alpha: 0.8),
-            itemBuilder: (context) {
-              return SuperResolutionType.values
-                  .map(
-                    (type) => PopupMenuItem<SuperResolutionType>(
-                      height: 35,
-                      padding: const EdgeInsets.only(left: 30),
-                      value: type,
-                      enabled: type == SuperResolutionType.disable || canEnable,
-                      onTap: () => plPlayerController.setShader(type),
-                      child: Text(
-                        type.label,
-                        style: TextStyle(
-                          color:
-                              type == SuperResolutionType.disable || canEnable
-                              ? Colors.white
-                              : Colors.white38,
-                          fontSize: 13,
+          final hint = switch (availability) {
+            SuperResolutionEligibility.allowed => '超分辨率',
+            SuperResolutionEligibility.resolutionTooHigh => '视频分辨率过高，无法开启超分',
+            SuperResolutionEligibility.unknownSize => '等待视频和屏幕尺寸，暂无法开启超分',
+          };
+          return GestureDetector(
+            onTap: canEnable ? null : () => SmartDialog.showToast(hint),
+            child: PopupMenuButton<SuperResolutionType>(
+              enabled: canEnable,
+              tooltip: hint,
+              requestFocus: false,
+              initialValue: type,
+              color: Colors.black.withValues(alpha: 0.8),
+              itemBuilder: (context) {
+                return SuperResolutionType.values
+                    .map(
+                      (type) => PopupMenuItem<SuperResolutionType>(
+                        height: 35,
+                        padding: const EdgeInsets.only(left: 30),
+                        value: type,
+                        enabled:
+                            type == SuperResolutionType.disable || canEnable,
+                        onTap: () => plPlayerController.setShader(type),
+                        child: Text(
+                          type.label,
+                          style: TextStyle(
+                            color:
+                                type == SuperResolutionType.disable || canEnable
+                                ? Colors.white
+                                : Colors.white38,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    ),
-                  )
-                  .toList();
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                type.label,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
+                    )
+                    .toList();
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  type.label,
+                  style: TextStyle(
+                    color: canEnable ? Colors.white : Colors.white38,
+                    fontSize: 13,
+                  ),
+                ),
               ),
             ),
           );
