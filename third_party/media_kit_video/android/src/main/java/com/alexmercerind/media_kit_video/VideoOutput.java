@@ -75,6 +75,18 @@ public class VideoOutput {
         frameReportPending = false;
     }
 
+    private void onFrameRequested() {
+        final long requestedNs = System.nanoTime();
+        synchronized (lock) {
+            if (disposed || frameSamples == null) return;
+            frameSamples.add(requestedNs);
+            if (!frameReportPending) {
+                frameReportPending = true;
+                mainHandler.postDelayed(reportFrameSamples, 250);
+            }
+        }
+    }
+
 
     private void diagnostic(String event, Throwable error) {
         final long now = android.os.SystemClock.elapsedRealtimeNanos();
@@ -127,7 +139,17 @@ public class VideoOutput {
             throw new RuntimeException("Failed to initialize com.alexmercerind.media_kit_video.VideoOutput.");
         }
 
-        surfaceTextureEntry = textureRegistryReference.createSurfaceTexture();
+        if (reportTimings) {
+            final VideoSurfaceTexture texture = new VideoSurfaceTexture(this::onFrameRequested);
+            try {
+                surfaceTextureEntry = textureRegistryReference.registerSurfaceTexture(texture);
+            } catch (RuntimeException | Error error) {
+                texture.release();
+                throw error;
+            }
+        } else {
+            surfaceTextureEntry = textureRegistryReference.createSurfaceTexture();
+        }
         id = surfaceTextureEntry.id();
         // This listener runs after Flutter's raster thread calls updateTexImage.
         // Frame-available alone does not mean that Flutter acquired that buffer.
@@ -139,15 +161,6 @@ public class VideoOutput {
                     timestamp = surfaceTextureEntry.surfaceTexture().getTimestamp();
                 } catch (RuntimeException e) {
                     return;
-                }
-                if (timestamp > 0 && timestamp != lastConsumedTimestamp && frameSamples != null) {
-                    // SurfaceTexture 的 timestamp 可属于媒体 PTS；相位采样使用消费时的
-                    // CLOCK_MONOTONIC，与 Android 上 Flutter 的帧时钟一致。
-                    frameSamples.add(System.nanoTime());
-                    if (!frameReportPending) {
-                        frameReportPending = true;
-                        mainHandler.postDelayed(reportFrameSamples, 250);
-                    }
                 }
                 if (timestamp > configuredAtNs && timestamp != lastConsumedTimestamp) {
                     consumedFrames++;
@@ -178,7 +191,7 @@ public class VideoOutput {
             }
         });
 
-        // 保留引擎的 frame-available 回调；消费监听负责首帧与交接确认。
+        // VideoSurfaceTexture 转发引擎的 frame-available 回调；消费监听确认首帧与交接。
     }
 
     public void dispose() {

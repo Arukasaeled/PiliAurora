@@ -2,6 +2,8 @@ import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'frame_sync_fixture.dart';
+
 void main() {
   const synchronizedPairs = {
     (24, 120),
@@ -27,18 +29,22 @@ void main() {
             final syncActive = ValueNotifier<bool>(displaySyncActive);
             addTearDown(frames.dispose);
             addTearDown(syncActive.dispose);
-            final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+            final fixture = FrameSyncFixture(
+              tester,
+              refreshRate.toDouble(),
+              roundSlotsUp: true,
+            );
             var ticks = 0;
             final ticker = _ClockTicker(
               (_) => ticks++,
-              () => tester.binding.clock.now().microsecondsSinceEpoch,
+              () => fixture.now,
               danmakuRate,
               frames,
               syncActive,
             )..start();
             await tester.pump();
             final initialTicks = ticks;
-            final consumed = <int>[];
+            final available = <int>[];
             var alignedSlots = 0;
             var shiftedSlots = 0;
             var alignedTicks = 0;
@@ -56,14 +62,13 @@ void main() {
               if (hasVideo) {
                 nextVideo += videoPeriod;
                 videoFrames++;
-                consumed.add(origin + (slot - 1) * slotMicros + 1000);
+                available.add(fixture.requestForSlot(slot));
               }
               final previousTicks = ticks;
-              final hasDart = tester.binding.hasScheduledFrame;
-              if (hasDart) await tester.pump();
+              final hasDart = await fixture.pump(hasVideo: hasVideo);
               if (slot % (refreshRate / 4).round() == 0) {
-                frames.value = consumed.toList();
-                consumed.clear();
+                frames.value = available.toList();
+                available.clear();
               }
               if (slot > refreshRate && slot <= refreshRate * 3) {
                 alignedTicks += ticks - previousTicks;
@@ -99,8 +104,7 @@ void main() {
             expect(shiftedTicks, closeTo(effectiveRate * 2, 2));
             // 视频周期能稳定映射到屏幕槽位时验证合帧；其余组合验证
             // 退化后仍保持目标更新频率，允许视频独立刷新。
-            if (displaySyncActive &&
-                refreshRate % videoRate == 0 &&
+            if (refreshRate % videoRate == 0 &&
                 synchronizedPairs.contains((videoRate, danmakuRate))) {
               final combinedRate = videoRate > effectiveRate
                   ? videoRate

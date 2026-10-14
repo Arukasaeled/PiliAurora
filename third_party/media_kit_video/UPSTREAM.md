@@ -25,3 +25,5 @@ Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频�
 2026-10-13：Windows 增加 `resetRenderer()`，在原生输出线程重建渲染上下文和 ANGLE 设备；保持 mpv 核心与媒体。释放顺序调整为在 GL 上下文 current 时释放 mpv render，再销毁 EGL/设备。重建后的纹理等新视频帧就绪再发布。应用在超分切换时调用，Android 路径保持原行为。
 
 2026-10-14：Android 输出可按配置上报纹理消费的单调时钟微秒，每 250 ms 合并一批、最多 32 个样本；重复纹理不计，Surface 重建、重新配置和销毁清理待发批次。该路径沿用引擎的 frame-available 监听，不使用媒体 PTS 作为调度时钟。Windows 输出保持原路径。
+
+2026-10-14：相位采样改到 frame-available 的引擎原 listener 返回后，记录纹理刷新请求完成的单调时钟；markDirty 与取图共用 monitor，因此锁等待必须计入请求时间。VideoSurfaceTexture 保留原 Handler、监听注销和纹理生命周期。请求批次仍为 250 ms、上限 32，重建和销毁时清理。消费监听继续负责首帧、尺寸交接及消费计数，Windows 输出不变。主机回调探针检查通知转发和采样顺序；另编译实际 Flutter SurfaceTextureWrapper，验证交替 0/9ms 取图等待后的样本与请求槽位一致。该探针未模拟 platform/UI 合并线程的全部行为，不作为 Scene 或最终呈现结论。

@@ -10,6 +10,7 @@ class FrameRateTicker extends Ticker {
   // release 的帧时间约每秒批量报告，保留一个批次间隔及调度余量。
   static const _timingWindowMicros = 1500000;
   static const _stableIntervalCount = 6;
+  static const _frameToleranceMicros = 500;
   FrameRateTicker(
     super.onTick, {
     int frameRate = 0,
@@ -43,8 +44,7 @@ class FrameRateTicker extends Ticker {
   ValueListenable<List<int>>? _videoFrameTimings;
   ValueListenable<bool>? _videoDisplaySyncActive;
   final double Function()? _screenRefreshRate;
-
-  /// 播放器实际显示同步状态；来源尚未确认或关闭时传入 false。
+  /// 无原生到达通知时，使用播放器实际显示同步状态约束 timing 相位学习。
   set videoDisplaySyncActive(ValueListenable<bool>? value) {
     if (identical(value, _videoDisplaySyncActive)) return;
     if (_observing) {
@@ -56,11 +56,12 @@ class FrameRateTicker extends Ticker {
   }
 
   void _onVideoSyncChanged() {
+    // 纹理实际到达节奏已反映输出相位，不依赖 mpv 采用哪种播放时钟。
+    if (_videoFrameTimings != null) return;
     _clearPhase();
-    if (_videoFrameTimings != null) _onVideoFrames();
   }
 
-  /// 原生纹理消费时间，单位为单调时钟微秒，按播放器隔离。
+  /// 原生纹理刷新请求完成时间，单位为单调时钟微秒，按播放器隔离。
   set videoFrameTimings(ValueListenable<List<int>>? value) {
     if (identical(value, _videoFrameTimings)) return;
     if (_observing) _videoFrameTimings?.removeListener(_onVideoFrames);
@@ -86,7 +87,6 @@ class FrameRateTicker extends Ticker {
     if (!isActive ||
         muted ||
         _frameRate <= 0 ||
-        _videoDisplaySyncActive?.value == false ||
         _lastSystemFrame == Duration.zero) {
       return;
     }
@@ -98,13 +98,14 @@ class FrameRateTicker extends Ticker {
     if (_nativeScreenPeriod != null && _nativeScreenPeriod != screen) {
       _clearPhase();
     }
-    // 消费发生在 raster 线程，晚于 vsync 开始。使用当前 Flutter vsync
-    // 网格还原帧槽，避免将消费回调的耗时抖动当成视频周期。
+    // 原生刷新请求下一次 vsync；BeginFrame 再使用该帧的目标时间。
+    // 先还原请求对应的 vsync 开始，避免 raster 负载参与相位估算。
     final grid = _lastSystemFrame.inMicroseconds;
-    for (final consumed in frames) {
-      final age = clockMicroseconds - consumed;
+    for (final requested in frames) {
+      final age = clockMicroseconds - requested;
       if (age < 0 || age > _timingWindowMicros) continue;
-      final stamp = grid + ((consumed - grid) / screen).floor() * screen;
+      final stamp =
+          grid + ((requested - grid) / screen).floor() * screen + screen;
       _acceptNativeFrame(stamp);
     }
   }
@@ -194,7 +195,7 @@ class FrameRateTicker extends Ticker {
       final now = clockMicroseconds;
       int screenTarget() =>
           anchor + ((target - anchor - 1000) / screen).ceil() * screen;
-      // BeginFrame 使用目标时刻，纹理样本来自上一槽位的 raster 消费。
+      // BeginFrame 使用目标时刻，相位锚点保存对应的 vsync 开始。
       // 选择仍来得及请求的槽位，并提前半个屏幕周期唤醒。
       while (screenTarget() <= _lastSystemFrame.inMicroseconds + 1000 ||
           screenTarget() < now + screen ~/ 2) {
@@ -221,7 +222,8 @@ class FrameRateTicker extends Ticker {
   int? get _syncPeriod {
     final period = _nativePeriod;
     if (_frameRate <= 0 ||
-        _videoDisplaySyncActive?.value == false ||
+        (_videoFrameTimings == null &&
+            _videoDisplaySyncActive?.value == false) ||
         period == null ||
         _stableIntervals < _stableIntervalCount ||
         !_validPhase) {
@@ -247,7 +249,8 @@ class FrameRateTicker extends Ticker {
       _origin = null;
       _nextFrameTime = null;
       // 短空档复用仍有效的相位，屏幕刷新率改变或样本过期后重新学习。
-      if (_videoDisplaySyncActive?.value == false ||
+      if ((_videoFrameTimings == null &&
+              _videoDisplaySyncActive?.value == false) ||
           _videoFrameTimings?.value.isEmpty == true ||
           clockMicroseconds >= _syncExpires ||
           _nativeScreenPeriod != _screenPeriod) {
@@ -346,7 +349,11 @@ class FrameRateTicker extends Ticker {
         _externalPhaseAdopted = true;
       }
     }
-    if (_frameRate <= 0 || next == null || timestamp >= next) {
+    // 刷新周期取整可能使目标晚于真实 vsync 数微秒；按累计目标限频并容忍该误差。
+    if (_frameRate <= 0 ||
+        next == null ||
+        timestamp.inMicroseconds + _frameToleranceMicros >=
+            next.inMicroseconds) {
       _timer?.cancel();
       _timer = null;
       _origin ??= timestamp;

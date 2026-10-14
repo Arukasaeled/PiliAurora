@@ -31,3 +31,7 @@
 2026-10-14：按减少绘制和唤醒的目标简化调度。达到屏幕上限时直接请求 vsync，低档位等待扣除本次更新耗时；视频相位采用连续六个稳定间隔，并在下一次调度就近校准，移除批量采样触发的定时器重排。连续外部 Dart 帧经过同频确认后只校准一次，中断后重新学习，避免高频 UI 动画反复提前更新。应用补充 60/90/120/144 Hz、0/2 ms 更新耗时及高频 UI 帧的 32 个回归场景；实机功耗尚未验证。
 
 2026-10-14：通用 Canvas 屏幕的滚动与高级弹幕改为通过 CustomPainter 的 repaint 监听动画时钟，配置变化时再更新委托，减少逐帧 widget 重建。空图层停止接收逐帧重绘通知，清空时保留一次擦除。绘制继续更新每条弹幕的位置和时间，保留 Android 点击命中、单条悬停和恢复行为；普通弹幕图片沿用原缓存。120 帧模拟中的动画 widget 重建从 240 次降为 0 次，实际 GPU 与 Android 功耗尚未验证。
+
+2026-10-14：Android 相位输入改为纹理到达通知中引擎刷新请求完成的单调时钟，按请求的下一次 vsync 开始还原相位，随后换算 BeginFrame 目标时间。具备原生来源时按连续稳定的实际请求节奏同步，不再受 mpv display-sync-active 开关限制；无原生来源的 timing 路径保留该约束。实际 Android Scene 与呈现仍需目标设备验证。
+
+2026-10-14：参考 [BiliPai RenderFrameCadence](https://github.com/jay3-yy/BiliPai/blob/f47be0d2ca9566ed30779d7eaf08e7db3ae2a36b/danmaku-engine/src/main/java/com/bytedance/danmaku/render/engine/RenderFrameCadence.kt) 的截止时间容差思路，在绝对目标时间判断中允许 0.5ms 的 vsync 误差，避免周期取整后跳过更新。目标间隔继续累计，保留帧率上限。119.88／120／120.12Hz、两种初始相位及 mpv 同步开关各覆盖隔离调度与 Android 时序，共 24 个回归场景；Android 模型同时包含 BeginFrame 的 target=start+screen 时间差和纹理请求驱动 Dart 帧，隔离模型的失败不单独作为设备缺陷结论。未引入 BiliPai 代码或依赖。

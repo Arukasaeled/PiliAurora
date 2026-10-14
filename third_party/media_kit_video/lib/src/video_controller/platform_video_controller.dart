@@ -126,7 +126,7 @@ class VideoControllerConfiguration {
   final void Function(String event, Map<String, Object?> details)?
   onAndroidDiagnostic;
 
-  /// Bounded batches of texture consumption times in monotonic microseconds.
+  /// Bounded batches of completed texture refresh requests in monotonic microseconds.
   final ValueChanged<List<int>>? onAndroidFrameTimings;
 
   /// Whether to attach `android.view.Surface` after video parameters are known.

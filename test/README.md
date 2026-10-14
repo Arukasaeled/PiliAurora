@@ -19,15 +19,17 @@
 
 测试文件使用 `_test.dart` 后缀，领域内共用的 fixture 与调用者放在同一目录，例如 `services/download/download_fixtures.dart` 和 `services/messaging/messaging_fixtures.dart`。
 
+`frame_sync_fixture.dart` 供相位测试和帧率矩阵共用请求时间换算；Android 模型把目标帧时钟领先和视频驱动 Dart 帧绑定在一起，隔离模型用于检查 ticker 自行唤醒。
+
 同一组件的场景集中在对应文件，播放图标测试位于 `common/widgets/svg/play_icon_test.dart`，诊断记录存储及突发写入位于 `services/diagnostics/record_store_test.dart`。页面测试与服务测试分开组织；`pages/danmaku/windows_screen_test.dart` 覆盖 screen 的时钟、预热和 widget 重建行为。
 
 消息测试按业务状态、分享和协议分为 `messaging_test.dart`、`sharing_test.dart`、`protocol_test.dart`。运行入口与实际服务验证范围见[消息模块](../lib/services/messaging/README.md#验证)。
 
 `pages/danmaku/video_frame_sync_test.dart` 在模拟 120 Hz 时间槽上覆盖视频与弹幕的相位同步，以及原生纹理帧时间的逐帧、100 ms 和 release 一秒批量报告；调用真实弹幕 ticker，验证稳定后的额外帧请求。该测试不测量 GPU 合成次数或实机屏幕 Hz。
 
-`pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理消费时间批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、30 FPS 视频配 60 FPS 弹幕在 90/120 Hz 上的相位变化、匹配到失配再匹配时的退化与恢复、实际显示同步状态切换与订阅释放、批次限界、消费耗时抖动、29.97/59.94 FPS 漂移与来源释放。相位变化测试同时断言弹幕更新频率和视频、弹幕合计刷新的次数。消费时间对实际屏幕槽位的估计仍需实机检查。
+`pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理刷新请求批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、30 FPS 视频配 60 FPS 弹幕在 90/120 Hz 上的相位变化、匹配到失配再匹配时的退化与恢复、mpv 显示同步状态切换与订阅释放、批次限界、请求时间抖动、29.97/59.94 FPS 漂移与来源释放。相位变化测试同时断言弹幕更新频率和视频、弹幕合计刷新的次数。`native_video_frame_phase_test.dart` 检查下一次 vsync 与 BeginFrame 目标时间的换算，以及 mpv 同步关闭时仍按稳定的原生请求节奏锁定；119.88／120／120.12Hz 共 24 个场景覆盖隔离调度与 Android 时序。Android 模型同时包含 target=start+screen 时间差和纹理请求驱动 Dart 帧的行为，不将隔离模型单独视为实机结论。实际屏幕槽位与呈现仍需设备检查。
 
-`pages/danmaku/frame_rate_matrix_test.dart` 检查屏幕 60/90/120/144 Hz、视频 24/30/60 FPS 与弹幕 30/60/90/120 FPS 的 48 种组合，每组覆盖显示同步实际开启与关闭，共 96 个场景。视频按媒体周期映射到屏幕槽位，覆盖非整数比例，并在三秒后延后一个槽位。全部组合检查视频帧数、受屏幕刷新率上限约束的弹幕更新频率，以及相位变化前后的稳定更新频率；显示同步开启且视频周期可稳定映射到屏幕槽位的整数倍或整数分频组合另检查合计刷新次数，失配或显示同步关闭时检查退化后的目标更新频率。`frame_rate_ticker_test.dart` 另检查所属视图刷新率、屏幕降频与刷新率不可用的调度。该测试使用模拟时钟，不测量设备屏幕或 GPU 合成。
+`pages/danmaku/frame_rate_matrix_test.dart` 检查屏幕 60/90/120/144 Hz、视频 24/30/60 FPS 与弹幕 30/60/90/120 FPS 的 48 种组合，每组覆盖 mpv 显示同步实际开启与关闭，共 96 个场景。视频按媒体周期映射到屏幕槽位，覆盖非整数比例，并在三秒后延后一个槽位。全部组合检查视频帧数、受屏幕刷新率上限约束的弹幕更新频率，以及相位变化前后的稳定更新频率；具备原生到达通知且视频周期可稳定映射到屏幕槽位的整数倍或整数分频组合，在两种 mpv 状态下都检查合计刷新次数，失配时检查退化后的目标更新频率。`frame_rate_ticker_test.dart` 另检查所属视图刷新率、屏幕降频与刷新率不可用的调度。该测试使用模拟时钟，不测量设备屏幕或 GPU 合成。
 
 `plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。super_resolution_selection_test.dart 检查不可用的显式选择保留档位和设置，并在访问原生播放器前返回。super_resolution_menu_tile_test.dart 覆盖侧边超分入口的禁用状态、原因展示、点击提示和可用档位选择。
 

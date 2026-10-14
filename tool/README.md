@@ -6,6 +6,7 @@
 | --- | --- |
 | `build.ps1`、`jnigen.dart` | 平台构建与 JNI 生成，保留稳定入口。 |
 | `run-ci-tests.ps1` | 本地运行 GitHub Actions 选择的测试文件。 |
+| `run-native-probes.ps1` | 使用项目固定 Flutter 源码执行 Android 主机 Java 探针。 |
 | `check_dependencies.dart` | 依赖版本、来源和许可证验收。 |
 | [`probes/`](probes/README.md) | Android、Windows、播放链路和事件循环的隔离回归探针。 |
 | [`experiments/`](experiments/README.md) | 按业务领域组织的按需对照与性能测量。 |
@@ -21,6 +22,14 @@ pwsh -NoProfile -File tool/run-ci-tests.ps1
 ```
 
 `run-ci-tests.ps1` 默认使用 FVM，只通过 `flutter test --no-pub` 执行 GitHub Actions 选择的测试文件，覆盖依赖政策、诊断、消息、设置、弹幕及播放恢复等模块；文件清单以脚本中的 `$ciTests` 为准。依赖需预先准备；脚本不解析或安装依赖、不修改 Flutter SDK、不应用补丁，也不构建应用。GitHub Actions 由补丁步骤统一解析一次依赖，随后直接运行依赖验收工具并调用同一测试脚本；测试和构建阶段均使用 `--no-pub`。
+
+Java 探针要求 PATH 中有 JDK 25，依赖已通过固定 Flutter SDK 准备：
+
+```powershell
+pwsh -NoProfile -File tool/run-native-probes.ps1
+```
+
+入口从 `.dart_tool/package_config.json` 定位 SDK，核对 `.fvmrc` 版本，编译实际 `SurfaceTextureWrapper.java`；源码缺失或编译、断言失败会返回非零退出码。产物保存在 `build/probe-validation/android/`。覆盖范围与设备采集命令见[平台探针](probes/README.md)。
 
 ## 平台构建
 

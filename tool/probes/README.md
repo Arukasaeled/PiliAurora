@@ -66,27 +66,22 @@ uv run --locked python tool/probes/android/paused_rotation_probe.py --adb <adb�
 
 使用 `--dart-define=CREATE_ROTATION_FIXTURE=true` 构建入口可显示测试图，再通过模拟器 `screenrecord` 录制 H.264 视频。确认四象限和白边完整，并排除系统弹窗干扰。交付应用前需用默认入口重新构建。
 
-## Android 帧栅栏条件探针
+## Android 主机帧调度探针
 
-`android/SurfaceFrameFenceProbe.java` 在主机 JVM 上验证生产 Java 类的时间戳、尺寸与 Surface 代次条件：
-
-```powershell
-New-Item -ItemType Directory -Path build/probe-validation/frame-fence -Force | Out-Null
-javac -d build/probe-validation/frame-fence third_party/media_kit_video/android/src/main/java/com/alexmercerind/media_kit_video/SurfaceFrameFence.java tool/probes/android/SurfaceFrameFenceProbe.java
-java -cp build/probe-validation/frame-fence com.alexmercerind.media_kit_video.SurfaceFrameFenceProbe
-```
-
-该入口检查帧接收条件，画面像素由模拟器旋转探针检查。
-
-`android/VideoFrameSamplesProbe.java` 检查实际纹理消费时间缓冲的 32 个样本上限、微秒转换、批次提取和 Surface 重置清理：
+准备项目依赖和 PATH 中的 JDK 25 后运行：
 
 ```powershell
-New-Item -ItemType Directory -Path build/probe-validation/video-frame-samples -Force | Out-Null
-javac -d build/probe-validation/video-frame-samples third_party/media_kit_video/android/src/main/java/com/alexmercerind/media_kit_video/VideoFrameSamples.java tool/probes/android/VideoFrameSamplesProbe.java
-java -cp build/probe-validation/video-frame-samples com.alexmercerind.media_kit_video.VideoFrameSamplesProbe
+pwsh -NoProfile -File tool/run-native-probes.ps1
 ```
 
-该入口运行于主机 JVM，消费时间与屏幕槽位的关系需目标设备验收。
+入口从项目依赖配置定位 `.fvmrc` 固定版本的 Flutter SDK，编译其真实 `SurfaceTextureWrapper.java`，依次执行四个主机 JVM 探针：
+
+- `SurfaceFrameFenceProbe`：生产帧栅栏的时间戳、尺寸和 Surface 代次条件。
+- `VideoFrameSamplesProbe`：请求时间缓冲的 32 个样本上限、微秒转换、批次提取和 Surface 重置清理。
+- `VideoSurfaceTextureProbe`：生产 listener 完成后采样、回调转发、Handler、注销和消费确认。
+- `VideoSurfaceTextureRequestProbe`：真实 Flutter wrapper 的 monitor 竞争，交替 0/9ms 取图锁等待计入请求样本。
+
+缺失 SDK 源码、编译或断言失败均返回非零退出码；产物留在 `build/probe-validation/android/`。Android 桩位于探针目录，不加入生产编译。探针不创建 GL、原生 Surface 或真实消息循环，也未模拟 platform/UI 合并线程的全部行为。采样顺序与 monitor 等待由主机检查，平台 API 由 Android 构建检查，实际 Scene 与呈现由目标设备检查。
 
 ## Windows 尺寸通道回归探针
 

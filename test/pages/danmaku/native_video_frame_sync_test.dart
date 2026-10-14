@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'dart:ui';
 
 void main() {
-  testWidgets('实际显示同步状态变化时退化与恢复，停止后释放状态订阅', (tester) async {
+  testWidgets('原生到达相位独立于 mpv 同步状态，停止后释放状态订阅', (tester) async {
     tester.view.display.refreshRate = 120;
     addTearDown(tester.view.display.resetRefreshRate);
     final frames = ValueNotifier<List<int>>(const []);
@@ -25,22 +25,22 @@ void main() {
     final initialTicks = ticks;
     final updates = [0, 0, 0, 0];
     final combined = [0, 0, 0, 0];
-    final consumed = <int>[];
+    final available = <int>[];
     for (var slot = 1; slot <= 1440; slot++) {
       await tester.binding.delayed(const Duration(microseconds: 8334));
       final segment = (slot - 1) ~/ 360;
       if ((slot - 1) % 360 == 0) syncActive.value = segment.isOdd;
-      // 同步关闭后改变视频相位，确认它不会继续影响独立弹幕调度。
+      // mpv 同步关闭期间改变视频相位，仍按实际到达通知重新对齐。
       final hasVideo = slot % 2 == (segment < 2 ? 1 : 0);
       if (hasVideo) {
-        consumed.add(origin + slot * 8334 - 8333 + 1000);
+        available.add(origin + (slot - 2) * 8334 + 1000);
       }
       final previousTicks = ticks;
       final hasDart = tester.binding.hasScheduledFrame;
       if (hasDart) await tester.pump();
       if (slot % 30 == 0) {
-        frames.value = consumed.toList();
-        consumed.clear();
+        frames.value = available.toList();
+        available.clear();
       }
       if ((slot - 1) % 360 >= 120) {
         updates[segment] += ticks - previousTicks;
@@ -59,7 +59,7 @@ void main() {
     expect(ticks - initialTicks, closeTo(720, 4));
     for (var segment = 0; segment < 4; segment++) {
       expect(updates[segment], closeTo(120, 2));
-      expect(combined[segment], closeTo(segment.isOdd ? 120 : 240, 2));
+      expect(combined[segment], closeTo(120, 2));
     }
     debugPrint('display sync state: updates=$updates combined=$combined');
   });
@@ -80,7 +80,7 @@ void main() {
     final initialTicks = ticks;
     final updates = [0, 0, 0];
     final combined = [0, 0, 0];
-    final consumed = <int>[];
+    final available = <int>[];
     for (var slot = 1; slot <= 1080; slot++) {
       await tester.binding.delayed(const Duration(microseconds: 8334));
       // 不清空采样，直接从 60 切到 24 再切到 30 FPS。
@@ -88,14 +88,14 @@ void main() {
       final videoRate = [60, 24, 30][segment];
       final hasVideo = slot % (120 ~/ videoRate) == 1;
       if (hasVideo) {
-        consumed.add(origin + slot * 8334 - 8333 + 1000);
+        available.add(origin + (slot - 2) * 8334 + 1000);
       }
       final previousTicks = ticks;
       final hasDart = tester.binding.hasScheduledFrame;
       if (hasDart) await tester.pump();
       if (slot % 30 == 0) {
-        frames.value = consumed.toList();
-        consumed.clear();
+        frames.value = available.toList();
+        available.clear();
       }
       if ((slot - 1) % 360 >= 120) {
         updates[segment] += ticks - previousTicks;
@@ -132,7 +132,7 @@ void main() {
           )..start();
           await tester.pump();
           final initialTicks = ticks;
-          final consumed = <int>[];
+          final available = <int>[];
           var alignedSlots = 0;
           var shiftedSlots = 0;
           final slotsPerSecond = refreshRate.toInt();
@@ -144,13 +144,13 @@ void main() {
             final hasVideo =
                 slot % videoSlots == (slot <= slotsPerSecond * 3 ? 0 : 1);
             if (hasVideo) {
-              consumed.add(origin + (slot - 1) * slotMicros + 1000);
+              available.add(origin + (slot - 2) * slotMicros + 1000);
             }
             final hasDart = tester.binding.hasScheduledFrame;
             if (hasDart) await tester.pump();
             if (slot % batchSlots == 0) {
-              frames.value = consumed.toList();
-              consumed.clear();
+              frames.value = available.toList();
+              available.clear();
             }
             if (hasVideo || hasDart) {
               if (slot > slotsPerSecond && slot <= slotsPerSecond * 3) {
@@ -279,7 +279,7 @@ void main() {
             var extraSlots = 0;
             var steadyExtra = 0;
             final timings = <FrameTiming>[];
-            final consumed = <int>[];
+            final available = <int>[];
 
             // 120 Hz 的 360 个槽位约为三秒，覆盖 release 的一秒报告批次。
             // 只有应用实际请求帧才 pump，避免测试自身逐槽驱动弹幕。
@@ -288,10 +288,9 @@ void main() {
               final hasVideoFrame = slot % 2 == videoPhase;
               if (hasVideoFrame) {
                 videoFrames++;
-                consumed.add(
+                available.add(
                   origin.microsecondsSinceEpoch +
-                      slot * 8334 -
-                      8333 +
+                      (slot - 2) * 8334 +
                       700 +
                       (slot % 3) * 1200,
                 );
@@ -321,10 +320,10 @@ void main() {
                   timings.toList(),
                 );
                 timings.clear();
-                nativeFrames.value = consumed.sublist(
-                  consumed.length > 32 ? consumed.length - 32 : 0,
+                nativeFrames.value = available.sublist(
+                  available.length > 32 ? available.length - 32 : 0,
                 );
-                consumed.clear();
+                available.clear();
               }
               if (hasVideoFrame || hasDartFrame) combinedSlots++;
               if (!hasVideoFrame && hasDartFrame) extraSlots++;
@@ -375,21 +374,21 @@ void main() {
       var videoFrames = 0;
       var extraSlots = 0;
       var nextVideo = 8334.0;
-      final consumed = <int>[];
+      final available = <int>[];
       for (var slot = 1; slot <= 1800; slot++) {
         await tester.binding.delayed(const Duration(microseconds: 8334));
         final hasVideo = slot * 8334 >= nextVideo;
         if (hasVideo) {
           nextVideo += 1000000 / videoRate;
           videoFrames++;
-          consumed.add(origin + slot * 8334 - 8333 + 1000);
+          available.add(origin + (slot - 2) * 8334 + 1000);
         }
         final hasDart = tester.binding.hasScheduledFrame;
         if (hasDart) await tester.pump();
         if (hasDart && !hasVideo) extraSlots++;
         if (slot % 30 == 0) {
-          frames.value = consumed.toList();
-          consumed.clear();
+          frames.value = available.toList();
+          available.clear();
         }
       }
       ticker.dispose();
