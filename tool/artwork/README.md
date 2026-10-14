@@ -43,7 +43,15 @@ Android 普通自适应前景使用 `drawable-nodpi/app_icon_artwork.png`，108d
 
 `test/common/widgets/themed_assets_test.dart` 检查 bundle 加载、图片和 SVG 解码，以及主题来回切换和空状态重试。`test/app/desktop_theme_test.dart` 用模拟通道验证窗口图标跟随主题且不依赖主页。Android 桌面刷新、系统启动动画、Windows 任务栏和托盘的实际显示仍需平台实机验证。
 
-`assets/screenshots/` 是已有产品截图，未作为应用插画重绘。字体和 shader 是运行资源，未纳入本次视觉替换。
+`assets/screenshots/` 是已有产品截图，未作为应用插画重绘。数字字体和 shader 是运行资源，未纳入本次视觉替换。
+
+## 界面图标字体
+
+2026-10-15：32 个按功能语义重新绘制的 SVG 集中存放于 [`icons/`](icons/README.md)，与字形映射、生成脚本和版权声明一起维护。源稿未提取、描摹或转换旧字体字形。版权署名为 `Copyright (c) 2026 wallpap`，随项目按 GPL-3.0-only 分发，见 [`icons/NOTICE`](icons/NOTICE)。
+
+`uv run tool/artwork/icons/build_font.py` 将源稿生成单个 `assets/fonts/piliaurora_icons.ttf`，同步生成 `lib/common/widgets/custom_icon.dart`。应用继续使用 `Icon(CustomIcons.xxx)`，继承 Flutter 的图标尺寸、明暗色、选中和禁用主题。字体内嵌作者、版权和许可信息；SVG 源稿保留在工具目录，应用打包字体。
+
+数字字体 `digital_id_num.ttf` 与系统/用户导入字体保持现状。图标渲染及映射检查见 `test/common/widgets/custom_icon_test.dart`。
 
 ## 重新导出
 
