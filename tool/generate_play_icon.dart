@@ -25,7 +25,7 @@ void main() {
             const Radius.circular(14),
           ),
           Paint()
-            ..color = const Color(0x26000000)
+            ..color = const Color(0x18000000)
             ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5),
         )
         ..drawPicture(info.picture);
