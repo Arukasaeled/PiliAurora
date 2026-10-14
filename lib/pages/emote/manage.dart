@@ -273,6 +273,7 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
       );
     }
     return ListView.separated(
+      padding: EdgeInsets.zero,
       itemCount: filtered.length,
       separatorBuilder: (context, index) => const Divider(height: 1),
       itemBuilder: (context, index) {
