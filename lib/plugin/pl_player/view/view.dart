@@ -37,6 +37,7 @@ import 'package:pili_aurora/pages/video/post_panel/popup_menu_text.dart';
 import 'package:pili_aurora/pages/video/post_panel/view.dart';
 import 'package:pili_aurora/pages/video/widgets/header_control.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/super_resolution_policy.dart';
 import 'package:pili_aurora/plugin/pl_player/models/bottom_control_type.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/desktop_volume_control.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_status.dart';
@@ -565,8 +566,14 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       BottomControlType.superResolution => Obx(
         () {
           final type = plPlayerController.superResolutionType.value;
+          final availability = plPlayerController.superResolutionAvailability;
+          final canEnable = availability == SuperResolutionEligibility.allowed;
           return PopupMenuButton<SuperResolutionType>(
-            tooltip: '超分辨率',
+            tooltip: switch (availability) {
+              SuperResolutionEligibility.allowed => '超分辨率',
+              SuperResolutionEligibility.resolutionTooHigh => '视频分辨率过高，无法开启超分',
+              SuperResolutionEligibility.unknownSize => '等待视频和屏幕尺寸，暂无法开启超分',
+            },
             requestFocus: false,
             initialValue: type,
             color: Colors.black.withValues(alpha: 0.8),
@@ -577,11 +584,15 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                       height: 35,
                       padding: const EdgeInsets.only(left: 30),
                       value: type,
+                      enabled: type == SuperResolutionType.disable || canEnable,
                       onTap: () => plPlayerController.setShader(type),
                       child: Text(
                         type.label,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color:
+                              type == SuperResolutionType.disable || canEnable
+                              ? Colors.white
+                              : Colors.white38,
                           fontSize: 13,
                         ),
                       ),

@@ -50,6 +50,7 @@ $ciTests = @(
     "test/plugin/pl_player/android/android_fixed_surface_size_test.dart",
     "test/plugin/pl_player/playback/playback_timing_contract_test.dart",
     "test/plugin/pl_player/playback/super_resolution_policy_test.dart",
+    "test/plugin/pl_player/playback/super_resolution_selection_test.dart",
     "test/pages/setting/decoder_test_dialog_test.dart"
 )
 

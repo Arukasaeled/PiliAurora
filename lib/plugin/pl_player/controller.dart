@@ -717,7 +717,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   late final Rx<SuperResolutionType> superResolutionType =
       (isAnim ? Pref.superResolutionType : SuperResolutionType.disable).obs;
   final _shaderUpdates = PlaybackLoadQueue();
-  VideoOutputSize? _shaderSourceSize;
+  final _shaderSourceSize = Rxn<VideoOutputSize>();
 
   VideoOutputSize? get _shaderDisplaySize {
     final display =
@@ -728,24 +728,33 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         (Platform.isAndroid ? AndroidVideoOutputLimit.detected : null);
   }
 
+  SuperResolutionEligibility get superResolutionAvailability =>
+      superResolutionEligibility(
+        source: _shaderSourceSize.value,
+        display: _shaderDisplaySize,
+      );
+
   Future<void> setShader([SuperResolutionType? type, NativePlayer? pp]) async {
     final requested = type ?? superResolutionType.value;
-    final eligibility = superResolutionEligibility(
-      source: _shaderSourceSize,
-      display: _shaderDisplaySize,
-    );
+    final eligibility = superResolutionAvailability;
+    // 显式选择在接触播放器前拒绝，保留当前档位和连续播放状态。
+    if (type != null &&
+        type != SuperResolutionType.disable &&
+        eligibility != SuperResolutionEligibility.allowed) {
+      return;
+    }
+    if (type != null && type == superResolutionType.value) return;
     final rejected =
         requested != SuperResolutionType.disable &&
         eligibility == SuperResolutionEligibility.resolutionTooHigh;
     final mode = rejected ? SuperResolutionType.disable : requested;
     superResolutionType.value = mode;
     if (rejected) {
-      SmartDialog.showToast('视频分辨率过高，无法开启超分');
       _diagnostics?.event(
         'shader.update.rejected',
         details: {
           'reason': 'source-exceeds-display',
-          'source': _shaderSourceSize,
+          'source': _shaderSourceSize.value,
           'display': _shaderDisplaySize,
         },
       );
@@ -813,7 +822,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     _heartDuration = 0;
     _lastCoarsePositionBucket = null;
     danmakuController?.clear();
-    _shaderSourceSize = width != null && height != null
+    _shaderSourceSize.value = width != null && height != null
         ? (width: width!, height: height!)
         : null;
 
@@ -1163,8 +1172,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     _subscriptions = [
       stream.videoParams.listen((params) {
         final source = VideoOutputSizePolicy.videoDisplaySize(params);
-        if (source == null || source == _shaderSourceSize) return;
-        _shaderSourceSize = source;
+        if (source == null || source == _shaderSourceSize.value) return;
+        _shaderSourceSize.value = source;
         if (superResolutionType.value != SuperResolutionType.disable) {
           setShader();
         }

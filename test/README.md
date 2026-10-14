@@ -27,7 +27,7 @@
 
 `pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理消费时间批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、批次限界、消费耗时抖动、59.94 FPS 漂移与来源释放。消费时间对实际屏幕槽位的估计仍需实机检查。
 
-`plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。
+`plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。super_resolution_selection_test.dart 检查不可用的显式选择保留档位和设置，并在访问原生播放器前返回。
 
 ```powershell
 fvm flutter test test/plugin/pl_player/android/

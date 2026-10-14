@@ -12,6 +12,8 @@ Windows 通过 media_kit 的 libmpv 渲染接口和 ANGLE 共享纹理输出视�
 
 ## 超分切换
 
+视频尺寸超过当前屏幕、或尺寸尚未确认时，播放器菜单禁用效率/画质档位并提示原因。显式选择请求在修改档位、保存设置和进入 shader 队列前再次检查；重复选择当前档位也直接返回，保留连续播放。媒体加载时的默认档位仍随源尺寸核对，必要时清除上一媒体的滤镜。
+
 [`PlPlayerController.setShader`](../lib/plugin/pl_player/controller.dart) 使用独立的 `PlaybackLoadQueue` 串行处理 shader 更新，尚未开始的旧请求可被新请求取代。当前 Windows 播放器已有视频尺寸和输出控制器时，调用 [`applyShaderList`](../lib/plugin/pl_player/playback/shader_updates.dart)：
 
 1. 将 mpv 的 `vo` 切到 `null`，解除视频输出对 render context 的使用。
