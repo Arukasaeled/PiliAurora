@@ -57,6 +57,9 @@ void main() {
                   if (dart && !video) extra++;
                 }
               }
+              expect(ticker.diagnostics['mode'], 'locked');
+              expect(ticker.diagnostics['updates'], ticks);
+              expect(ticker.diagnostics['nativePeriodUs'], closeTo(16667, 50));
               ticker.dispose();
               await tester.binding.delayed(const Duration(seconds: 2));
               expect(tester.binding.hasScheduledFrame, isFalse);

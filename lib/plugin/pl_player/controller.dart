@@ -92,6 +92,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       'attachedPages': _playerCount,
       'live': isLive,
       ..._runtime.videoFrameDiagnostics,
+      if (danmakuController case final controller?)
+        'danmakuScheduler': controller.schedulerDiagnostics,
     },
   );
   PlayerDiagnostics? get _diagnostics => _runtime.diagnostics;

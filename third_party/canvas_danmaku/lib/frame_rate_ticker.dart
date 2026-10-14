@@ -44,6 +44,44 @@ class FrameRateTicker extends Ticker {
   ValueListenable<List<int>>? _videoFrameTimings;
   ValueListenable<bool>? _videoDisplaySyncActive;
   final double Function()? _screenRefreshRate;
+  int _updates = 0;
+  int _frameRequests = 0;
+  int _timerWakeups = 0;
+  int? _lastUpdate;
+  int? _lastFrameRequest;
+
+  /// 累计调度计数，由现有诊断采样器读取；请求数包含被引擎合并的请求。
+  Map<String, Object?> get diagnostics => {
+        'targetFrameRate': _frameRate,
+        'displayRefreshRate': _screenRate,
+        'active': isActive,
+        'muted': muted,
+        'mode': !isActive
+            ? 'stopped'
+            : muted
+                ? 'muted'
+                : _frameRate <= 0 ||
+                        (_screenRate != null && _frameRate >= _screenRate!)
+                    ? 'vsync'
+                    : _syncPeriod != null
+                        ? 'locked'
+                        : 'independent',
+        'nativePeriodUs': _nativePeriod,
+        'syncPeriodUs': _syncPeriod,
+        'stableIntervals': _stableIntervals,
+        'updates': _updates,
+        'frameRequests': _frameRequests,
+        'timerWakeups': _timerWakeups,
+        'lastUpdateMonotonicUs': _lastUpdate,
+        'lastFrameRequestMonotonicUs': _lastFrameRequest,
+      };
+
+  void _requestFrame() {
+    _frameRequests++;
+    _lastFrameRequest = clockMicroseconds;
+    SchedulerBinding.instance.scheduleFrame();
+  }
+
   /// 无原生到达通知时，使用播放器实际显示同步状态约束 timing 相位学习。
   set videoDisplaySyncActive(ValueListenable<bool>? value) {
     if (identical(value, _videoDisplaySyncActive)) return;
@@ -183,7 +221,6 @@ class FrameRateTicker extends Ticker {
   void _scheduleWakeup() {
     // 采样只更新相位，已安排的唤醒照常执行；下一次安排时再应用新相位。
     if (_timer != null) return;
-    final binding = SchedulerBinding.instance;
     var delay = _nextFrameTime! - _lastFrame;
     final period = _syncPeriod;
     if (period != null) {
@@ -210,7 +247,8 @@ class FrameRateTicker extends Ticker {
     }
     _timer ??= Timer(delay, () {
       _timer = null;
-      if (!muted && isActive && scheduled) binding.scheduleFrame();
+      _timerWakeups++;
+      if (!muted && isActive && scheduled) _requestFrame();
     });
   }
 
@@ -314,7 +352,7 @@ class FrameRateTicker extends Ticker {
       // 已达到屏幕上限时直接请求下一次 vsync，省去同频定时器唤醒。
       _timer?.cancel();
       _timer = null;
-      binding.scheduleFrame();
+      _requestFrame();
     } else {
       _scheduleWakeup();
     }
@@ -364,6 +402,8 @@ class FrameRateTicker extends Ticker {
         if (target <= timestamp) target = timestamp + interval;
         _nextFrameTime = target;
       }
+      _updates++;
+      _lastUpdate = clockMicroseconds;
       _onFrame(timestamp - _origin!);
     }
     if (shouldScheduleTick) scheduleTick(rescheduling: true);

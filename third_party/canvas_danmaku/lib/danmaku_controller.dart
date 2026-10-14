@@ -14,6 +14,7 @@ class DanmakuController<T> {
   final Iterable<(double, DanmakuItem<T>)> Function(Offset) findDanmaku;
   final (double, DanmakuItem<T>)? Function(Offset) findSingleDanmaku;
   final ValueGetter<int> getTrackCount;
+  final ValueGetter<Map<String, Object?>>? getSchedulerDiagnostics;
 
   final List<List<DanmakuItem<T>>> scrollDanmaku;
   final List<DanmakuItem<T>?> staticDanmaku;
@@ -24,6 +25,9 @@ class DanmakuController<T> {
   bool get running => isRunning();
 
   int get trackCount => getTrackCount();
+
+  Map<String, Object?> get schedulerDiagnostics =>
+      getSchedulerDiagnostics?.call() ?? const {};
 
   DanmakuController({
     required this.addDanmaku,
@@ -39,5 +43,6 @@ class DanmakuController<T> {
     required this.scrollDanmaku,
     required this.staticDanmaku,
     required this.specialDanmaku,
+    this.getSchedulerDiagnostics,
   });
 }

@@ -99,7 +99,7 @@ class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
       renderer.addListener(_syncTicker);
       _unregisterDiagnostics = Diagnostics.instance.register(
         'danmaku.renderer.$hashCode',
-        () => renderer.statistics,
+        () => {...renderer.statistics, 'scheduler': _ticker.diagnostics},
       );
       widget.createdRenderer(renderer);
     } else {

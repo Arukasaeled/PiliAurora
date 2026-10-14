@@ -49,6 +49,8 @@ void main() {
     await tester.pump();
     final old = controller.staticDanmaku.nonNulls.single;
     expect(old.drawTick, isNotNull);
+    expect(controller.schedulerDiagnostics['updates'], greaterThan(0));
+    expect(controller.schedulerDiagnostics['targetFrameRate'], 60);
     for (var slot = 1; slot <= 20; slot++) {
       await tester.binding.delayed(const Duration(microseconds: 8334));
       if (tester.binding.hasScheduledFrame) await tester.pump();

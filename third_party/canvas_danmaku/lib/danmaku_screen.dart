@@ -110,6 +110,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
       findDanmaku: findDanmaku,
       findSingleDanmaku: findSingleDanmaku,
       getTrackCount: () => _trackCount,
+      getSchedulerDiagnostics: () => _ticker.diagnostics,
       scrollDanmaku: _scrollDanmakuItems,
       staticDanmaku: _staticDanmakuItems.value,
       specialDanmaku: _specialDanmakuItems,
