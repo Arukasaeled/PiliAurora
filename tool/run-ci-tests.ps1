@@ -37,9 +37,7 @@ $ciTests = @(
     "test/services/diagnostics/process_metrics_test.dart",
     "test/pages/about/diagnostics_page_test.dart",
     "test/pages/setting/settings_navigation_test.dart",
-    "test/pages/danmaku/merge_test.dart",
-    "test/pages/danmaku/merge_render_test.dart",
-    "test/pages/danmaku/native_video_frame_sync_test.dart",
+    "test/pages/danmaku",
     "test/pages/video/playback_source_test.dart",
     "test/plugin/pl_player/video_output/video_output_resizer_test.dart",
     "test/plugin/pl_player/android/android_video_output_test.dart",
@@ -55,7 +53,7 @@ $ciTests = @(
     "test/pages/setting/decoder_test_dialog_test.dart"
 )
 
-Write-Host "Running the CI test suite ($($ciTests.Count) files)..."
+Write-Host "Running the CI test suite ($($ciTests.Count) paths)..."
 if ($FlutterTool -eq "fvm") {
     & fvm flutter test --no-pub @ciTests
     $command = "fvm flutter test --no-pub"

@@ -7,6 +7,27 @@ Map<dynamic, dynamic> workflow(String name) =>
     loadYaml(File('.github/workflows/$name.yml').readAsStringSync()) as Map;
 
 void main() {
+  test('PR 检查以只读权限执行分析、弹幕回归和原生探针', () {
+    final config = workflow('checks');
+    expect(config['on'], contains('pull_request'));
+    expect(config['permissions'], {'contents': 'read'});
+    final job = config['jobs']['checks'] as Map;
+    expect(job.containsKey('secrets'), isFalse);
+    final steps = job['steps'] as List;
+    final commands = steps.map((step) => step['run'] ?? '').join('\n');
+    expect(commands, contains('flutter analyze --no-pub'));
+    expect(commands, contains('tool/run-ci-tests.ps1 -FlutterTool path'));
+    expect(commands, contains('tool/run-native-probes.ps1'));
+    expect(
+      commands,
+      contains('python -m unittest discover -s tool/probes/android'),
+    );
+    expect(
+      File('tool/run-ci-tests.ps1').readAsStringSync(),
+      contains('"test/pages/danmaku"'),
+    );
+  });
+
   test(
     'Windows caches SDK and NuGet and verifies cnativeapi before packaging',
     () {

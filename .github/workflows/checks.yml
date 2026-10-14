@@ -1,0 +1,54 @@
+name: Code checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: "25"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version-file: pubspec.yaml
+          cache: true
+
+      - name: Apply Flutter patches and prepare dependencies
+        shell: pwsh
+        run: lib/scripts/patch.ps1 android
+
+      - name: Check dependency sources and versions
+        run: dart --packages=.dart_tool/package_config.json tool/check_dependencies.dart
+
+      - name: Analyze playback, danmaku, tests and tools
+        run: flutter analyze --no-pub lib/plugin/pl_player lib/pages/danmaku test tool
+
+      - name: Run CI tests
+        shell: pwsh
+        run: pwsh -NoProfile -File tool/run-ci-tests.ps1 -FlutterTool path
+
+      - name: Run Android host probes
+        shell: pwsh
+        run: pwsh -NoProfile -File tool/run-native-probes.ps1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Test Android timing capture
+        run: python -m unittest discover -s tool/probes/android -p '*_test.py' -v
