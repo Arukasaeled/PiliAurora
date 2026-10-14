@@ -5,7 +5,7 @@
 
 PiliAurora 是基于 [PiliPlus 2.1.5](https://github.com/bggRGjQaUbCoE/PiliPlus/tree/2.1.5) 继续开发的 Bilibili 第三方客户端，使用 Flutter 编写，目前面向 Android 和 Windows x64。项目保留上游的内容浏览、播放、互动与账号管理能力，并将持续维护重点放在两端的播放体验、弹幕和 Windows 桌面播放场景,相较于原版具有更低占用,更高性能,并开发了额外的功能,进行了多种优化以降低资源使用(尤其是Windows方面,内存,cpu占用等全面大幅降低)。
 
-[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.4.2.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
+[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.4.3-rc.1.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
 
 ## 与上游的关系
 
@@ -34,6 +34,7 @@ PiliAurora 以 PiliPlus 2.1.5 为开发起点，在本仓库独立维护。上�
 - 内容浏览：首页推荐、热门、排行榜、视频、番剧、文章、音频、直播和搜索。
 - 播放：清晰度和音质选择、播放速度、硬件解码设置、弹幕、字幕、分集切换和播放记录。
 - 互动：评论、动态、关注、粉丝、消息通知、私信和直播聊天。
+- 评论长按菜单支持拉黑用户；表情包可按分类添加、移除和预览，详见[评论与表情包](doc/comments-and-emotes.md)。
 - 账号与内容管理：多账号、收藏夹、观看历史、稍后再看、番剧订阅和离线下载。
 - 扩展能力：DLNA 投屏、WebDAV 设置备份、SponsorBlock 和 WebView。
 

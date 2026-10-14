@@ -68,6 +68,8 @@ flowchart TD
 
 ## 弹幕与评论
 
+- 使用说明见[评论与表情包](comments-and-emotes.md)。评论长按菜单由 `lib/pages/video/reply/widgets/reply_item_grpc.dart` 的 `morePanel` 共用，覆盖主评论和楼中楼；拉黑调用 `VideoHttp.relationMod`，绑定确认前的账号。
+- 表情包入口为输入面板的设置按钮。管理与预览位于 `lib/pages/emote/manage.dart`、`preview.dart`；请求集中在 `ReplyHttp`。详情接口返回 `emotes`，模型同时兼容列表接口的 `emote` 字段。分类筛选位于未添加页签，预览页面通过 Navigator 压入页面栈。
 - 页面：`lib/pages/danmaku/`、`danmaku_block/`、`main_reply/`、`my_reply/`。
 - API/模型：`lib/http/danmaku.dart`、`reply.dart`，`lib/models/remote/danmaku/`、`reply/`。
 - 渲染：通用组件和播放器插件；直播弹幕另走直播间链路。
