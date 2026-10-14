@@ -198,28 +198,6 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
                   Tab(text: '未添加 (${available.length})'),
                 ],
               ),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (
-                      var category = 0;
-                      category < _categories.length;
-                      category++
-                    )
-                      Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: ChoiceChip(
-                          label: Text(_categories[category]),
-                          selected: _category == category,
-                          onSelected: _loading
-                              ? null
-                              : (_) => _loadCategory(category),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
               Expanded(
                 child: _loading
                     ? m3eLoading
@@ -234,18 +212,7 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
                     : TabBarView(
                         children: [
                           _buildPackageList(added, add: false),
-                          _loadingCategories.contains(_category)
-                              ? m3eLoading
-                              : _categoryErrors.containsKey(_category)
-                              ? Center(
-                                  child: TextButton(
-                                    onPressed: () => _loadCategory(_category),
-                                    child: Text(
-                                      '${_categoryErrors[_category]}，点击重试',
-                                    ),
-                                  ),
-                                )
-                              : _buildPackageList(available, add: true),
+                          _buildAvailablePackages(available),
                         ],
                       ),
               ),
@@ -255,6 +222,39 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
       ),
     );
   }
+
+  Widget _buildAvailablePackages(List<Package> packages) => Column(
+    children: [
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var category = 0; category < _categories.length; category++)
+              Padding(
+                padding: const EdgeInsets.all(4),
+                child: ChoiceChip(
+                  label: Text(_categories[category]),
+                  selected: _category == category,
+                  onSelected: (_) => _loadCategory(category),
+                ),
+              ),
+          ],
+        ),
+      ),
+      Expanded(
+        child: _loadingCategories.contains(_category)
+            ? m3eLoading
+            : _categoryErrors.containsKey(_category)
+            ? Center(
+                child: TextButton(
+                  onPressed: () => _loadCategory(_category),
+                  child: Text('${_categoryErrors[_category]}，点击重试'),
+                ),
+              )
+            : _buildPackageList(packages, add: true),
+      ),
+    ],
+  );
 
   Widget _buildPackageList(List<Package> packages, {required bool add}) {
     final filtered = packages
