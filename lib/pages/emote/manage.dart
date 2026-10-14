@@ -6,6 +6,7 @@ import 'package:pili_aurora/http/reply.dart';
 import 'package:pili_aurora/models/common/image_type.dart';
 import 'package:pili_aurora/models/remote/emote/package.dart';
 import 'package:pili_aurora/models/remote/emote/setting_panel.dart';
+import 'package:pili_aurora/pages/emote/preview.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:pili_aurora/utils/page_utils.dart';
@@ -281,6 +282,13 @@ class _EmoteManagePageState extends State<EmoteManagePage> {
         final id = package.id;
         final busy = id != null && _busyPackageIds.contains(id);
         return ListTile(
+          onTap: id == null
+              ? null
+              : () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => EmotePackagePreviewPage(package: package),
+                  ),
+                ),
           leading: NetworkImgLayer(
             src: package.url,
             width: 44,

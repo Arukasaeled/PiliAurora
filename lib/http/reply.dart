@@ -197,6 +197,23 @@ abstract final class ReplyHttp {
     }
   }
 
+  static Future<LoadingState<Package>> getEmotePackageDetail({
+    required int packageId,
+    String business = 'reply',
+  }) async {
+    final res = await Request().get(
+      Api.emotePackageDetail,
+      queryParameters: {'id': packageId, 'business': business},
+    );
+    if (res.data['code'] == 0) {
+      return Success(
+        Package.fromJson(res.data['data']['package'] as Map<String, dynamic>),
+      );
+    } else {
+      return Error(res.data['message']);
+    }
+  }
+
   static Future<LoadingState<void>> addEmotePackage({
     required int packageId,
     String business = 'reply',

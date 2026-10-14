@@ -22,7 +22,7 @@ class Package {
     text: json['text'] as String?,
     url: json['url'] as String?,
     type: json['type'] as int?,
-    emote: (json['emote'] as List<dynamic>?)
+    emote: ((json['emote'] ?? json['emotes']) as List<dynamic>?)
         ?.map((e) => Emote.fromJson(e as Map<String, dynamic>))
         .toList(),
     flags: json['flags'] == null
