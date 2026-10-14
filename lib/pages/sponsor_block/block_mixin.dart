@@ -84,9 +84,17 @@ mixin BlockMixin on GetxController {
     if (isClosed) return;
     if (_segmentList.isNotEmpty) {
       _blockListener?.cancel();
-      _blockListener = player?.stream.position.listen((position) {
+      final currentPlayer = player;
+      if (currentPlayer == null) return;
+      void handlePosition(Duration position) {
+        // START_FILE 会先报告 playing；等待原生加载完成后再判断真实续播位置。
+        if (currentPlayer.state.duration <= Duration.zero ||
+            currentPlayer.state.buffering) {
+          return;
+        }
         int currentPos = position.inSeconds;
         if (currentPos != _lastBlockPos) {
+          final firstPosition = _lastBlockPos == null;
           _lastBlockPos = currentPos;
           final msPos = currentPos * 1000;
           for (SegmentModel item in _segmentList) {
@@ -94,7 +102,9 @@ mixin BlockMixin on GetxController {
             //   debugPrint(
             //       '${position.inSeconds},,${item.segment.first},,${item.segment.second},,${item.skipType.name},,${item.hasSkipped}');
             // }
-            if (msPos <= item.segment.$1 && item.segment.$1 <= msPos + 1000) {
+            if ((firstPosition &&
+                    item.segment.contains(position.inMilliseconds)) ||
+                (msPos <= item.segment.$1 && item.segment.$1 <= msPos + 1000)) {
               switch (item.skipType) {
                 case SkipType.alwaysSkip:
                   onSkip(item, isSeek: false);
@@ -115,14 +125,18 @@ mixin BlockMixin on GetxController {
             }
           }
         }
-      });
+      }
+
+      _blockListener = currentPlayer.stream.position.listen(handlePosition);
+      if (autoPlay && currentPlayer.state.playing) {
+        handlePosition(Duration(milliseconds: currPosInMilliseconds));
+      }
     }
   }
 
   Future<void> handleSBData(List<SegmentItemModel> list) async {
     if (list.isNotEmpty) {
       try {
-        Future<void>? future;
         final duration = list.first.videoDuration ?? timeLength!;
         // segmentList
         _segmentList.addAll(
@@ -141,39 +155,6 @@ mixin BlockMixin on GetxController {
                   if (segmentModel.segment == const (0, 0)) {
                     videoLabel?.value +=
                         '${videoLabel!.value.isNotEmpty ? '/' : ''}${segmentModel.segmentType.title}';
-                  }
-
-                  if (_blockListener == null && autoPlay && player != null) {
-                    final currPos = currPosInMilliseconds;
-
-                    if (segmentModel.segment.contains(currPos)) {
-                      _lastBlockPos = currPos;
-
-                      switch (segmentModel.skipType) {
-                        case SkipType.alwaysSkip:
-                        case SkipType.skipOnce:
-                          segmentModel.hasSkipped = true;
-                          if (player!.state.playing) {
-                            future = onSkip(
-                              segmentModel,
-                            );
-                          } else {
-                            player!.stream.playing.firstWhere((e) {
-                              if (e) {
-                                future = onSkip(segmentModel);
-                                return true;
-                              }
-                              return false;
-                            }, orElse: () => false);
-                          }
-                          break;
-                        case SkipType.skipManually:
-                          onAddItem(segmentModel);
-                          break;
-                        default:
-                          break;
-                      }
-                    }
                   }
 
                   return segmentModel;
@@ -195,7 +176,6 @@ mixin BlockMixin on GetxController {
         );
 
         if (_blockListener == null && (autoPlay || preInitPlayer)) {
-          await future;
           initSkip();
         }
       } catch (e) {

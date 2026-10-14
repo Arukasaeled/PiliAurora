@@ -53,6 +53,27 @@ public class VideoOutput {
     private boolean disposed;
     private SurfaceFrameFence frameFence;
     private MethodChannel.Result frameResult;
+    private final VideoFrameSamples frameSamples;
+    private boolean frameReportPending;
+    private final Runnable reportFrameSamples = this::reportFrameSamples;
+    private void reportFrameSamples() {
+        synchronized (lock) {
+            frameReportPending = false;
+            if (disposed || frameSamples == null) return;
+            final java.util.ArrayList<Long> samples = frameSamples.drain();
+            if (samples.isEmpty()) return;
+            final HashMap<String, Object> data = new HashMap<>();
+            data.put("handle", handle);
+            data.put("frames", samples);
+            channelReference.invokeMethod("VideoOutput.FrameTimings", data);
+        }
+    }
+
+    private void resetFrameSamples() {
+        if (frameSamples != null) frameSamples.clear();
+        mainHandler.removeCallbacks(reportFrameSamples);
+        frameReportPending = false;
+    }
 
 
     private void diagnostic(String event, Throwable error) {
@@ -86,7 +107,9 @@ public class VideoOutput {
         mainHandler.post(() -> channelReference.invokeMethod("VideoOutput.Diagnostic", data));
     }
 
-    VideoOutput(long handle, MethodChannel channelReference, TextureRegistry textureRegistryReference) {
+    VideoOutput(long handle, MethodChannel channelReference, TextureRegistry textureRegistryReference,
+                boolean reportTimings) {
+        frameSamples = reportTimings ? new VideoFrameSamples() : null;
         this.handle = handle;
         this.channelReference = channelReference;
         this.textureRegistryReference = textureRegistryReference;
@@ -116,6 +139,15 @@ public class VideoOutput {
                     timestamp = surfaceTextureEntry.surfaceTexture().getTimestamp();
                 } catch (RuntimeException e) {
                     return;
+                }
+                if (timestamp > 0 && timestamp != lastConsumedTimestamp && frameSamples != null) {
+                    // SurfaceTexture 的 timestamp 可属于媒体 PTS；相位采样使用消费时的
+                    // CLOCK_MONOTONIC，与 Android 上 Flutter 的帧时钟一致。
+                    frameSamples.add(System.nanoTime());
+                    if (!frameReportPending) {
+                        frameReportPending = true;
+                        mainHandler.postDelayed(reportFrameSamples, 250);
+                    }
                 }
                 if (timestamp > configuredAtNs && timestamp != lastConsumedTimestamp) {
                     consumedFrames++;
@@ -152,6 +184,7 @@ public class VideoOutput {
     public void dispose() {
         synchronized (lock) {
             disposed = true;
+            resetFrameSamples();
             surfaceGeneration++;
             finishFrameWait(false);
         }
@@ -186,6 +219,7 @@ public class VideoOutput {
         synchronized (lock) {
             surfaceGeneration++;
             lastConsumedTimestamp = 0;
+            resetFrameSamples();
             finishFrameWait(false);
             // Delete previous android.view.Surface & object reference.
             try {
@@ -223,6 +257,7 @@ public class VideoOutput {
             }
             finishFrameWait(false);
             surfaceTextureEntry.surfaceTexture().setDefaultBufferSize(width, height);
+            resetFrameSamples();
             waitUntilFirstFrameRenderedNotify = false;
             configuredAtNs = System.nanoTime();
             consumedFrames = 0;

@@ -11,6 +11,7 @@ import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/danmaku_utils.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
+import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/utils.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:path/path.dart' as path;
@@ -28,6 +29,8 @@ class PlDanmakuController {
         'buckets': _cache.bucketCount,
         'pendingSegments': _requestedSeg.length,
         'localFile': _isFileSource,
+        'frameRate': Pref.danmakuFrameRate,
+        'enabled': _plPlayerController.enableShowDanmaku.value,
       },
     );
   }

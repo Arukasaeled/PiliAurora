@@ -366,7 +366,16 @@ class Diagnostics extends ChangeNotifier {
       'elapsedMs': _elapsed.elapsedMilliseconds,
       'route': _route,
       'process': process,
-      'frames': _frames.take(),
+      'frames': {
+        ..._frames.take(),
+        'displayRefreshRate': WidgetsBinding
+            .instance
+            .platformDispatcher
+            .views
+            .firstOrNull
+            ?.display
+            .refreshRate,
+      },
       'images': {
         'cacheBytes': cache.currentSizeBytes,
         'cacheEntries': cache.currentSize,
@@ -586,11 +595,12 @@ class _OperationStats {
 
 class _FrameStats {
   final _slowDetails = <Map<String, Object?>>[];
-  int count = 0, slow = 0;
+  int count = 0, slow = 0, zeroBuild = 0;
   double build = 0, raster = 0, maxBuild = 0, maxRaster = 0;
   void add(List<FrameTiming> timings, double budgetUs) {
     for (final frame in timings) {
       count++;
+      if (frame.buildDuration == Duration.zero) zeroBuild++;
       final b = frame.buildDuration.inMicroseconds / 1000;
       final r = frame.rasterDuration.inMicroseconds / 1000;
       build += b;
@@ -629,6 +639,7 @@ class _FrameStats {
   Map<String, Object?> take() {
     final result = <String, Object?>{
       'count': count,
+      'zeroBuildFrames': zeroBuild,
       'slowFrames': slow,
       'averageBuildMs': count == 0 ? null : build / count,
       'averageRasterMs': count == 0 ? null : raster / count,
@@ -637,7 +648,7 @@ class _FrameStats {
       // FrameTiming 会延迟批量回报，使用真实帧时刻对齐导航和请求。
       'slowFrameDetails': List<Map<String, Object?>>.of(_slowDetails),
     };
-    count = slow = 0;
+    count = slow = zeroBuild = 0;
     _slowDetails.clear();
     build = raster = maxBuild = maxRaster = 0;
     return result;

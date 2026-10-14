@@ -22,7 +22,10 @@ class PlayerDiagnostics {
             ),
       );
     }
-    _unregister = Diagnostics.instance.register(playerId, snapshot);
+    _unregister = Diagnostics.instance.register(
+      playerId,
+      () => snapshot(detailed: false),
+    );
     player.onLoadHooks.add(_onLoad);
     player.onUnloadHooks.add(_onUnload);
     _subscriptions.addAll([
@@ -118,8 +121,25 @@ class PlayerDiagnostics {
     ],
   ];
 
-  Map<String, Object?> snapshot() => {
-    ..._properties,
+  // 大型原生参数留在播放器事件中；高频性能采样保留计数和状态，避免挤掉弹幕等来源。
+  static const _detailedProperties = {
+    'video-dec-params',
+    'video-params',
+    'video-out-params',
+    'track-list',
+    'osd-dimensions',
+    'gpu-api',
+    'gpu-context',
+    'estimated-vf-fps',
+    'video-codec',
+    'audio-delay',
+    'wid',
+  };
+
+  Map<String, Object?> snapshot({bool detailed = true}) => {
+    for (final entry in _properties.entries)
+      if (detailed || !_detailedProperties.contains(entry.key))
+        entry.key: entry.value,
     'playerId': playerId,
     'handle': player.disposed ? null : player.handle,
     'mediaGeneration': _mediaGeneration,
@@ -131,9 +151,10 @@ class PlayerDiagnostics {
     'width': player.state.width,
     'height': player.state.height,
     'speed': player.state.rate,
-    'viewports': Diagnostics.instance.readSources(
-      prefix: 'videoViewport.${player.hashCode}.',
-    ),
+    if (detailed)
+      'viewports': Diagnostics.instance.readSources(
+        prefix: 'videoViewport.${player.hashCode}.',
+      ),
     ...?extra?.call(),
   };
 

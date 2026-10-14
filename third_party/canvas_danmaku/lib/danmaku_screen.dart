@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:flutter/foundation.dart' show ValueListenable;
 
 import 'package:canvas_danmaku/danmaku_controller.dart';
 import 'package:canvas_danmaku/frame_rate_ticker.dart';
@@ -17,6 +18,7 @@ class DanmakuScreen<T> extends StatefulWidget {
   final DanmakuOption option;
   final Size size;
   final int frameRate;
+  final ValueListenable<List<int>>? videoFrameTimings;
 
   const DanmakuScreen({
     super.key,
@@ -24,6 +26,7 @@ class DanmakuScreen<T> extends StatefulWidget {
     required this.option,
     required this.size,
     this.frameRate = 0,
+    this.videoFrameTimings,
   });
 
   @override
@@ -82,7 +85,9 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 
     _danmakuHeight = _calculateTrackHeight();
 
-    _ticker = FrameRateTicker(_tick, frameRate: widget.frameRate);
+    _ticker = FrameRateTicker(_tick,
+        frameRate: widget.frameRate,
+        videoFrameTimings: widget.videoFrameTimings);
     _notifier = ValueNotifier(0);
 
     widget.createdController(DanmakuController<T>(
@@ -627,6 +632,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   void didUpdateWidget(DanmakuScreen<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     _ticker.frameRate = widget.frameRate;
+    _ticker.videoFrameTimings = widget.videoFrameTimings;
     if (oldWidget.size != widget.size) {
       _init(widget.size);
     }

@@ -298,6 +298,9 @@ class _PlDanmakuState extends State<PlDanmaku> {
           }
           final child = DanmakuScreen<DanmakuExtra>(
             frameRate: frameRate,
+            videoFrameTimings: PlatformUtils.isMobile
+                ? playerController.videoFrameTimings
+                : null,
             createdController: (e) {
               playerController.danmakuController = _controller = e;
             },

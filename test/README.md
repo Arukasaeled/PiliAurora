@@ -25,6 +25,10 @@
 
 `pages/danmaku/video_frame_sync_test.dart` 在模拟 120 Hz 时间槽上覆盖视频与弹幕的相位同步，以及原生纹理帧时间的逐帧、100 ms 和 release 一秒批量报告；调用真实弹幕 ticker，验证稳定后的额外帧请求。该测试不测量 GPU 合成次数或实机屏幕 Hz。
 
+`pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理消费时间批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、批次限界、消费耗时抖动、59.94 FPS 漂移与来源释放。消费时间对实际屏幕槽位的估计仍需实机检查。
+
+`plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。
+
 ```powershell
 fvm flutter test test/plugin/pl_player/android/
 fvm flutter test test/services/diagnostics/ test/pages/about/diagnostics_page_test.dart

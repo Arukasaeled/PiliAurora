@@ -104,7 +104,8 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                 case "VideoOutputManager.Create": {
                     final String handle = call.argument("handle");
                     if (handle != null) {
-                        final VideoOutput videoOutput = videoOutputManager.create(Long.parseLong(handle));
+                        final VideoOutput videoOutput = videoOutputManager.create(Long.parseLong(handle),
+                                Boolean.TRUE.equals(call.argument("reportTimings")));
                         final HashMap<String, Long> data = new HashMap<>();
                         data.put("id", videoOutput.id);
                         result.success(data);

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:developer' show Timeline;
 
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
@@ -25,6 +26,17 @@ class NativePlaybackRuntime {
   VideoController? _videoController;
   PlayerDiagnostics? _diagnostics;
   bool _disposed = false;
+  final videoFrameTimings = ValueNotifier<List<int>>(const []);
+  int _videoFrameBatches = 0;
+  int _videoFrameSamples = 0;
+  int? _lastVideoFrame;
+
+  Map<String, Object?> get videoFrameDiagnostics => {
+    'nativeFrameBatches': _videoFrameBatches,
+    'nativeFrameSamples': _videoFrameSamples,
+    if (_lastVideoFrame case final stamp?)
+      'nativeFrameAgeUs': Timeline.now - stamp,
+  };
 
   Player? get player => _player;
   VideoController? get videoController => _videoController;
@@ -85,6 +97,17 @@ class NativePlaybackRuntime {
                 : DiagnosticLogLevel.info,
             details: details,
           ),
+          onAndroidFrameTimings: (frames) {
+            if (_disposed) return;
+            if (frames.isNotEmpty) {
+              _videoFrameBatches++;
+              _videoFrameSamples += frames.length;
+              _lastVideoFrame = frames.last;
+            } else {
+              _lastVideoFrame = null;
+            }
+            videoFrameTimings.value = frames;
+          },
         ),
       );
       if (Platform.isAndroid) player.setProperty('force-window', 'no');
@@ -123,6 +146,9 @@ class NativePlaybackRuntime {
   }) async {
     final player = _player;
     if (_disposed || player == null || !isCurrent()) return false;
+    videoFrameTimings.value = const [];
+    _videoFrameBatches = _videoFrameSamples = 0;
+    _lastVideoFrame = null;
     player.setProperty(
       'hwdec',
       hardwareVideoConfiguration(
@@ -162,6 +188,7 @@ class NativePlaybackRuntime {
   Future<void> dispose({required Future<void> after}) async {
     if (_disposed) return;
     _disposed = true;
+    videoFrameTimings.value = const [];
     final player = _player;
     _player = null;
     _videoController = null;
@@ -169,5 +196,6 @@ class NativePlaybackRuntime {
     _diagnostics = null;
     await after;
     await player?.dispose();
+    videoFrameTimings.dispose();
   }
 }

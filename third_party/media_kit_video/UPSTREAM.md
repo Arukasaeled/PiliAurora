@@ -1,6 +1,6 @@
 # media_kit_video 本地版本
 
-- 本地版本：`1.2.5+piliaurora.3`；来源包版本：`1.2.5`。
+- 本地版本：`1.2.5+piliaurora.4`；来源包版本：`1.2.5`。
 - 来源仓库：https://github.com/My-Responsitories/media-kit.git
 - 来源提交：`73771ec38176be2d984a3049c28177bce23b54a0`。
 - 来源子目录：`media_kit_video`。
@@ -23,3 +23,5 @@
 Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频首帧就绪分别通知；软件输出的初始尺寸遵守缓冲区容量。同尺寸请求沿用已发布的视频帧，真实纹理替换仍等待渲染和可用帧通知。
 
 2026-10-13：Windows 增加 `resetRenderer()`，在原生输出线程重建渲染上下文和 ANGLE 设备；保持 mpv 核心与媒体。释放顺序调整为在 GL 上下文 current 时释放 mpv render，再销毁 EGL/设备。重建后的纹理等新视频帧就绪再发布。应用在超分切换时调用，Android 路径保持原行为。
+
+2026-10-14：Android 输出可按配置上报纹理消费的单调时钟微秒，每 250 ms 合并一批、最多 32 个样本；重复纹理不计，Surface 重建、重新配置和销毁清理待发批次。该路径沿用引擎的 frame-available 监听，不使用媒体 PTS 作为调度时钟。Windows 输出保持原路径。

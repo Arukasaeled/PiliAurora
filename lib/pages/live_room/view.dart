@@ -1088,6 +1088,9 @@ class _LiveDanmakuState extends State<LiveDanmaku> {
                 plPlayerController.danmakuOpacity.value > 0,
             child: DanmakuScreen<DanmakuExtra>(
               frameRate: frameRate,
+              videoFrameTimings: PlatformUtils.isMobile
+                  ? plPlayerController.videoFrameTimings
+                  : null,
               createdController: (e) {
                 widget.liveRoomController.danmakuController =
                     plPlayerController.danmakuController = e;

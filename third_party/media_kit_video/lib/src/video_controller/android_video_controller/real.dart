@@ -106,6 +106,7 @@ class AndroidVideoController extends PlatformVideoController {
         _fixedSize.reset();
         _appliedSize = null;
         _attached = false;
+        configuration.onAndroidFrameTimings?.call(const []);
         _diagnostic('surface.load');
         final mpv = NativePlayer.mpv;
         final ctx = player.ctx;
@@ -273,6 +274,7 @@ class AndroidVideoController extends PlatformVideoController {
 
     final data = await _channel.invokeMethod('VideoOutputManager.Create', {
       'handle': handle.toString(),
+      'reportTimings': configuration.onAndroidFrameTimings != null,
     });
     debugPrint(data.toString());
 
@@ -351,9 +353,22 @@ class AndroidVideoController extends PlatformVideoController {
         'com.alexmercerind/media_kit_video',
       )..setMethodCallHandler((MethodCall call) async {
         try {
-          debugPrint(call.method.toString());
-          debugPrint(call.arguments.toString());
+          if (call.method != 'VideoOutput.FrameTimings') {
+            debugPrint(call.method.toString());
+            debugPrint(call.arguments.toString());
+          }
           switch (call.method) {
+            case 'VideoOutput.FrameTimings':
+              {
+                final int handle = call.arguments['handle'];
+                final controller = _controllers[handle];
+                if (controller != null && controller._attached) {
+                  controller.configuration.onAndroidFrameTimings?.call(
+                    List<int>.from(call.arguments['frames'] as List),
+                  );
+                }
+                break;
+              }
             case 'VideoOutput.Diagnostic':
               {
                 final arguments = Map<String, Object?>.from(

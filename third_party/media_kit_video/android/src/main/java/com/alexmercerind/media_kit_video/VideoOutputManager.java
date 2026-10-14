@@ -27,11 +27,11 @@ public class VideoOutputManager {
         this.textureRegistryReference = textureRegistryReference;
     }
 
-    public VideoOutput create(long handle) {
+    public VideoOutput create(long handle, boolean reportTimings) {
         synchronized (lock) {
             Log.i("media_kit", String.format(Locale.ENGLISH, "com.alexmercerind.media_kit_video.VideoOutputManager.create: %d", handle));
             if (!videoOutputs.containsKey(handle)) {
-                final VideoOutput videoOutput = new VideoOutput(handle, channelReference, textureRegistryReference);
+                final VideoOutput videoOutput = new VideoOutput(handle, channelReference, textureRegistryReference, reportTimings);
                 videoOutputs.put(handle, videoOutput);
             }
             return videoOutputs.get(handle);

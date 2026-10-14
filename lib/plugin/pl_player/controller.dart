@@ -3,6 +3,8 @@ import 'dart:convert' show ascii;
 import 'dart:io' show Platform;
 import 'dart:math' show max, min;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
+
 import 'package:pili_aurora/common/assets.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/http/video.dart';
@@ -34,6 +36,8 @@ import 'package:pili_aurora/plugin/pl_player/utils/native_audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_playback_runtime.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/super_resolution_policy.dart';
+import 'package:pili_aurora/services/android_video_output_limit.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/playback_load_queue.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/network_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/audio_recovery.dart';
@@ -81,12 +85,13 @@ import 'package:window_manager/window_manager.dart';
 typedef PlayCallback = Future<void>? Function();
 
 class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
-  late final _runtime = NativePlaybackRuntime(
+  late final NativePlaybackRuntime _runtime = NativePlaybackRuntime(
     diagnosticsExtra: () => {
       'previewCacheBytes': previewCache.sizeBytes,
       'previewCacheLimitBytes': previewCache.maxBytes,
       'attachedPages': _playerCount,
       'live': isLive,
+      ..._runtime.videoFrameDiagnostics,
     },
   );
   PlayerDiagnostics? get _diagnostics => _runtime.diagnostics;
@@ -192,6 +197,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
   /// [videoController] instance of Player
   VideoController? get videoController => _videoController;
+  ValueListenable<List<int>> get videoFrameTimings =>
+      _runtime.videoFrameTimings;
 
   final RxBool muted = DesktopPlaybackWindows.isPlayerWindow.obs;
   bool get isMuted => muted.value;
@@ -710,18 +717,43 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   late final Rx<SuperResolutionType> superResolutionType =
       (isAnim ? Pref.superResolutionType : SuperResolutionType.disable).obs;
   final _shaderUpdates = PlaybackLoadQueue();
+  VideoOutputSize? _shaderSourceSize;
+
+  VideoOutputSize? get _shaderDisplaySize {
+    final display =
+        WidgetsBinding.instance.platformDispatcher.views.firstOrNull?.display;
+    return (display == null
+            ? null
+            : VideoOutputSizePolicy.physicalDisplaySize(display.size)) ??
+        (Platform.isAndroid ? AndroidVideoOutputLimit.detected : null);
+  }
+
   Future<void> setShader([SuperResolutionType? type, NativePlayer? pp]) async {
-    if (type == null) {
-      type = superResolutionType.value;
-    } else {
-      superResolutionType.value = type;
-      if (isAnim && !tempPlayerConf) {
-        setting.put(SettingBoxKey.superResolutionType, type.index);
-      }
+    final requested = type ?? superResolutionType.value;
+    final eligibility = superResolutionEligibility(
+      source: _shaderSourceSize,
+      display: _shaderDisplaySize,
+    );
+    final rejected =
+        requested != SuperResolutionType.disable &&
+        eligibility == SuperResolutionEligibility.resolutionTooHigh;
+    final mode = rejected ? SuperResolutionType.disable : requested;
+    superResolutionType.value = mode;
+    if (rejected) {
+      SmartDialog.showToast('视频分辨率过高，无法开启超分');
+      _diagnostics?.event(
+        'shader.update.rejected',
+        details: {
+          'reason': 'source-exceeds-display',
+          'source': _shaderSourceSize,
+          'display': _shaderDisplaySize,
+        },
+      );
+    } else if (type != null && isAnim && !tempPlayerConf) {
+      setting.put(SettingBoxKey.superResolutionType, mode.index);
     }
     final player = pp ?? _videoPlayerController;
     if (player == null) return;
-    final mode = type;
     final shaders = mode == SuperResolutionType.efficiency
         ? Assets.mpvAnime4KShadersLite
         : Assets.mpvAnime4KShaders;
@@ -730,7 +762,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       details: {'mode': mode.name},
     );
     await _shaderUpdates.run((isCurrent) async {
-      final paths = mode == SuperResolutionType.disable
+      // 未知源尺寸时先清除旧滤镜，原生参数到达后再检查并应用默认档位。
+      final paths =
+          mode == SuperResolutionType.disable ||
+              eligibility == SuperResolutionEligibility.unknownSize
           ? ''
           : PathUtils.buildShadersAbsolutePath(
               await copyShadersToExternalDirectory,
@@ -757,7 +792,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         'shader.update.completed',
         details: {
           'mode': mode.name,
-          'shaderCount': actual.isEmpty ? 0 : actual.split(';').length,
+          'shaderCount': actual.isEmpty
+              ? 0
+              : actual.split(Platform.isWindows ? ';' : ':').length,
           'rendererReset': reset,
         },
       );
@@ -776,6 +813,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     _heartDuration = 0;
     _lastCoarsePositionBucket = null;
     danmakuController?.clear();
+    _shaderSourceSize = width != null && height != null
+        ? (width: width!, height: height!)
+        : null;
 
     final player = await _runtime.initialize(
       volume: isMuted ? 0 : this.volume.value,
@@ -1121,6 +1161,14 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       );
     }
     _subscriptions = [
+      stream.videoParams.listen((params) {
+        final source = VideoOutputSizePolicy.videoDisplaySize(params);
+        if (source == null || source == _shaderSourceSize) return;
+        _shaderSourceSize = source;
+        if (superResolutionType.value != SuperResolutionType.disable) {
+          setShader();
+        }
+      }),
       player.observeProperty('seeking').listen((_) {
         _audioRecovery?.onPlaybackChanged();
       }),

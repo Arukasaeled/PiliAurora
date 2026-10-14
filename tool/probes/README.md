@@ -78,6 +78,16 @@ java -cp build/probe-validation/frame-fence com.alexmercerind.media_kit_video.Su
 
 该入口检查帧接收条件，画面像素由模拟器旋转探针检查。
 
+`android/VideoFrameSamplesProbe.java` 检查实际纹理消费时间缓冲的 32 个样本上限、微秒转换、批次提取和 Surface 重置清理：
+
+```powershell
+New-Item -ItemType Directory -Path build/probe-validation/video-frame-samples -Force | Out-Null
+javac -d build/probe-validation/video-frame-samples third_party/media_kit_video/android/src/main/java/com/alexmercerind/media_kit_video/VideoFrameSamples.java tool/probes/android/VideoFrameSamplesProbe.java
+java -cp build/probe-validation/video-frame-samples com.alexmercerind.media_kit_video.VideoFrameSamplesProbe
+```
+
+该入口运行于主机 JVM，消费时间与屏幕槽位的关系需目标设备验收。
+
 ## Windows 尺寸通道回归探针
 
 `windows_source_size_channel_probe.py` 使用 Flutter 的标准编码器和生产通道处理代码，验证 int32、int64 尺寸均能传入播放器。先完成 Windows 构建以生成 Flutter C++ 头文件，再运行：

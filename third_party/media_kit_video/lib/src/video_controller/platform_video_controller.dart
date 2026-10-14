@@ -126,6 +126,9 @@ class VideoControllerConfiguration {
   final void Function(String event, Map<String, Object?> details)?
   onAndroidDiagnostic;
 
+  /// Bounded batches of texture consumption times in monotonic microseconds.
+  final ValueChanged<List<int>>? onAndroidFrameTimings;
+
   /// Whether to attach `android.view.Surface` after video parameters are known.
   ///
   /// Default:
@@ -145,5 +148,6 @@ class VideoControllerConfiguration {
     this.androidOutputLimitHeight,
     this.androidOutputLimit,
     this.onAndroidDiagnostic,
+    this.onAndroidFrameTimings,
   });
 }
