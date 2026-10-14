@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:math' show max;
 
+import 'package:flutter/services.dart';
 import 'package:pili_aurora/common/assets.dart';
 import 'package:pili_aurora/common/widgets/scroll_physics.dart'
     show tabBarScrollPhysics;
@@ -60,7 +61,7 @@ class PayCoinsPage extends StatefulWidget {
 }
 
 class _PayCoinsPageState extends State<PayCoinsPage>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late final _key = GlobalKey();
   late final _hasCopyright = widget.hasCopyright;
   late bool _isPaying = false;
@@ -68,26 +69,13 @@ class _PayCoinsPageState extends State<PayCoinsPage>
   late final RxBool _coinWithLike = Pref.coinWithLike.obs;
   late final RxInt _pageIndex = 0.obs;
 
-  late final AnimationController _slide22Controller;
-  late final Animation<Offset> _slide22Anim;
-  late final AnimationController _scale22Controller;
-  late final AnimationController _coinController;
-  late final Animation<Offset> _coinSlideAnim;
-  late final Animation<double> _coinFadeAnim;
-  late final AnimationController _boxAnimController;
-  late final Animation<Offset> _boxAnim;
-
-  Timer? _timer;
-  late final RxInt _thunderIndex = (-1).obs;
-  static const List<String> _thunderImages = [
-    Assets.thunder1,
-    Assets.thunder2,
-    Assets.thunder3,
-  ];
-  void _cancelTimer() {
-    _timer?.cancel();
-    _timer = null;
-  }
+  late final AnimationController _selectionScaleController;
+  late final List<Future<ByteData>> _tossAssets;
+  Uint8List? _tossBytes;
+  Timer? _paymentTimer;
+  VoidCallback? _completePayment;
+  // 与导出脚本中的 24 帧 × 40ms 保持一致；从 GIF 首帧显示时开始计时。
+  static const _tossDuration = Duration(milliseconds: 960);
 
   final num? _coins = GlobalData().coins;
 
@@ -103,9 +91,9 @@ class _PayCoinsPageState extends State<PayCoinsPage>
 
   String _getPayImage(int index, bool canPay) {
     if (!canPay) {
-      return Assets.notEnough;
+      return Assets.coinsEmpty;
     }
-    return index == 0 ? Assets.mario : Assets.gunSister;
+    return index == 0 ? Assets.coinsReadyOne : Assets.coinsReadyTwo;
   }
 
   Color _getPayFilter(int index) =>
@@ -118,65 +106,32 @@ class _PayCoinsPageState extends State<PayCoinsPage>
       _controller = PageController(viewportFraction: 0.30);
     }
 
-    _slide22Controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 50),
-    );
-    _slide22Anim = _slide22Controller.drive(
-      Tween<Offset>(
-        begin: Offset.zero,
-        end: const Offset(0.0, -0.2),
-      ),
-    );
-    _scale22Controller = AnimationController(
+    _selectionScaleController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 50),
       lowerBound: 1.0,
       upperBound: 1.1,
     );
-    _coinController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-    _coinSlideAnim = _coinController.drive(
-      Tween<Offset>(
-        begin: Offset.zero,
-        end: const Offset(0.0, -2.0),
-      ).chain(CurveTween(curve: const Interval(0.0, 2 / 3))),
-    );
-    _coinFadeAnim = _coinController.drive(
-      Tween<double>(
-        begin: 1.0,
-        end: 0.0,
-      ).chain(CurveTween(curve: const Interval(2 / 3, 1.0))),
-    );
-    _boxAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 50),
-    );
-    _boxAnim = _boxAnimController.drive(
-      Tween<Offset>(
-        begin: Offset.zero,
-        end: const Offset(0.0, -0.2),
-      ),
-    );
+    _tossAssets = [
+      rootBundle.load(Assets.coinTossOne),
+      rootBundle.load(Assets.coinTossTwo),
+    ];
 
     WidgetsBinding.instance.addPostFrameCallback(_scale);
   }
 
   @override
   void dispose() {
-    _cancelTimer();
-    _slide22Controller.dispose();
-    _scale22Controller.dispose();
-    _coinController.dispose();
-    _boxAnimController.dispose();
+    _paymentTimer?.cancel();
+    _selectionScaleController.dispose();
     _controller?.dispose();
     super.dispose();
   }
 
   void _scale([_]) {
-    _scale22Controller.forward().whenComplete(_scale22Controller.reverse);
+    _selectionScaleController.forward().then((_) {
+      if (mounted) _selectionScaleController.reverse();
+    });
   }
 
   void _onScroll(int index) {
@@ -207,41 +162,31 @@ class _PayCoinsPageState extends State<PayCoinsPage>
     final coinSize = 35 + (factor * 15);
     return Stack(
       alignment: .center,
-      clipBehavior: .none,
       children: [
-        SlideTransition(
-          position: _boxAnim,
-          child: Image.asset(
-            Assets.payBox,
-            color: filter,
-            width: boxSize,
-            height: boxSize,
-            cacheWidth: 100.cacheSize(context),
-            colorBlendMode: .srcATop,
-          ),
+        Image.asset(
+          Assets.payBox,
+          color: filter,
+          width: boxSize,
+          height: boxSize,
+          cacheWidth: 100.cacheSize(context),
+          colorBlendMode: .srcATop,
         ),
-        SlideTransition(
-          position: _coinSlideAnim,
-          child: FadeTransition(
-            opacity: _coinFadeAnim,
-            child: Image.asset(
-              height: coinSize,
-              width: coinSize,
-              cacheWidth: 50.cacheSize(context),
-              color: filter,
-              colorBlendMode: .srcATop,
-              index == 0 ? Assets.coinsOne : Assets.coinsTwo,
-            ),
-          ),
+        Image.asset(
+          index == 0 ? Assets.coinsOne : Assets.coinsTwo,
+          height: coinSize,
+          width: coinSize,
+          cacheWidth: 50.cacheSize(context),
+          color: filter,
+          colorBlendMode: .srcATop,
         ),
       ],
     );
   }
 
-  Widget _build22() {
+  Widget _buildToss() {
     final index = _pageIndex.value;
-    final canPay = _canPay(index);
-    final payImg = _getPayImage(index, canPay);
+    final canPay = _canPay(index) && !_isPaying;
+    final payImg = _getPayImage(index, _canPay(index));
     return GestureDetector(
       onTap: canPay ? _onPayCoin : null,
       onVerticalDragStart: canPay
@@ -254,18 +199,58 @@ class _PayCoinsPageState extends State<PayCoinsPage>
       onVerticalDragEnd: canPay ? _onDragEnd : null,
       onVerticalDragCancel: canPay ? _onDragEnd : null,
       behavior: HitTestBehavior.opaque,
-      child: ScaleTransition(
-        scale: _scale22Controller,
-        child: SlideTransition(
-          position: _slide22Anim,
+      child: Semantics(
+        excludeSemantics: true,
+        label: _isPaying
+            ? '正在投币'
+            : canPay
+            ? '上滑投${index + 1}枚硬币'
+            : '硬币不足或已达上限',
+        button: canPay,
+        child: ScaleTransition(
+          scale: _selectionScaleController,
           child: SizedBox(
-            width: 110,
-            height: 155,
-            child: Image.asset(
-              payImg,
-              width: 110,
-              height: 155,
-              cacheWidth: 110.cacheSize(context),
+            width: 180,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 180,
+                  height: 130,
+                  child: _tossBytes == null
+                      ? Image.asset(
+                          payImg,
+                          cacheWidth: 180.cacheSize(context),
+                          excludeFromSemantics: true,
+                        )
+                      : Image.memory(
+                          _tossBytes!,
+                          excludeFromSemantics: true,
+                          frameBuilder:
+                              (context, child, frame, wasSynchronouslyLoaded) {
+                                if (frame != null && _paymentTimer == null) {
+                                  _paymentTimer = Timer(
+                                    _tossDuration,
+                                    _completePayment!,
+                                  );
+                                }
+                                return child;
+                              },
+                        ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _isPaying
+                      ? '投币中'
+                      : canPay
+                      ? '上滑投币'
+                      : '暂时无法投币',
+                  style: const TextStyle(
+                    color: Color(0xFFE8DDCB),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -278,14 +263,6 @@ class _PayCoinsPageState extends State<PayCoinsPage>
     clipBehavior: Clip.none,
     alignment: Alignment.center,
     children: [
-      if (_hasCopyright)
-        Obx(() {
-          final index = _thunderIndex.value;
-          return Offstage(
-            offstage: index == -1 || index == 3,
-            child: Image.asset(_thunderImages[index.clamp(0, 2)]),
-          );
-        }),
       Align(
         alignment: Alignment.bottomCenter,
         child: Listener(
@@ -304,7 +281,9 @@ class _PayCoinsPageState extends State<PayCoinsPage>
                       child: SizedBox(
                         height: 100,
                         child: PageView(
-                          physics: tabBarScrollPhysics,
+                          physics: _isPaying
+                              ? const NeverScrollableScrollPhysics()
+                              : tabBarScrollPhysics,
                           controller: _controller,
                           onPageChanged: (index) {
                             _scale();
@@ -398,17 +377,19 @@ class _PayCoinsPageState extends State<PayCoinsPage>
               if (_hasCopyright)
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onHorizontalDragStart: (e) {
-                    _isHorizontal = true;
-                    _onDragDown(e);
-                  },
-                  onHorizontalDragUpdate: _onDragUpdate,
+                  onHorizontalDragStart: _isPaying
+                      ? null
+                      : (e) {
+                          _isHorizontal = true;
+                          _onDragDown(e);
+                        },
+                  onHorizontalDragUpdate: _isPaying ? null : _onDragUpdate,
                   onHorizontalDragEnd: _onDragEnd,
                   onHorizontalDragCancel: _onDragEnd,
-                  child: Center(child: Obx(_build22)),
+                  child: Center(child: Obx(_buildToss)),
                 )
               else
-                Center(child: _build22()),
+                Center(child: _buildToss()),
               if (_coins != null || widget.hasCoin) ...[
                 const SizedBox(height: 10),
                 Center(
@@ -484,7 +465,7 @@ class _PayCoinsPageState extends State<PayCoinsPage>
   void _onDragDown(DragStartDetails detail) => _downPos = detail;
   void _onDragEnd([_]) => _downPos = null;
   void _onDragUpdate(DragUpdateDetails e) {
-    if (_downPos == null) {
+    if (_isPaying || _downPos == null) {
       return;
     }
     final offset = _isHorizontal
@@ -511,29 +492,23 @@ class _PayCoinsPageState extends State<PayCoinsPage>
     }
   }
 
-  void _onPayCoin() {
-    if (_isPaying) return;
-    _isPaying = true;
-    _pageIndex.refresh();
-    _slide22Controller.forward().whenComplete(() {
-      _slide22Controller.reverse().whenComplete(() {
-        if (_pageIndex.value == 1) {
-          _thunderIndex.value += 1;
-          _timer ??= Timer.periodic(const Duration(milliseconds: 50 ~/ 3), (_) {
-            final index = _thunderIndex.value;
-            if (index == _thunderImages.length) {
-              _cancelTimer();
-            } else {
-              _thunderIndex.value = index + 1;
-            }
-          });
-        }
-        _boxAnimController.forward().whenComplete(_boxAnimController.reverse);
-        _coinController.forward().whenComplete(() {
-          Get.back();
-          widget.onPayCoin(_pageIndex.value + 1, _coinWithLike.value);
-        });
-      });
+  Future<void> _onPayCoin() async {
+    final index = _pageIndex.value;
+    if (_isPaying || !_canPay(index)) return;
+    setState(() => _isPaying = true);
+    final coinWithLike = _coinWithLike.value;
+    _completePayment = () {
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      Get.back();
+      widget.onPayCoin(index + 1, coinWithLike);
+    };
+    final data = await _tossAssets[index];
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+    setState(() {
+      // 每次创建独立 MemoryImage，单次 GIF 再次打开时从首帧开始。
+      _tossBytes = Uint8List.fromList(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      );
     });
   }
 }

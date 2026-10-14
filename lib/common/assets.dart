@@ -23,9 +23,11 @@ abstract final class Assets {
   static const thunder1 = 'assets/images/paycoins/ic_thunder_1.png';
   static const thunder2 = 'assets/images/paycoins/ic_thunder_2.png';
   static const thunder3 = 'assets/images/paycoins/ic_thunder_3.png';
-  static const notEnough = 'assets/images/paycoins/ic_22_not_enough_pay.png';
-  static const mario = 'assets/images/paycoins/ic_22_mario.png';
-  static const gunSister = 'assets/images/paycoins/ic_22_gun_sister.png';
+  static const coinsEmpty = 'assets/images/paycoins/ic_22_not_enough_pay.png';
+  static const coinsReadyOne = 'assets/images/paycoins/ic_22_mario.png';
+  static const coinsReadyTwo = 'assets/images/paycoins/ic_22_gun_sister.png';
+  static const coinTossOne = 'assets/images/paycoins/coin_toss_one.gif';
+  static const coinTossTwo = 'assets/images/paycoins/coin_toss_two.gif';
   static const payBox = 'assets/images/paycoins/ic_pay_coins_box.png';
   static const coinsOne = 'assets/images/paycoins/ic_coins_one.png';
   static const coinsTwo = 'assets/images/paycoins/ic_coins_two.png';
