@@ -83,6 +83,26 @@ pwsh -NoProfile -File tool/run-native-probes.ps1
 
 缺失 SDK 源码、编译或断言失败均返回非零退出码；产物留在 `build/probe-validation/android/`。Android 桩位于探针目录，不加入生产编译。探针不创建 GL、原生 Surface 或真实消息循环，也未模拟 platform/UI 合并线程的全部行为。采样顺序与 monitor 等待由主机检查，平台 API 由 Android 构建检查，实际 Scene 与呈现由目标设备检查。
 
+## Android 帧时间采集
+
+`android/frame_timing_capture.py` 读取指定应用的 SurfaceFlinger 图层和 gfxinfo 帧时间。启动目标应用播放固定片段、开启性能记录并准备相同弹幕密度后运行：
+
+```powershell
+uv run --locked python tool/probes/android/frame_timing_capture.py --adb <adb路径> --serial <设备序列号> --package io.github.wallpap.piliaurora.debug --seconds 10
+```
+
+省略 `--layer` 时选择包名对应的唯一 SurfaceView；存在多个候选时需显式指定完整图层名。Release 包名为 `io.github.wallpap.piliaurora`，应与被测构建一致。采集命令为 `dumpsys SurfaceFlinger --list`、`--latency <layer>` 及 `dumpsys gfxinfo <package> framestats`；不安装 APK、不重置统计、不清理日志、不修改设备配置。
+
+输出默认位于 `build/android-frame-timing/<UTC时间>.json`，可传 `--output` 指定不存在的文件。工具排除初始缓冲区中的已完成帧、重复行、零值和未完成 fence，保存数值行与图层摘要，不保存设备序列号、原始图层名或 dumpsys 文本。SurfaceFlinger 三列依次为期望呈现、实际呈现和帧就绪的纳秒时间，定义见 [AOSP FrameTracker](https://android.googlesource.com/platform/frameworks/native/+/878911f7df21c700ddbe9e9c9d28cd0a1776946f/services/surfaceflinger/FrameTracker.cpp#240)。gfxinfo 按输出表头提取 `Flags`、`IntendedVsync`、`Vsync`、`FrameCompleted`。
+
+窗口范围 1–60 秒，每 500ms 读取一次，每来源最多保存 16384 条新记录。无新记录或达到上限时返回非零退出码；某个来源为空时结合输出中的行数判断系统支持。主机耗时用于控制采集窗口，设备时间保持原始时钟域。图层帧时间与 Android View 帧时间分别记录；Flutter Surface、纹理刷新、UI 帧和 Scene 使用不同口径。工具不会据这些数值自动判定“稳定 60”。读取开销、Android 版本兼容性和实际帧率需要目标设备验证。
+
+解析、窗口去重、输出筛选和命令参数测试可在无设备时运行：
+
+```powershell
+uv run --locked python -m unittest discover -s tool/probes/android -p '*_test.py' -v
+```
+
 ## Windows 尺寸通道回归探针
 
 `windows_source_size_channel_probe.py` 使用 Flutter 的标准编码器和生产通道处理代码，验证 int32、int64 尺寸均能传入播放器。先完成 Windows 构建以生成 Flutter C++ 头文件，再运行：

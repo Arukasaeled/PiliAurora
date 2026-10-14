@@ -22,6 +22,8 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 
 Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，播放器快照的 `danmakuScheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 包含被引擎合并的请求，不能据此计算 Scene。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Windows 在 `danmaku.renderer.*` 快照的 `scheduler` 中提供相同字段。计数读取沿用现有诊断周期。
 
+设备侧可运行[Android 帧时间采集](../tool/probes/README.md#android-帧时间采集)，明确指定设备和包名。采集结果与应用诊断分别保留时钟域，结合相同复现窗口检查；SurfaceFlinger 图层、Android gfxinfo、Flutter UI 和 Scene 使用各自统计口径。
+
 ### 直播
 
 `lib/pages/live_room/` → `lib/http/live.dart` 与 `lib/services/live_stream/` → 直播包解码 → 消息和弹幕 UI。连接、包解码、历史与未读消息、渲染和退出清理需要分别检查；消息时序见[直播消息流程](runtime-flows.md#直播消息与弹幕)。
