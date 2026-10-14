@@ -94,10 +94,14 @@ fvm flutter test --no-pub test/architecture/dependency_policy_test.dart test/com
 
 ## 播放图标资源
 
-播放图标的路径、透明度和模糊阴影源定义保存在 `tool/generate_play_icon.dart`。从仓库根目录重新生成 1×、2×、3×、4× PNG：
+播放图标的媒体卡片、播放三角和进度细节源稿保存在 `tool/artwork/play.svg`，阴影由 `tool/generate_play_icon.dart` 预渲染。从仓库根目录重新生成 1×、2×、3×、4× PNG：
 
 ```powershell
 fvm flutter test --no-pub tool/generate_play_icon.dart
 ```
 
 产物为 `assets/images/play.png` 及同目录下的分辨率变体。图形逻辑尺寸为 60×60，四周各留 12 像素透明边距容纳阴影；`PlayIcon` 在布局时扣除该边距。修改源定义后需同步更新这四张资源。
+
+## 应用插画与背景
+
+可编辑 SVG 与导出脚本位于 `tool/artwork/`；角色应用图标、硬币和投币盒的 imagegen 原稿位于 `tool/artwork/raster/`。使用 `fvm flutter test --no-pub tool/generate_app_artwork.dart tool/generate_play_icon.dart` 导出，再运行 `python tool/artwork/export.py` 同步头像、动画和 Android / Windows 图标。投币 GIF 的运动轨迹定义在 `tool/artwork/coin_motion.py`；资源清单、背景导出参数和实际提示词见[资源说明](artwork/README.md)。
