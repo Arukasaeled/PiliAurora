@@ -73,6 +73,8 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   late final FrameRateTicker _ticker;
   FlutterView? _view;
   late final ValueNotifier<int> _notifier;
+  final _scrollPaintTick = _PaintClock();
+  final _specialPaintTick = _PaintClock();
   late int _lastTick = 0;
 
   /// 运行状态
@@ -94,7 +96,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
         videoFrameTimings: widget.videoFrameTimings,
         videoDisplaySyncActive: widget.videoDisplaySyncActive,
         screenRefreshRate: () => _view?.display.refreshRate ?? 0);
-    _notifier = ValueNotifier(0);
+    _notifier = ValueNotifier(0)..addListener(_refreshPaintClocks);
 
     widget.createdController(DanmakuController<T>(
       addDanmaku: _addDanmaku,
@@ -150,6 +152,12 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   }
 
   int _time = 0;
+  void _refreshPaintClocks() {
+    _scrollPaintTick.update(
+        _notifier.value, _scrollDanmakuItems.any((track) => track.isNotEmpty));
+    _specialPaintTick.update(_notifier.value, _specialDanmakuItems.isNotEmpty);
+  }
+
   void _tick(Duration elapsed) {
     _notifier.value = elapsed.inMilliseconds + _lastTick;
     if (_time++ > 10) {
@@ -198,6 +206,8 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     _ticker.dispose();
     _clearDanmakus();
     _notifier.dispose();
+    _scrollPaintTick.dispose();
+    _specialPaintTick.dispose();
     _staticDanmakuItems.dispose();
     super.dispose();
   }
@@ -432,7 +442,8 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
       }
     }
 
-    _option = option;
+    // 配置变化更新绘制委托；动画时钟直接触发重绘。
+    setState(() => _option = option);
     if (clearParagraph || lineHeightChanged) {
       _danmakuHeight = _calculateTrackHeight();
     }
@@ -668,26 +679,22 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
       child: Stack(
         children: [
           RepaintBoundary.wrap(
-            ValueListenableBuilder(
-              valueListenable: _notifier,
-              builder: (context, value, child) {
-                return CustomPaint(
-                  willChange: _running,
-                  painter: ScrollDanmakuPainter(
-                    length: _scrollDanmakuItems.fold<int>(
-                        0, (p, n) => p + n.length),
-                    trackHeight: _danmakuHeight,
-                    danmakuItems: _scrollDanmakuItems,
-                    durationInMilliseconds: _scrollVelocityOrDuration,
-                    fontSize: _option.fontSize,
-                    fontWeight: _option.fontWeight,
-                    strokeWidth: _option.strokeWidth,
-                    running: _running,
-                    tick: value,
-                  ),
-                  size: widget.size,
-                );
-              },
+            CustomPaint(
+              willChange: _running,
+              painter: ScrollDanmakuPainter(
+                length:
+                    _scrollDanmakuItems.fold<int>(0, (p, n) => p + n.length),
+                trackHeight: _danmakuHeight,
+                danmakuItems: _scrollDanmakuItems,
+                durationInMilliseconds: _scrollVelocityOrDuration,
+                fontSize: _option.fontSize,
+                fontWeight: _option.fontWeight,
+                strokeWidth: _option.strokeWidth,
+                running: _running,
+                tick: _notifier.value,
+                tickSource: _scrollPaintTick,
+              ),
+              size: widget.size,
             ),
             0,
           ),
@@ -714,23 +721,19 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
             1,
           ),
           RepaintBoundary.wrap(
-            ValueListenableBuilder(
-              valueListenable: _notifier, // 与滚动弹幕共用控制器
-              builder: (context, value, child) {
-                return CustomPaint(
-                  willChange: _running,
-                  painter: SpecialDanmakuPainter(
-                    length: _specialDanmakuItems.length,
-                    danmakuItems: _specialDanmakuItems,
-                    fontSize: _option.fontSize,
-                    fontWeight: _option.fontWeight,
-                    strokeWidth: _option.strokeWidth,
-                    running: _running,
-                    tick: value,
-                  ),
-                  size: widget.size,
-                );
-              },
+            CustomPaint(
+              willChange: _running,
+              painter: SpecialDanmakuPainter(
+                length: _specialDanmakuItems.length,
+                danmakuItems: _specialDanmakuItems,
+                fontSize: _option.fontSize,
+                fontWeight: _option.fontWeight,
+                strokeWidth: _option.strokeWidth,
+                running: _running,
+                tick: _notifier.value,
+                tickSource: _specialPaintTick,
+              ),
+              size: widget.size,
             ),
             2,
           ),
@@ -784,6 +787,23 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 }
 
 typedef ListValueNotifier<T extends Object> = ValueNotifier<List<T?>>;
+
+/// 空图层停止逐帧重绘；内容清空时再通知一次以擦除上一帧。
+class _PaintClock extends ValueNotifier<int> {
+  _PaintClock() : super(0);
+  bool _hadItems = false;
+
+  void update(int tick, bool hasItems) {
+    if (hasItems || _hadItems) {
+      if (value == tick) {
+        notifyListeners();
+      } else {
+        value = tick;
+      }
+    }
+    _hadItems = hasItems;
+  }
+}
 
 extension<T extends Object> on ListValueNotifier<T> {
   @pragma("vm:prefer-inline")

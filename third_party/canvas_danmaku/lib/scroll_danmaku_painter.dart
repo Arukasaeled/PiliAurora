@@ -19,6 +19,7 @@ final class ScrollDanmakuPainter extends BaseDanmakuPainter {
     required super.strokeWidth,
     required super.running,
     required super.tick,
+    super.tickSource,
     super.batchThreshold,
   });
 
@@ -26,6 +27,8 @@ final class ScrollDanmakuPainter extends BaseDanmakuPainter {
   void paint(ui.Canvas canvas, ui.Size size) {
     final ui.PictureRecorder? pictureRecorder;
     final Canvas pictureCanvas;
+    final length =
+        danmakuItems.fold<int>(0, (sum, track) => sum + track.length);
 
     if (length > batchThreshold) {
       pictureRecorder = ui.PictureRecorder();

@@ -1,4 +1,5 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:material_ui/material_ui.dart';
 
 abstract base class BaseDanmakuPainter extends CustomPainter {
@@ -8,7 +9,9 @@ abstract base class BaseDanmakuPainter extends CustomPainter {
   final double strokeWidth;
   final bool running;
   final int batchThreshold;
-  final int tick;
+  final int _tick;
+  final ValueListenable<int>? tickSource;
+  int get tick => tickSource?.value ?? _tick;
 
   static final Paint _paint = Paint();
 
@@ -18,9 +21,11 @@ abstract base class BaseDanmakuPainter extends CustomPainter {
     required this.fontWeight,
     required this.strokeWidth,
     required this.running,
-    required this.tick,
+    required int tick,
+    this.tickSource,
     this.batchThreshold = 10, // 默认值为10，可以自行调整
-  });
+  })  : _tick = tick,
+        super(repaint: tickSource);
 
   static void paintImg(
     Canvas canvas,

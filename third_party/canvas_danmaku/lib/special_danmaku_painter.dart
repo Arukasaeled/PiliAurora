@@ -18,6 +18,7 @@ final class SpecialDanmakuPainter extends BaseDanmakuPainter {
     required super.strokeWidth,
     required super.running,
     required super.tick,
+    super.tickSource,
     super.batchThreshold,
   });
 
