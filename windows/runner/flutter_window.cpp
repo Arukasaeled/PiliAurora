@@ -26,6 +26,7 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  gpu_metrics_ = std::make_unique<GpuMetrics>(flutter_controller_->engine());
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
@@ -43,6 +44,7 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   // 先摘除成员指针，避免销毁视图/插件时的重入消息访问半析构控制器。
+  gpu_metrics_.reset();
   auto controller = std::move(flutter_controller_);
   controller.reset();
 

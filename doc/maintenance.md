@@ -70,3 +70,14 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 - 直播历史与滚动期间的新消息积压分别限界，并检查恢复跟随、略过计数和退出清理。WebView 与原生播放器销毁前应等待异步任务退出，再检查退出、重建和多引擎场景。
 
 本地实验记录放在 Git 忽略的 `doc/dev/`，临时输出放在 `build/`。保留复现条件和结论，清理失效样本、重复二进制和日志。历史设备数值应重新测量后再用于当前决策。
+
+## Windows GPU 诊断采样
+
+开启性能记录后，Windows runner 后台线程每秒采集一次，关闭记录或销毁窗口时释放 PDH query 与线程。样本 gpu 字段记录 PID、采样窗口、原生单调时刻及缓存年龄；250ms 记录周期可重复引用同一份 GPU 样本。
+
+- adapters 通过 LUID 关联名称、VendorId、DeviceId，flutterUi 标识 Flutter 实际渲染显卡。usedByProcess 表示 Flutter 绑定、有效显存用量或非零引擎活动所确认的本进程使用证据。
+- engines 保留本 PID 各物理适配器/引擎计数，busiestEnginePercent 是其中最繁忙引擎的比例。不同引擎并行工作，数值不直接相加。
+- local、nonLocal 的 usageBytes、budgetBytes 来自 DXGI，均为调用进程口径。集显本地内存可能来自系统内存；local 不等同于独显物理显存。
+- warmingUp、PDH/DXGI 和内存 HRESULT 区分初始化、接口失败与合法零值。无有效引擎实例时不生成负载数值。
+
+播放器和 Flutter 的活动在同 PID 下汇总。当前采样未将 ANGLE、纹理复制及硬解设备逐个绑定到播放器实例，跨显卡活动由 LUID 与引擎证据呈现。混合显卡、驱动不支持、设备丢失与采集开销需要目标设备验证。

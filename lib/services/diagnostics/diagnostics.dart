@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart';
 import 'package:archive/archive_io.dart';
 import 'package:pili_aurora/services/diagnostics/history_reader.dart';
 import 'package:pili_aurora/services/diagnostics/process_metrics.dart';
+import 'package:pili_aurora/services/diagnostics/windows_gpu_metrics.dart';
 import 'package:pili_aurora/services/diagnostics/record_store.dart';
 import 'package:pili_aurora/services/diagnostics/redact.dart';
 
@@ -36,6 +37,7 @@ class Diagnostics extends ChangeNotifier {
   static const intervals = [250, 1000, 5000];
   final Map<String, Object?> Function()? processReader;
   final _processMetrics = ProcessMetrics();
+  final _gpuMetrics = WindowsGpuMetrics();
   final _sources = <String, Map<String, Object?> Function()>{};
   final _operations = <String, _OperationStats>{};
   final _gauges = <String, num>{};
@@ -309,6 +311,7 @@ class Diagnostics extends ChangeNotifier {
 
   void _start() {
     _processMetrics.reset();
+    unawaited(_gpuMetrics.start());
     _tracing = true;
     _session = DateTime.now().toUtc().toIso8601String();
     _sequence = 0;
@@ -325,7 +328,7 @@ class Diagnostics extends ChangeNotifier {
       'session': _session,
       'platform': Platform.operatingSystem,
       'runtime': Platform.version.split(' ').first,
-      'notes': 'CPU 为进程用量；图片字节为缓存账面值，不能与 RSS 相加。GPU、Dart 堆和各模块独占内存不可直接测量。HTTP 字节仅为服务端声明长度。',
+      'notes': 'CPU 为进程用量；图片字节为缓存账面值，不能与 RSS 相加。Windows GPU 为本进程各显卡的引擎负载及显存用量/预算；Dart 堆和各模块独占内存未采集。HTTP 字节仅为服务端声明长度。',
     });
     _timer = Timer.periodic(
       Duration(milliseconds: _intervalMs),
@@ -394,11 +397,16 @@ class Diagnostics extends ChangeNotifier {
       },
     };
     latest = Map<String, Object?>.from(DiagnosticRedactor.clean(latest) as Map);
+    // GPU 引擎列表使用独立预算，避免挤占播放器和采集器状态字段。
+    if (Platform.isWindows) {
+      latest!['gpu'] = DiagnosticRedactor.clean(_gpuMetrics.sample());
+    }
     _trace?.add(latest!);
     _notifySoon();
   }
 
   void _stop() {
+    unawaited(_gpuMetrics.stop());
     capture();
     _tracing = false;
     _timer?.cancel();
