@@ -40,7 +40,23 @@ class _SearchTrendingPageState extends State<SearchTrendingPage> {
     final size = context.mediaQuerySize;
     final maxWidth = size.width - padding.horizontal;
     final width = size.isPortrait ? maxWidth : min(640.0, maxWidth * 0.6);
-    final height = width * 528 / 1125;
+    final titleStyle = theme.textTheme.headlineMedium!.copyWith(
+      color: Colors.white,
+      fontSize: 28,
+      fontWeight: FontWeight.w700,
+    );
+    final titleLayout = TextPainter(
+      text: TextSpan(text: 'bilibili热搜', style: titleStyle),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 2,
+    )..layout(maxWidth: width * 0.58 - 24);
+    // 系统大字号可能让标题换行，横幅需为导航和标题留出完整高度。
+    final height = max(
+      width * 528 / 1125,
+      padding.top + kToolbarHeight + 12 + titleLayout.height + 24,
+    );
+    titleLayout.dispose();
     _offset = height - 56 - padding.top;
     return Material(
       child: Stack(
@@ -58,12 +74,33 @@ class _SearchTrendingPageState extends State<SearchTrendingPage> {
                       TrendingHeader(
                         offset: _offset,
                         onScrollRatioChanged: _scrollRatio.call,
-                        child: Image.asset(
+                        child: SizedBox(
                           width: width,
                           height: height,
-                          cacheWidth: width.cacheSize(context),
-                          Assets.trendingBanner,
-                          filterQuality: .low,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Image.asset(
+                                Assets.trendingBanner,
+                                fit: BoxFit.cover,
+                                alignment: Alignment.centerLeft,
+                                cacheWidth: width.cacheSize(context),
+                                filterQuality: .low,
+                                excludeFromSemantics: true,
+                              ),
+                              Positioned(
+                                left: 24,
+                                right: width * 0.42,
+                                bottom: 24,
+                                child: Text(
+                                  'bilibili热搜',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: titleStyle,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                       SliverPadding(
