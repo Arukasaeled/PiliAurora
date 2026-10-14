@@ -9,7 +9,8 @@ try {
     if ($requestedVersion.StartsWith('v')) {
         $requestedVersion = $requestedVersion.Substring(1)
     }
-    if ($requestedVersion -and $requestedVersion -notmatch '^\d+\.\d+\.\d+$') {
+    $versionPattern = '\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?'
+    if ($requestedVersion -and $requestedVersion -notmatch "^$versionPattern`$") {
         throw "invalid version: $Version"
     }
 
@@ -18,7 +19,7 @@ try {
     $commitHash = (git rev-parse HEAD).Trim()
 
     $updatedContent = foreach ($line in (Get-Content -Path 'pubspec.yaml' -Encoding UTF8)) {
-        if ($line -match '^\s*version:\s*([\d\.]+)') {
+        if ($line -match "^\s*version:\s*($versionPattern)(?:\+\d+)?\s*`$") {
             $versionName = if ($requestedVersion) { $requestedVersion } else { $matches[1] }
             if ($Arg -eq 'android' -and -not $requestedVersion) {
                 $versionName += '-' + $commitHash.Substring(0, 9)

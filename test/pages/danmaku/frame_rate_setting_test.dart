@@ -12,7 +12,6 @@ import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/live_room/view.dart' as live;
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
-import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
 
@@ -50,26 +49,35 @@ void main() {
           ),
         ),
       );
-      int rate() => PlatformUtils.isDesktop && !isLive
+      final windowsScreen = find.byWidgetPredicate(
+        (w) => w is WindowsDanmakuScreen,
+        skipOffstage: false,
+      );
+      final canvasScreen = find.byWidgetPredicate(
+        (w) => w is DanmakuScreen,
+        skipOffstage: false,
+      );
+      final usesWindowsRenderer = windowsScreen.evaluate().isNotEmpty;
+      int rate() => usesWindowsRenderer
           ? tester
                 .widget<WindowsDanmakuScreen>(
-                  find.byWidgetPredicate((w) => w is WindowsDanmakuScreen),
+                  windowsScreen,
                 )
                 .frameRate
           : tester
                 .widget<DanmakuScreen>(
-                  find.byWidgetPredicate((w) => w is DanmakuScreen),
+                  canvasScreen,
                 )
                 .frameRate;
-      Object? syncState() => PlatformUtils.isDesktop && !isLive
+      Object? syncState() => usesWindowsRenderer
           ? tester
                 .widget<WindowsDanmakuScreen>(
-                  find.byWidgetPredicate((w) => w is WindowsDanmakuScreen),
+                  windowsScreen,
                 )
                 .videoDisplaySyncActive
           : tester
                 .widget<DanmakuScreen>(
-                  find.byWidgetPredicate((w) => w is DanmakuScreen),
+                  canvasScreen,
                 )
                 .videoDisplaySyncActive;
       final controller = player.danmakuController;
