@@ -2,6 +2,7 @@
 
 import argparse
 import math
+import tempfile
 from io import BytesIO
 from pathlib import Path
 
@@ -11,27 +12,37 @@ from coin_motion import export_coin_motion
 
 
 def save_image(image, path, **options):
-    # 先在内存中编码，再以写入模式落盘，避免 Pillow 对目标文件额外申请读取权限。
+    # 先完整编码到同目录临时文件，再替换目标，避免预览读取期间截断资源。
     buffer = BytesIO()
     image.save(buffer, format=Image.registered_extensions()[path.suffix], **options)
-    path.write_bytes(buffer.getvalue())
+    with tempfile.NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False) as output:
+        output.write(buffer.getvalue())
+        temporary = Path(output.name)
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def export_brand_artwork(root, assets):
-    with Image.open(root / 'tool/artwork/raster/app-icon.png') as source:
-        square = source.convert('RGBA').resize((512, 512), Image.Resampling.LANCZOS)
     # Windows 与应用内使用圆角；Android 自适应图标交由系统裁切。
     mask = Image.new('L', (1024, 1024))
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, 1023, 1023), radius=220, fill=255)
-    logo = square.copy()
-    logo.putalpha(mask.resize((512, 512), Image.Resampling.LANCZOS))
-    save_image(logo, assets / 'logo/logo.png', optimize=True)
     # 108dp 前景中，中心 72dp 放入完整方形原稿，保留系统遮罩与视差余量。
-    foreground = Image.new('RGBA', (768, 768), square.getpixel((0, 0)))
-    foreground.alpha_composite(square, (128, 128))
-    drawable = root / 'android/app/src/main/res/drawable-nodpi'
-    drawable.mkdir(exist_ok=True)
-    save_image(foreground, drawable / 'app_icon_artwork.png', optimize=True)
+    for source_name, suffix, directory in [
+        ('app-icon', '', 'drawable-nodpi'),
+        ('app-icon-dark', '_dark', 'drawable-night-nodpi'),
+    ]:
+        with Image.open(root / f'tool/artwork/raster/{source_name}.png') as source:
+            square = source.convert('RGBA').resize((512, 512), Image.Resampling.LANCZOS)
+        logo = square.copy()
+        logo.putalpha(mask.resize((512, 512), Image.Resampling.LANCZOS))
+        save_image(logo, assets / f'logo/logo{suffix}.png', optimize=True)
+        foreground = Image.new('RGBA', (768, 768), square.getpixel((0, 0)))
+        foreground.alpha_composite(square, (128, 128))
+        drawable = root / f'android/app/src/main/res/{directory}'
+        drawable.mkdir(exist_ok=True)
+        save_image(foreground, drawable / 'app_icon_artwork.png', optimize=True)
     (root / 'android/app/src/main/res/drawable/ic_launcher_foreground.xml').write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<bitmap xmlns:android="http://schemas.android.com/apk/res/android"\n'
@@ -47,17 +58,26 @@ def export_platform_icons(root, assets):
             root / 'windows/runner/resources/app_icon.ico',
         ]:
             save_image(logo, path, sizes=[(size, size) for size in [16, 24, 32, 48, 64, 128, 256]])
-    with Image.open(assets / 'logo/logo.png') as mark:
+    with Image.open(assets / 'logo/logo_dark.png') as dark_logo:
+        save_image(dark_logo, assets / 'logo/ico/app_icon_dark.ico',
+                   sizes=[(size, size) for size in [16, 24, 32, 48, 64, 128, 256]])
+    with Image.open(assets / 'logo/logo.png') as mark, Image.open(assets / 'logo/logo_dark.png') as dark_mark:
         resource = root / 'android/app/src/main/res'
         for path in resource.glob('mipmap-*/ic_launcher.png'):
+            if '-night-' in path.parent.name:
+                continue
             with Image.open(path) as previous:
                 size = previous.size
             icon = mark.resize(size, Image.Resampling.LANCZOS)
             save_image(icon, path, optimize=True)
+            dark_path = resource / path.parent.name.replace('mipmap-', 'mipmap-night-', 1) / path.name
+            dark_path.parent.mkdir(exist_ok=True)
+            save_image(dark_mark.resize(size, Image.Resampling.LANCZOS), dark_path, optimize=True)
         for path in resource.glob('drawable-*/splash.png'):
             with Image.open(path) as previous:
                 size = previous.size
-            splash = mark.resize(size, Image.Resampling.LANCZOS)
+            sprite = dark_mark if 'night' in path.parent.name else mark
+            splash = sprite.resize(size, Image.Resampling.LANCZOS)
             save_image(splash, path, optimize=True)
 
 
@@ -207,6 +227,9 @@ def main():
         avatar.convert("RGB").save(
             assets / "noface.jpeg", quality=95, subsampling=0, optimize=True
         )
+    with Image.open(root / "build/asset-refresh/avatar_dark.png") as avatar:
+        save_image(avatar.convert('RGB'), assets / 'noface_dark.jpeg',
+                   quality=95, subsampling=0, optimize=True)
 
     for source, destination, size in [
         (args.live, assets / "live/default_bg.webp", (1125, 2436)),

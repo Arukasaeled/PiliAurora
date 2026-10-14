@@ -1480,7 +1480,12 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
                     height: height,
                     cacheWidth: true,
                     getPlaceHolder: () => Center(
-                      child: Image.asset(Assets.loading),
+                      child: Image.asset(
+                        Assets.themed(
+                          Assets.loading,
+                          Theme.of(context).brightness,
+                        ),
+                      ),
                     ),
                   ),
                 ),

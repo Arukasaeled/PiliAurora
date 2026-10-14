@@ -1,5 +1,6 @@
 import 'package:pili_aurora/app/back_navigation.dart';
 import 'package:pili_aurora/app/desktop_playback_launch.dart';
+import 'package:pili_aurora/app/desktop_theme.dart';
 import 'package:pili_aurora/common/constants.dart';
 import 'package:pili_aurora/common/widgets/app_viewport.dart';
 import 'package:pili_aurora/common/widgets/back_detector.dart';
@@ -72,7 +73,9 @@ class PiliAuroraApp extends StatelessWidget {
       child: child!,
     );
     return PlatformUtils.isDesktop
-        ? BackDetector(onBack: handleAppBack, child: viewport)
+        ? DesktopWindowTheme(
+            child: BackDetector(onBack: handleAppBack, child: viewport),
+          )
         : viewport;
   }
 }

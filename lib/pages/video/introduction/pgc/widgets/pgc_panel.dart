@@ -212,7 +212,10 @@ class _PgcPanelState extends State<PgcPanel> {
                       const SizedBox(width: 2),
                       if (item.badge == '会员')
                         SvgPicture.asset(
-                          Assets.vipIcon,
+                          Assets.themed(
+                            Assets.vipIcon,
+                            Theme.of(context).brightness,
+                          ),
                           height: 16,
                           semanticsLabel: "大会员",
                         )

@@ -215,7 +215,7 @@ class ImageGridView extends StatelessWidget {
               ).onInverseSurface.withValues(alpha: 0.4),
             ),
             child: Image.asset(
-              Assets.loading,
+              Assets.themed(Assets.loading, Theme.of(context).brightness),
               width: width,
               height: height,
               cacheWidth: width.cacheSize(context),

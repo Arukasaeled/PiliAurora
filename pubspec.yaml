@@ -173,8 +173,8 @@ flutter_native_splash:
     color_dark: "#212121"
   color: "#ffffff"
   color_dark: "#212121"
-  image: assets/images/logo/logo_2.png
-  image_dark: assets/images/logo/logo_2.png
+  image: assets/images/logo/logo.png
+  image_dark: assets/images/logo/logo_dark.png
 
 flutter:
   uses-material-design: true

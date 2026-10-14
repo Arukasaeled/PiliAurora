@@ -278,7 +278,10 @@ class _MediaPageState extends CommonPageState<MinePage>
                               right: -1,
                               bottom: -2,
                               child: SvgPicture.asset(
-                                Assets.vipIcon,
+                                Assets.themed(
+                                  Assets.vipIcon,
+                                  Theme.of(context).brightness,
+                                ),
                                 height: 19,
                                 semanticsLabel: "大会员",
                               ),
@@ -290,7 +293,10 @@ class _MediaPageState extends CommonPageState<MinePage>
                           width: 55,
                           height: 55,
                           cacheHeight: 55.cacheSize(context),
-                          Assets.avatarPlaceHolder,
+                          Assets.themed(
+                            Assets.avatarPlaceHolder,
+                            Theme.of(context).brightness,
+                          ),
                           semanticLabel: "默认头像",
                         ),
                       ),

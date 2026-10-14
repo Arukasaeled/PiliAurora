@@ -266,7 +266,9 @@ class OpusContent extends StatelessWidget {
                   imageUrl: ImageUtils.thumbnailUrl(pic.url!, 60),
                   fadeInDuration: const Duration(milliseconds: 120),
                   fadeOutDuration: const Duration(milliseconds: 120),
-                  placeholder: (_, _) => Image.asset(Assets.loading),
+                  placeholder: (_, _) => Image.asset(
+                    Assets.themed(Assets.loading, Theme.of(context).brightness),
+                  ),
                 );
                 if (!(pic.isLongPic ?? false)) {
                   child = fromHero(

@@ -145,16 +145,16 @@ class _UpPanelState extends State<UpPanel> {
     Widget avatar;
     if (isAll) {
       avatar = DecoratedBox(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           shape: .circle,
-          color: Color(0xFF5CB67B),
+          color: theme.colorScheme.primaryContainer,
         ),
         child: Image.asset(
           width: 38,
           height: 38,
           cacheWidth: 38.cacheSize(context),
           Assets.logo2,
-          color: Colors.white,
+          color: theme.colorScheme.onPrimaryContainer,
         ),
       );
     } else {

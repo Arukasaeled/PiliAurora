@@ -109,7 +109,10 @@ class NetworkImgLayer extends StatelessWidget {
       ),
       child: Center(
         child: Image.asset(
-          isAvatar ? Assets.avatarPlaceHolder : Assets.loading,
+          Assets.themed(
+            isAvatar ? Assets.avatarPlaceHolder : Assets.loading,
+            Theme.of(context).brightness,
+          ),
           width: width,
           height: height,
           cacheWidth: width.cacheSize(context),

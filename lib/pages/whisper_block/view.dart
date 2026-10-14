@@ -126,7 +126,10 @@ class _WhisperBlockPageState extends ConsumerState<WhisperBlockPage> {
                   spacing: 6,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SvgPicture.asset(Assets.error, height: 156),
+                    SvgPicture.asset(
+                      Assets.themed(Assets.error, Theme.of(context).brightness),
+                      height: 156,
+                    ),
                     const Text(
                       '还未添加屏蔽词',
                       style: TextStyle(

@@ -1,9 +1,13 @@
+import 'dart:ui' show Brightness;
+
 abstract final class Assets {
   static const digitalNum = 'digital_id_num';
 
   static const logo = 'assets/images/logo/logo.png';
   static const logo2 = 'assets/images/logo/logo_2.png';
   static const logoIco = 'assets/images/logo/ico/app_icon.ico';
+  static const logoDark = 'assets/images/logo/logo_dark.png';
+  static const logoIcoDark = 'assets/images/logo/ico/app_icon_dark.ico';
 
   static const vipIcon = 'assets/images/big-vip.svg';
   static const avatarPlaceHolder = 'assets/images/noface.jpeg';
@@ -14,6 +18,26 @@ abstract final class Assets {
   static const trendingBanner = 'assets/images/trending_banner.png';
   static const ai = 'assets/images/ai.png';
   static const error = 'assets/images/error.svg';
+  static const loadingDark = 'assets/images/loading_dark.png';
+  static const avatarPlaceHolderDark = 'assets/images/noface_dark.jpeg';
+  static const aiDark = 'assets/images/ai_dark.png';
+  static const errorDark = 'assets/images/error_dark.svg';
+  static const vipIconDark = 'assets/images/big-vip_dark.svg';
+  static const topicHeaderDark = 'assets/images/topic-header-bg_dark.png';
+
+  static const _darkVariants = {
+    logo: logoDark,
+    logoIco: logoIcoDark,
+    loading: loadingDark,
+    avatarPlaceHolder: avatarPlaceHolderDark,
+    ai: aiDark,
+    error: errorDark,
+    vipIcon: vipIconDark,
+    topicHeader: topicHeaderDark,
+  };
+
+  static String themed(String asset, Brightness brightness) =>
+      brightness == Brightness.dark ? _darkVariants[asset] ?? asset : asset;
 
   static const livingChart = 'assets/images/live.gif';
   static const livingStatic = 'assets/images/live.png';

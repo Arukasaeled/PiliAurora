@@ -65,7 +65,9 @@ Widget htmlRender({
                 imageUrl: ImageUtils.thumbnailUrl(imgUrl, 60),
                 fadeInDuration: const Duration(milliseconds: 120),
                 fadeOutDuration: const Duration(milliseconds: 120),
-                placeholder: (context, url) => Image.asset(Assets.loading),
+                placeholder: (context, url) => Image.asset(
+                  Assets.themed(Assets.loading, Theme.of(context).brightness),
+                ),
               ),
             ),
           );

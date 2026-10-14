@@ -28,7 +28,10 @@ class HttpError extends StatelessWidget {
       crossAxisAlignment: .center,
       children: [
         const SizedBox(height: 40),
-        SvgPicture.asset(Assets.error, height: 200),
+        SvgPicture.asset(
+          Assets.themed(Assets.error, theme.brightness),
+          height: 200,
+        ),
         const SizedBox(height: 30),
         Padding(
           padding: const .symmetric(horizontal: 16, vertical: 5),

@@ -994,7 +994,7 @@ class _UgcIntroPanelState extends State<UgcIntroPanel> {
         },
         child: Image.asset(
           semanticLabel: 'AI总结',
-          Assets.ai,
+          Assets.themed(Assets.ai, Theme.of(context).brightness),
           height: 18,
           width: 18,
           cacheHeight: 18.cacheSize(context),

@@ -143,7 +143,7 @@ class PendantAvatar extends StatelessWidget {
   Widget _buildBadge(BuildContext context, ColorScheme colorScheme) {
     final child = switch (badgeType) {
       .vip => SvgPicture.asset(
-        Assets.vipIcon,
+        Assets.themed(Assets.vipIcon, Theme.of(context).brightness),
         width: badgeSize,
         height: badgeSize,
         semanticsLabel: badgeType.desc,

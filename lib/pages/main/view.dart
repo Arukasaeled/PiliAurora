@@ -80,7 +80,7 @@ class _MainAppState extends PopScopeState<MainApp>
     if (PlatformUtils.isDesktop) {
       if (_brightness != brightness) {
         _brightness = brightness;
-        windowManager.setBrightness(brightness);
+        _updateTrayImage(brightness);
       }
     }
     if (!_mainController.useSideBar) {
@@ -267,7 +267,13 @@ class _MainAppState extends PopScopeState<MainApp>
 
   void _handleTray() {
     final trayIcon = tray.TrayIcon.create();
-    final trayImage = tray.ImageAsset.fromAsset(Assets.logoIco);
+    final trayImage = tray.ImageAsset.fromAsset(
+      Assets.themed(
+        Assets.logoIco,
+        _brightness ??
+            WidgetsBinding.instance.platformDispatcher.platformBrightness,
+      ),
+    );
     final trayMenu = tray.Menu.create();
     final showItem = tray.MenuItem.createWithLabelAndType(
       '显示窗口',
@@ -316,6 +322,19 @@ class _MainAppState extends PopScopeState<MainApp>
       ..setContextMenu(trayMenu)
       ..setContextMenuTrigger(tray.ContextMenuTrigger.rightClicked)
       ..setVisible(true);
+  }
+
+  void _updateTrayImage(Brightness brightness) {
+    final trayIcon = _trayIcon;
+    if (trayIcon == null) return;
+    final image = tray.ImageAsset.fromAsset(
+      Assets.themed(Assets.logoIco, brightness),
+    );
+    if (image == null) return;
+    trayIcon.icon = image;
+    final previous = _trayImage;
+    _trayImage = image;
+    previous?.dispose();
   }
 
   @pragma('vm:prefer-inline')

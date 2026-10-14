@@ -186,7 +186,9 @@ class _DynTopicPageState extends State<DynTopicPage>
             image: DecorationImage(
               image: ResizeImage(
                 width: MediaQuery.widthOf(context).cacheSize(context),
-                const AssetImage(Assets.topicHeader),
+                AssetImage(
+                  Assets.themed(Assets.topicHeader, colorScheme.brightness),
+                ),
               ),
               filterQuality: FilterQuality.low,
               fit: BoxFit.cover,
