@@ -5,6 +5,175 @@ import 'package:flutter_test/flutter_test.dart';
 import 'dart:ui';
 
 void main() {
+  testWidgets('实际显示同步状态变化时退化与恢复，停止后释放状态订阅', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final frames = ValueNotifier<List<int>>(const []);
+    final syncActive = _DisplaySyncState(false);
+    addTearDown(frames.dispose);
+    addTearDown(syncActive.dispose);
+    final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+    var ticks = 0;
+    final ticker = _ClockTicker(
+      (_) => ticks++,
+      () => tester.binding.clock.now().microsecondsSinceEpoch,
+      frames,
+      syncActive,
+    )..start();
+    await tester.pump();
+    expect(syncActive.observed, isTrue);
+    final initialTicks = ticks;
+    final updates = [0, 0, 0, 0];
+    final combined = [0, 0, 0, 0];
+    final consumed = <int>[];
+    for (var slot = 1; slot <= 1440; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 8334));
+      final segment = (slot - 1) ~/ 360;
+      if ((slot - 1) % 360 == 0) syncActive.value = segment.isOdd;
+      // 同步关闭后改变视频相位，确认它不会继续影响独立弹幕调度。
+      final hasVideo = slot % 2 == (segment < 2 ? 1 : 0);
+      if (hasVideo) {
+        consumed.add(origin + slot * 8334 - 8333 + 1000);
+      }
+      final previousTicks = ticks;
+      final hasDart = tester.binding.hasScheduledFrame;
+      if (hasDart) await tester.pump();
+      if (slot % 30 == 0) {
+        frames.value = consumed.toList();
+        consumed.clear();
+      }
+      if ((slot - 1) % 360 >= 120) {
+        updates[segment] += ticks - previousTicks;
+        if (hasVideo || hasDart) combined[segment]++;
+      }
+    }
+    ticker.stop();
+    expect(syncActive.observed, isFalse);
+    ticker.start();
+    expect(syncActive.observed, isTrue);
+    ticker.dispose();
+    expect(syncActive.observed, isFalse);
+    await tester.pump();
+    await tester.binding.delayed(const Duration(seconds: 2));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(ticks - initialTicks, closeTo(720, 4));
+    for (var segment = 0; segment < 4; segment++) {
+      expect(updates[segment], closeTo(120, 2));
+      expect(combined[segment], closeTo(segment.isOdd ? 120 : 240, 2));
+    }
+    debugPrint('display sync state: updates=$updates combined=$combined');
+  });
+
+  testWidgets('视频周期匹配、失配再匹配时，弹幕退化后恢复同步', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final frames = ValueNotifier<List<int>>(const []);
+    addTearDown(frames.dispose);
+    final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+    var ticks = 0;
+    final ticker = _ClockTicker(
+      (_) => ticks++,
+      () => tester.binding.clock.now().microsecondsSinceEpoch,
+      frames,
+    )..start();
+    await tester.pump();
+    final initialTicks = ticks;
+    final updates = [0, 0, 0];
+    final combined = [0, 0, 0];
+    final consumed = <int>[];
+    for (var slot = 1; slot <= 1080; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 8334));
+      // 不清空采样，直接从 60 切到 24 再切到 30 FPS。
+      final segment = (slot - 1) ~/ 360;
+      final videoRate = [60, 24, 30][segment];
+      final hasVideo = slot % (120 ~/ videoRate) == 1;
+      if (hasVideo) {
+        consumed.add(origin + slot * 8334 - 8333 + 1000);
+      }
+      final previousTicks = ticks;
+      final hasDart = tester.binding.hasScheduledFrame;
+      if (hasDart) await tester.pump();
+      if (slot % 30 == 0) {
+        frames.value = consumed.toList();
+        consumed.clear();
+      }
+      if ((slot - 1) % 360 >= 120) {
+        updates[segment] += ticks - previousTicks;
+        if (hasVideo || hasDart) combined[segment]++;
+      }
+    }
+    ticker.dispose();
+    await tester.binding.delayed(const Duration(seconds: 2));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(ticks - initialTicks, closeTo(540, 3));
+    for (var segment = 0; segment < 3; segment++) {
+      expect(updates[segment], closeTo(120, 2));
+      expect(combined[segment], closeTo(segment == 1 ? 144 : 120, 2));
+    }
+    debugPrint('sync / fallback / sync: updates=$updates combined=$combined');
+  });
+
+  for (final refreshRate in [90.0, 120.0]) {
+    for (final batchSlots in [(refreshRate / 4).round(), refreshRate.toInt()]) {
+      testWidgets(
+        '30 FPS 视频相位变化后，60 FPS 弹幕恢复合帧，'
+        '$refreshRate Hz，timing 批次=$batchSlots',
+        (tester) async {
+          tester.view.display.refreshRate = refreshRate;
+          addTearDown(tester.view.display.resetRefreshRate);
+          final frames = ValueNotifier<List<int>>(const []);
+          addTearDown(frames.dispose);
+          final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+          var ticks = 0;
+          final ticker = _ClockTicker(
+            (_) => ticks++,
+            () => tester.binding.clock.now().microsecondsSinceEpoch,
+            frames,
+          )..start();
+          await tester.pump();
+          final initialTicks = ticks;
+          final consumed = <int>[];
+          var alignedSlots = 0;
+          var shiftedSlots = 0;
+          final slotsPerSecond = refreshRate.toInt();
+          final videoSlots = slotsPerSecond ~/ 30;
+          final slotMicros = (1000000 / refreshRate).ceil();
+          for (var slot = 1; slot <= slotsPerSecond * 6; slot++) {
+            await tester.binding.delayed(Duration(microseconds: slotMicros));
+            // 前三秒视频与弹幕同相位，随后视频输出错开一个屏幕槽位。
+            final hasVideo =
+                slot % videoSlots == (slot <= slotsPerSecond * 3 ? 0 : 1);
+            if (hasVideo) {
+              consumed.add(origin + (slot - 1) * slotMicros + 1000);
+            }
+            final hasDart = tester.binding.hasScheduledFrame;
+            if (hasDart) await tester.pump();
+            if (slot % batchSlots == 0) {
+              frames.value = consumed.toList();
+              consumed.clear();
+            }
+            if (hasVideo || hasDart) {
+              if (slot > slotsPerSecond && slot <= slotsPerSecond * 3) {
+                alignedSlots++;
+              }
+              if (slot > slotsPerSecond * 4) shiftedSlots++;
+            }
+          }
+          ticker.dispose();
+          await tester.binding.delayed(const Duration(seconds: 2));
+          expect(tester.binding.hasScheduledFrame, isFalse);
+          debugPrint(
+            '30fps video / 60fps danmaku: aligned=$alignedSlots/2s '
+            'shifted=$shiftedSlots/2s danmaku=${ticks - initialTicks}/6s',
+          );
+          expect(ticks - initialTicks, closeTo(360, 3));
+          expect(alignedSlots, inInclusiveRange(118, 122));
+          expect(shiftedSlots, inInclusiveRange(118, 122));
+        },
+      );
+    }
+  }
+
   testWidgets('原生来源按播放器替换，停止和销毁时释放订阅', (tester) async {
     final first = _NativeFrames();
     final second = _NativeFrames();
@@ -188,58 +357,77 @@ void main() {
     }
   }
 
-  testWidgets('59.94 FPS 在 120 Hz 上漂移时持续跟随原生相位', (tester) async {
-    tester.view.display.refreshRate = 120;
-    addTearDown(tester.view.display.resetRefreshRate);
-    final frames = ValueNotifier<List<int>>(const []);
-    addTearDown(frames.dispose);
-    final origin = tester.binding.clock.now().microsecondsSinceEpoch;
-    var ticks = 0;
-    final ticker = _ClockTicker(
-      (_) => ticks++,
-      () => tester.binding.clock.now().microsecondsSinceEpoch,
-      frames,
-    )..start();
-    await tester.pump();
-    final initialTicks = ticks;
-    var videoFrames = 0;
-    var extraSlots = 0;
-    var nextVideo = 8334.0;
-    final consumed = <int>[];
-    for (var slot = 1; slot <= 1800; slot++) {
-      await tester.binding.delayed(const Duration(microseconds: 8334));
-      final hasVideo = slot * 8334 >= nextVideo;
-      if (hasVideo) {
-        nextVideo += 1000000 / 59.94;
-        videoFrames++;
-        consumed.add(origin + slot * 8334 - 8333 + 1000);
+  for (final videoRate in [29.97, 59.94]) {
+    testWidgets('$videoRate FPS 在 120 Hz 上漂移时持续跟随原生相位', (tester) async {
+      tester.view.display.refreshRate = 120;
+      addTearDown(tester.view.display.resetRefreshRate);
+      final frames = ValueNotifier<List<int>>(const []);
+      addTearDown(frames.dispose);
+      final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+      var ticks = 0;
+      final ticker = _ClockTicker(
+        (_) => ticks++,
+        () => tester.binding.clock.now().microsecondsSinceEpoch,
+        frames,
+      )..start();
+      await tester.pump();
+      final initialTicks = ticks;
+      var videoFrames = 0;
+      var extraSlots = 0;
+      var nextVideo = 8334.0;
+      final consumed = <int>[];
+      for (var slot = 1; slot <= 1800; slot++) {
+        await tester.binding.delayed(const Duration(microseconds: 8334));
+        final hasVideo = slot * 8334 >= nextVideo;
+        if (hasVideo) {
+          nextVideo += 1000000 / videoRate;
+          videoFrames++;
+          consumed.add(origin + slot * 8334 - 8333 + 1000);
+        }
+        final hasDart = tester.binding.hasScheduledFrame;
+        if (hasDart) await tester.pump();
+        if (hasDart && !hasVideo) extraSlots++;
+        if (slot % 30 == 0) {
+          frames.value = consumed.toList();
+          consumed.clear();
+        }
       }
-      final hasDart = tester.binding.hasScheduledFrame;
-      if (hasDart) await tester.pump();
-      if (hasDart && !hasVideo) extraSlots++;
-      if (slot % 30 == 0) {
-        frames.value = consumed.toList();
-        consumed.clear();
-      }
-    }
-    ticker.dispose();
-    await tester.binding.delayed(const Duration(seconds: 2));
-    expect(tester.binding.hasScheduledFrame, isFalse);
-    // 起步及视频跨到相邻槽位时，需要等待下一份 250 ms 原生批次。
-    expect(extraSlots, lessThanOrEqualTo(34));
-    expect(ticks - initialTicks, closeTo(videoFrames, 3));
-    debugPrint(
-      '59.94fps video=$videoFrames danmaku=${ticks - initialTicks} extra=$extraSlots',
-    );
-  });
+      ticker.dispose();
+      await tester.binding.delayed(const Duration(seconds: 2));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      // 起步及视频跨到相邻槽位时，需要等待下一份 250 ms 原生批次。
+      final subdivisions = (60 / videoRate).round();
+      expect(
+        extraSlots,
+        lessThanOrEqualTo(videoFrames * (subdivisions - 1) + 34),
+      );
+      expect(ticks - initialTicks, closeTo(videoFrames * subdivisions, 3));
+      debugPrint(
+        '${videoRate}fps video=$videoFrames danmaku=${ticks - initialTicks} extra=$extraSlots',
+      );
+    });
+  }
 }
 
 class _ClockTicker extends FrameRateTicker {
-  _ClockTicker(super.onTick, this.now, [ValueListenable<List<int>>? frames])
-    : super(frameRate: 60, videoFrameTimings: frames);
+  _ClockTicker(
+    super.onTick,
+    this.now, [
+    ValueListenable<List<int>>? frames,
+    ValueListenable<bool>? syncActive,
+  ]) : super(
+         frameRate: 60,
+         videoFrameTimings: frames,
+         videoDisplaySyncActive: syncActive,
+       );
   final int Function() now;
   @override
   int get clockMicroseconds => now();
+}
+
+class _DisplaySyncState extends ValueNotifier<bool> {
+  _DisplaySyncState(super.value);
+  bool get observed => hasListeners;
 }
 
 class _NativeFrames extends ValueNotifier<List<int>> {

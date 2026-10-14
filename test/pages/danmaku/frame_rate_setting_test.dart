@@ -61,8 +61,23 @@ void main() {
                   find.byWidgetPredicate((w) => w is DanmakuScreen),
                 )
                 .frameRate;
+      Object? syncState() => PlatformUtils.isDesktop && !isLive
+          ? tester
+                .widget<WindowsDanmakuScreen>(
+                  find.byWidgetPredicate((w) => w is WindowsDanmakuScreen),
+                )
+                .videoDisplaySyncActive
+          : tester
+                .widget<DanmakuScreen>(
+                  find.byWidgetPredicate((w) => w is DanmakuScreen),
+                )
+                .videoDisplaySyncActive;
       final controller = player.danmakuController;
       expect(rate(), 0);
+      expect(syncState(), same(player.videoDisplaySyncActive));
+      await GStorage.setting.put(SettingBoxKey.videoSync, 'audio');
+      await tester.pump();
+      expect(syncState(), same(player.videoDisplaySyncActive));
       for (final fps in [30, 60, 90, 120, 0]) {
         await GStorage.setting.put(SettingBoxKey.danmakuFrameRate, fps);
         await tester.pump();
@@ -76,12 +91,16 @@ void main() {
         expect(tester.binding.hasScheduledFrame, isFalse);
       }
       await tester.pumpWidget(const SizedBox.shrink());
+      player.videoDisplaySyncActive.dispose();
+      await GStorage.setting.delete(SettingBoxKey.videoSync);
       expect(tester.takeException(), isNull);
     });
   }
 }
 
 class _Player implements PlPlayerController {
+  @override
+  final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier<bool>(true);
   @override
   final enableShowDanmaku = false.obs;
   @override

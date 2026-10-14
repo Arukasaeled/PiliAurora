@@ -1,4 +1,7 @@
+import 'dart:ui' show FlutterView;
+
 import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
@@ -12,6 +15,7 @@ class WindowsDanmakuScreen<T> extends StatefulWidget {
     required this.createdRenderer,
     this.opacity = 1,
     this.frameRate = 0,
+    this.videoDisplaySyncActive,
     this.rasterCacheMaxBytes = 16 * 1024 * 1024,
     this.rasterCacheMaxEntries = 512,
   });
@@ -20,6 +24,7 @@ class WindowsDanmakuScreen<T> extends StatefulWidget {
   final Size size;
   final double opacity;
   final int frameRate;
+  final ValueListenable<bool>? videoDisplaySyncActive;
 
   /// 创建时固定；实验更换预算时使用不同的 widget key。
   final int rasterCacheMaxBytes;
@@ -34,6 +39,7 @@ class WindowsDanmakuScreen<T> extends StatefulWidget {
 class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
     with TickerProviderStateMixin {
   late final FrameRateTicker _ticker;
+  FlutterView? _view;
   late final AnimationController _opacity;
   WindowsDanmakuRenderer<T>? _renderer;
   late _WindowsDanmakuPainter<T> _painter;
@@ -48,11 +54,16 @@ class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
     if (WindowsDanmakuRenderer.adaptivePrewarm) {
       SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
     }
-    _ticker = FrameRateTicker((elapsed) {
-      final delta = elapsed - _lastElapsed;
-      _lastElapsed = elapsed;
-      _renderer!.advance(delta);
-    }, frameRate: widget.frameRate);
+    _ticker = FrameRateTicker(
+      (elapsed) {
+        final delta = elapsed - _lastElapsed;
+        _lastElapsed = elapsed;
+        _renderer!.advance(delta);
+      },
+      frameRate: widget.frameRate,
+      videoDisplaySyncActive: widget.videoDisplaySyncActive,
+      screenRefreshRate: () => _view?.display.refreshRate ?? 0,
+    );
     _opacity = AnimationController(
       vsync: this,
       value: widget.opacity,
@@ -63,6 +74,7 @@ class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _view = View.of(context);
     _ancestorEnabled = TickerMode.valuesOf(context).enabled;
     if (WindowsDanmakuRenderer.adaptivePrewarm) {
       final rate = View.of(context).display.refreshRate;
@@ -104,6 +116,7 @@ class _WindowsDanmakuScreenState<T> extends State<WindowsDanmakuScreen<T>>
   void didUpdateWidget(WindowsDanmakuScreen<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     _ticker.frameRate = widget.frameRate;
+    _ticker.videoDisplaySyncActive = widget.videoDisplaySyncActive;
     _renderer!.configure(option: widget.option, size: widget.size);
     if (widget.opacity != oldWidget.opacity) {
       if (widget.opacity == 0) {

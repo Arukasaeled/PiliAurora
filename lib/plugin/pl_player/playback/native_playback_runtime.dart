@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async' show StreamSubscription;
 import 'dart:developer' show Timeline;
 
 import 'package:flutter/foundation.dart';
@@ -27,6 +28,8 @@ class NativePlaybackRuntime {
   PlayerDiagnostics? _diagnostics;
   bool _disposed = false;
   final videoFrameTimings = ValueNotifier<List<int>>(const []);
+  final videoDisplaySyncActive = ValueNotifier<bool>(false);
+  StreamSubscription<String?>? _videoSyncSubscription;
   int _videoFrameBatches = 0;
   int _videoFrameSamples = 0;
   int? _lastVideoFrame;
@@ -134,6 +137,17 @@ class NativePlaybackRuntime {
     _player = player;
     _videoController = video;
     _diagnostics = diagnostics;
+    // display-* 设置可能在播放中回退到音频时钟，使用实际生效状态。
+    _videoSyncSubscription = player
+        .observeProperty('display-sync-active')
+        .listen(
+          (value) {
+            if (!_disposed) videoDisplaySyncActive.value = value == 'yes';
+          },
+          onError: (Object error) {
+            if (!_disposed) videoDisplaySyncActive.value = false;
+          },
+        );
     return player;
   }
 
@@ -189,13 +203,17 @@ class NativePlaybackRuntime {
     if (_disposed) return;
     _disposed = true;
     videoFrameTimings.value = const [];
+    videoDisplaySyncActive.value = false;
     final player = _player;
     _player = null;
     _videoController = null;
     _diagnostics?.dispose();
     _diagnostics = null;
+    await _videoSyncSubscription?.cancel();
+    _videoSyncSubscription = null;
     await after;
     await player?.dispose();
     videoFrameTimings.dispose();
+    videoDisplaySyncActive.dispose();
   }
 }

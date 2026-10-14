@@ -513,7 +513,7 @@ NormalModel get danmakuFrameRateSetting => NormalModel(
   title: '弹幕帧率（实验性）',
   leading: const Icon(Icons.speed_outlined),
   getSubtitle: () =>
-      '${Pref.danmakuFrameRate == 0 ? '跟随屏幕' : '${Pref.danmakuFrameRate} FPS'}；立即生效',
+      '${Pref.danmakuFrameRate == 0 ? '跟随屏幕' : '目标 ${Pref.danmakuFrameRate} FPS'}；立即生效',
   onTap: _showDanmakuFrameRateDialog,
 );
 
@@ -689,7 +689,7 @@ Future<void> _showDanmakuFrameRateDialog(
         (120, '120 FPS'),
       ],
       subtitleBuilder: (_, index) => Text(
-        index == 0 ? '沿用屏幕刷新节奏；立即生效' : '尝试限制弹幕刷新频率；同步期间可能出现短暂波动；立即生效',
+        index == 0 ? '沿用屏幕刷新节奏；立即生效' : '目标弹幕帧率；屏幕刷新率受视频时序与设备档位影响，可能更高；立即生效',
       ),
     ),
   );

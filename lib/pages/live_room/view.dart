@@ -1088,6 +1088,7 @@ class _LiveDanmakuState extends State<LiveDanmaku> {
                 plPlayerController.danmakuOpacity.value > 0,
             child: DanmakuScreen<DanmakuExtra>(
               frameRate: frameRate,
+              videoDisplaySyncActive: plPlayerController.videoDisplaySyncActive,
               videoFrameTimings: PlatformUtils.isMobile
                   ? plPlayerController.videoFrameTimings
                   : null,

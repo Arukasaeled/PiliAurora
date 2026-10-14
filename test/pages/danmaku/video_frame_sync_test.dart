@@ -22,14 +22,14 @@ void main() {
       await tester.pump();
       final now = tester.binding.clock.now().microsecondsSinceEpoch;
       tester.binding.platformDispatcher.onReportTimings?.call([
-        for (final stamp in [now - 16668, now])
+        for (var i = 6; i >= 0; i--)
           FrameTiming(
-            vsyncStart: stamp - 8333,
-            buildStart: stamp,
-            buildFinish: stamp,
-            rasterStart: stamp + 1,
-            rasterFinish: stamp + 2,
-            rasterFinishWallTime: stamp + 2,
+            vsyncStart: now - i * 16668 - 8333,
+            buildStart: now - i * 16668,
+            buildFinish: now - i * 16668,
+            rasterStart: now - i * 16668 + 1,
+            rasterFinish: now - i * 16668 + 2,
+            rasterFinishWallTime: now - i * 16668 + 2,
           ),
       ]);
       ticker.stop();
@@ -125,7 +125,8 @@ void main() {
             expect(danmakuUpdates - initialUpdates, inInclusiveRange(177, 182));
             // 相位学习允许起始阶段的额外请求，稳定后必须消除夹帧。
             expect(steadyExtra, 0);
-            final startupAllowance = batchSlots ~/ 2 + 2;
+            // 七个视频样本提供六个间隔，再等待批次送达和下一次相位应用。
+            final startupAllowance = 7 + batchSlots ~/ 2 + 1;
             expect(combinedSlots, lessThanOrEqualTo(180 + startupAllowance));
             expect(extraSlots, lessThanOrEqualTo(startupAllowance));
             debugPrint(

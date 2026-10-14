@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:ui' show FlutterView;
 import 'package:flutter/foundation.dart' show ValueListenable;
 
 import 'package:canvas_danmaku/danmaku_controller.dart';
@@ -19,6 +20,7 @@ class DanmakuScreen<T> extends StatefulWidget {
   final Size size;
   final int frameRate;
   final ValueListenable<List<int>>? videoFrameTimings;
+  final ValueListenable<bool>? videoDisplaySyncActive;
 
   const DanmakuScreen({
     super.key,
@@ -27,6 +29,7 @@ class DanmakuScreen<T> extends StatefulWidget {
     required this.size,
     this.frameRate = 0,
     this.videoFrameTimings,
+    this.videoDisplaySyncActive,
   });
 
   @override
@@ -68,6 +71,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   late final _random = Random();
 
   late final FrameRateTicker _ticker;
+  FlutterView? _view;
   late final ValueNotifier<int> _notifier;
   late int _lastTick = 0;
 
@@ -87,7 +91,9 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 
     _ticker = FrameRateTicker(_tick,
         frameRate: widget.frameRate,
-        videoFrameTimings: widget.videoFrameTimings);
+        videoFrameTimings: widget.videoFrameTimings,
+        videoDisplaySyncActive: widget.videoDisplaySyncActive,
+        screenRefreshRate: () => _view?.display.refreshRate ?? 0);
     _notifier = ValueNotifier(0);
 
     widget.createdController(DanmakuController<T>(
@@ -112,6 +118,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _view = View.of(context);
     _ticker.muted = !TickerMode.valuesOf(context).enabled;
     final fontFamily = DefaultTextStyle.of(context).style.fontFamily;
     if (fontFamily != DmUtils.fontFamily) {
@@ -633,6 +640,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     super.didUpdateWidget(oldWidget);
     _ticker.frameRate = widget.frameRate;
     _ticker.videoFrameTimings = widget.videoFrameTimings;
+    _ticker.videoDisplaySyncActive = widget.videoDisplaySyncActive;
     if (oldWidget.size != widget.size) {
       _init(widget.size);
     }

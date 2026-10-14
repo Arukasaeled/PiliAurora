@@ -285,6 +285,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
           if (PlatformUtils.isDesktop && _windowsPreprocess) {
             return WindowsDanmakuScreen<DanmakuExtra>(
               frameRate: frameRate,
+              videoDisplaySyncActive: playerController.videoDisplaySyncActive,
               option: option,
               size: widget.size,
               opacity: opacity,
@@ -298,6 +299,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
           }
           final child = DanmakuScreen<DanmakuExtra>(
             frameRate: frameRate,
+            videoDisplaySyncActive: playerController.videoDisplaySyncActive,
             videoFrameTimings: PlatformUtils.isMobile
                 ? playerController.videoFrameTimings
                 : null,

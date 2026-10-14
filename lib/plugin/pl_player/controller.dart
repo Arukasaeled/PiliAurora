@@ -199,6 +199,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   VideoController? get videoController => _videoController;
   ValueListenable<List<int>> get videoFrameTimings =>
       _runtime.videoFrameTimings;
+  ValueListenable<bool> get videoDisplaySyncActive =>
+      _runtime.videoDisplaySyncActive;
 
   final RxBool muted = DesktopPlaybackWindows.isPlayerWindow.obs;
   bool get isMuted => muted.value;

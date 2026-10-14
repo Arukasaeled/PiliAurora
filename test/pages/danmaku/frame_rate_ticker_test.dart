@@ -4,6 +4,43 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('使用所属视图的已知刷新率，屏幕降频后限制目标帧率', (tester) async {
+    // 首个视图为 60 Hz，弹幕所在视图的刷新率由调用者提供。
+    tester.view.display.refreshRate = 60;
+    addTearDown(tester.view.display.resetRefreshRate);
+    var refreshRate = 144.0;
+    var ticks = 0;
+    final ticker = FrameRateTicker(
+      (_) => ticks++,
+      frameRate: 90,
+      screenRefreshRate: () => refreshRate,
+    )..start();
+    await tester.pump();
+    final initialTicks = ticks;
+    for (var slot = 0; slot < 144; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 6945));
+      if (tester.binding.hasScheduledFrame) await tester.pump();
+    }
+    expect(ticks - initialTicks, closeTo(90, 1));
+    final fastTicks = ticks;
+    refreshRate = 60;
+    for (var slot = 0; slot < 60; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 16667));
+      if (tester.binding.hasScheduledFrame) await tester.pump();
+    }
+    expect(ticks - fastTicks, closeTo(60, 1));
+    final slowTicks = ticks;
+    refreshRate = double.nan;
+    for (var slot = 0; slot < 144; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 6945));
+      if (tester.binding.hasScheduledFrame) await tester.pump();
+    }
+    expect(ticks - slowTicks, closeTo(90, 1));
+    ticker.dispose();
+    await tester.binding.delayed(const Duration(seconds: 1));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+  });
+
   testWidgets('60 FPS 弹幕复用同相位 Dart 帧，帧内耗时不应错过下一帧', (tester) async {
     final ticks = <Duration>[];
     final animation = Ticker((_) {})..start();
@@ -22,6 +59,8 @@ void main() {
   });
 
   testWidgets('同相位 Dart 帧承载弹幕后取消后续定时刷新请求', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
     final ticks = <Duration>[];
     final ticker = FrameRateTicker((elapsed) {
       ticks.add(elapsed);
@@ -68,11 +107,14 @@ void main() {
 
   for (final fps in [30, 60, 90, 120]) {
     testWidgets('$fps FPS 减少帧请求并保持实际经过时间', (tester) async {
+      tester.view.display.refreshRate = 120;
+      addTearDown(tester.view.display.resetRefreshRate);
       final ticks = <Duration>[];
       final ticker = FrameRateTicker(ticks.add, frameRate: fps)..start();
       await tester.pump();
       expect(ticks, [Duration.zero]);
-      expect(tester.binding.hasScheduledFrame, isFalse);
+      // 达到屏幕上限时直接请求 vsync；较低档位等待定时唤醒。
+      expect(tester.binding.hasScheduledFrame, fps == 120);
       for (var i = 0; i < 120; i++) {
         await tester.pump(const Duration(microseconds: 8334));
       }
