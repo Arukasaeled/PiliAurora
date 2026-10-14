@@ -1011,7 +1011,8 @@ class ReplyItemGrpc extends StatelessWidget {
     required bool isSubReply,
   }) {
     late String message = item.content.message;
-    final ownerMid = Int64(Accounts.main.mid);
+    final account = Accounts.main;
+    final ownerMid = Int64(account.mid);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final errorColor = colorScheme.error;
@@ -1189,6 +1190,44 @@ class ReplyItemGrpc extends StatelessWidget {
               minLeadingWidth: 0,
               leading: Icon(Icons.error_outline, color: errorColor, size: 19),
               title: Text('举报', style: style.copyWith(color: errorColor)),
+            ),
+          if (account.isLogin &&
+              item.member.mid > Int64.ZERO &&
+              item.member.mid != ownerMid)
+            ListTile(
+              onTap: () async {
+                Get.back();
+                final confirmed = await showConfirmDialog(
+                  context: context,
+                  title: const Text('拉黑用户'),
+                  content: Text(
+                    '确定拉黑 ${item.member.name}？\n可在黑名单管理中解除。',
+                  ),
+                );
+                if (!confirmed) return;
+                if (!identical(account, Accounts.main)) {
+                  SmartDialog.showToast('账号已切换');
+                  return;
+                }
+                final res = await VideoHttp.relationMod(
+                  account: account,
+                  mid: item.member.mid.toInt(),
+                  act: 5,
+                  reSrc: 11,
+                );
+                if (res.isSuccess) {
+                  SmartDialog.showToast('拉黑成功');
+                } else {
+                  res.toast();
+                }
+              },
+              minLeadingWidth: 0,
+              leading: Icon(
+                Icons.person_off_outlined,
+                color: errorColor,
+                size: 19,
+              ),
+              title: Text('拉黑用户', style: style.copyWith(color: errorColor)),
             ),
           if (replyLevel == 1 && !isSubReply && ownerMid == upMid)
             ListTile(
