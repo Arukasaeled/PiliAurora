@@ -13,6 +13,7 @@ final class StaticDanmakuPainter extends CustomPainter {
   final int tick;
 
   StaticDanmakuPainter({
+    super.repaint,
     required this.count,
     required this.trackHeight,
     required this.danmakuItems,

@@ -42,4 +42,4 @@ fvm flutter test test/services/diagnostics/ test/pages/about/diagnostics_page_te
 
 `pages/danmaku/frame_rate_workload_test.dart` 用固定 vsync 时刻检查 60/90/120/144 Hz 与四个弹幕档位，分别模拟 0/2 ms 同步更新耗时以及一段持续的高频 UI 帧。32 个场景同时检查更新总数、最长更新间隔和停止后的调度释放，防止处理耗时累积造成漏帧或外部帧反复校准造成超额更新。
 
-`pages/danmaku/canvas_repaint_test.dart` 检查通用 Canvas 渲染器连续动画的零 widget 重建、图片复用、点击命中与单条悬停、速度变化、暂停恢复、清空和高级弹幕按期清理。点击回归使用与 Android 播放器相同的控制器查询与 suspend 状态，真实触屏和菜单操作仍需设备检查。
+`pages/danmaku/canvas_repaint_test.dart` 检查通用 Canvas 渲染器连续动画的零 widget 重建、图片复用、点击命中与单条悬停、速度变化、暂停恢复、清空和高级弹幕按期清理。固定弹幕新增与运动弹幕合帧，并覆盖固定弹幕单独出现的首帧、暂停恢复与到期清理；新增与到期清理同帧且最终数量不变时，检查新项绘制及正常过期。120 条混合弹幕另检查逐帧通知相位。点击回归使用与 Android 播放器相同的控制器查询与 suspend 状态，真实触屏和菜单操作仍需设备检查。

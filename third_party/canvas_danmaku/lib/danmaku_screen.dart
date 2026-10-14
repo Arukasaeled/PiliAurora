@@ -50,6 +50,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 
   /// 静态弹幕
   final _staticDanmakuItems = ListValueNotifier(<DanmakuItem<T>?>[]);
+  bool _staticDanmakuDirty = false;
 
   /// 高级弹幕
   final _specialDanmakuItems = <DanmakuItem<T>>[];
@@ -160,10 +161,17 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 
   void _tick(Duration elapsed) {
     _notifier.value = elapsed.inMilliseconds + _lastTick;
+    // 新增固定弹幕与运动图层共用本帧；首个 tick 为零时也要发布内容。
+    if (_staticDanmakuDirty) _refreshStaticDanmaku();
     if (_time++ > 10) {
       _time = 0;
       _lazyTick(_notifier.value);
     }
+  }
+
+  void _refreshStaticDanmaku() {
+    _staticDanmakuDirty = false;
+    _staticDanmakuItems.refresh();
   }
 
   TextPainter get _textPainter => TextPainter(
@@ -263,9 +271,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
           _scrollDanmakuItems[index].add(item);
         } else {
           _staticDanmakuItems.value[index] = item;
-          if (_running) {
-            _staticDanmakuItems.refresh();
-          }
+          _staticDanmakuDirty = true;
         }
         break;
       }
@@ -346,6 +352,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   void _pause() {
     if (!mounted) return;
     _running = false;
+    if (_staticDanmakuDirty) _refreshStaticDanmaku();
     if (_ticker.isActive) {
       _lastTick = _notifier.value;
       _ticker.stop();
@@ -359,7 +366,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     if (!_isEmpty && !_ticker.isActive) {
       _ticker.start();
     }
-    _staticDanmakuItems.refresh();
+    _refreshStaticDanmaku();
   }
 
   /// 清空弹幕
@@ -458,7 +465,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
       _ticker.start();
     } else {
       _notifier.refresh();
-      _staticDanmakuItems.refresh();
+      _refreshStaticDanmaku();
     }
   }
 
@@ -484,7 +491,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
         _staticDanmakuItems[i] = null;
       }
     }
-    _staticDanmakuItems.refresh();
+    _refreshStaticDanmaku();
   }
 
   /// 确定滚动弹幕是否可以添加
@@ -704,6 +711,8 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
               builder: (context, value, child) {
                 return CustomPaint(
                   painter: StaticDanmakuPainter(
+                    // 同帧等数量替换也需要通过列表通知重绘内容。
+                    repaint: _staticDanmakuItems,
                     count: value.nonNulls.length,
                     trackHeight: _danmakuHeight,
                     danmakuItems: value,

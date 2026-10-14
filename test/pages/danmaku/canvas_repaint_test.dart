@@ -1,11 +1,15 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:canvas_danmaku/scroll_danmaku_painter.dart';
 import 'package:canvas_danmaku/special_danmaku_painter.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _size = Size(800, 360);
 
-Future<DanmakuController<void>> _mount(WidgetTester tester) async {
+Future<DanmakuController<void>> _mount(
+  WidgetTester tester, {
+  int frameRate = 0,
+}) async {
   late DanmakuController<void> controller;
   await tester.pumpWidget(
     Directionality(
@@ -16,6 +20,7 @@ Future<DanmakuController<void>> _mount(WidgetTester tester) async {
           child: SizedBox.fromSize(
             size: _size,
             child: DanmakuScreen<void>(
+              frameRate: frameRate,
               option: const DanmakuOption(
                 fontSize: 20,
                 duration: 8,
@@ -33,6 +38,152 @@ Future<DanmakuController<void>> _mount(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('固定弹幕同帧等数量替换后绘制新项并正常到期', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final controller = await _mount(tester, frameRate: 60);
+    controller.updateOption(controller.option.copyWith(staticDuration: .05));
+    controller.addDanmaku(
+      DanmakuContentItem<void>('old', type: DanmakuItemType.top),
+    );
+    await tester.pump();
+    final old = controller.staticDanmaku.nonNulls.single;
+    expect(old.drawTick, isNotNull);
+    for (var slot = 1; slot <= 20; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 8334));
+      if (tester.binding.hasScheduledFrame) await tester.pump();
+    }
+    expect(controller.staticDanmaku.nonNulls.single, same(old));
+    await tester.binding.delayed(const Duration(microseconds: 8334));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    controller.addDanmaku(
+      DanmakuContentItem<void>('new', type: DanmakuItemType.bottom),
+    );
+    final fresh = controller.staticDanmaku.nonNulls.last;
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.binding.delayed(const Duration(microseconds: 8334));
+    await tester.pump();
+    expect(controller.staticDanmaku.nonNulls.single, same(fresh));
+    expect(fresh.drawTick, isNotNull);
+    expect(old.image, isNull);
+    for (var slot = 0; slot < 60; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 8334));
+      if (tester.binding.hasScheduledFrame) await tester.pump();
+    }
+    expect(controller.staticDanmaku.nonNulls, isEmpty);
+    expect(fresh.image, isNull);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('120 条滚动、固定和高级弹幕共用 60 FPS 绘制帧', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final controller = await _mount(tester, frameRate: 60);
+    controller.updateOption(controller.option.copyWith(staticDuration: .05));
+    for (var i = 0; i < 120; i++) {
+      expect(controller.addDanmaku(DanmakuContentItem<void>('滚动 $i')), isTrue);
+    }
+    controller.addDanmaku(
+      SpecialDanmakuContentItem<void>(
+        '高级',
+        duration: 8000,
+        color: const Color(0xFFFFFFFF),
+        fontSize: 20,
+        translateXTween: Tween(begin: .1, end: .5),
+        translateYTween: ConstantTween(.1),
+      ),
+    );
+    await tester.pump();
+    final painters = tester.widgetList<CustomPaint>(find.byType(CustomPaint));
+    final scroll = painters
+        .map((widget) => widget.painter)
+        .whereType<ScrollDanmakuPainter>()
+        .single;
+    final special = painters
+        .map((widget) => widget.painter)
+        .whereType<SpecialDanmakuPainter>()
+        .single;
+    final scrollSlots = <int>[];
+    final specialSlots = <int>[];
+    var slot = 0;
+    void onScroll() => scrollSlots.add(slot);
+    void onSpecial() => specialSlots.add(slot);
+    scroll.addListener(onScroll);
+    special.addListener(onSpecial);
+    for (slot = 1; slot <= 360; slot++) {
+      await tester.binding.delayed(const Duration(microseconds: 8334));
+      if (slot % 12 == 1) {
+        expect(tester.binding.hasScheduledFrame, isFalse);
+        expect(
+          controller.addDanmaku(
+            DanmakuContentItem<void>(
+              '固定 $slot',
+              type: (slot ~/ 12).isEven
+                  ? DanmakuItemType.top
+                  : DanmakuItemType.bottom,
+            ),
+          ),
+          isTrue,
+        );
+        expect(tester.binding.hasScheduledFrame, isFalse);
+      }
+      if (tester.binding.hasScheduledFrame) await tester.pump();
+    }
+    scroll.removeListener(onScroll);
+    special.removeListener(onSpecial);
+    expect(scrollSlots.length, 180);
+    expect(specialSlots, scrollSlots);
+    expect(scroll.tick, special.tick);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  for (final type in [DanmakuItemType.top, DanmakuItemType.bottom]) {
+    testWidgets('固定弹幕 $type 新增与运动弹幕共用限频绘制帧', (tester) async {
+      tester.view.display.refreshRate = 120;
+      addTearDown(tester.view.display.resetRefreshRate);
+      final controller = await _mount(tester, frameRate: 60);
+      controller.addDanmaku(DanmakuContentItem<void>('moving'));
+      await tester.pump();
+      await tester.binding.delayed(const Duration(microseconds: 8334));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(
+        controller.addDanmaku(DanmakuContentItem<void>('fixed', type: type)),
+        isTrue,
+      );
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      await tester.binding.delayed(const Duration(microseconds: 8334));
+      await tester.pump();
+      final fixed = controller.staticDanmaku.nonNulls.single;
+      final moving = controller.scrollDanmaku.first.single;
+      expect(fixed.drawTick, isNotNull);
+      expect(fixed.drawTick, moving.drawTick);
+      controller.pause();
+      controller.clear();
+      await tester.pump();
+      expect(controller.staticDanmaku.nonNulls, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('固定弹幕 $type 单独出现时首帧可见，暂停恢复后继续清理', (tester) async {
+      final controller = await _mount(tester, frameRate: 60);
+      controller.addDanmaku(DanmakuContentItem<void>('fixed', type: type));
+      await tester.pump();
+      final fixed = controller.staticDanmaku.nonNulls.single;
+      expect(fixed.drawTick, isNotNull);
+      controller.pause();
+      await tester.pump(const Duration(seconds: 6));
+      expect(controller.staticDanmaku.nonNulls.single, same(fixed));
+      controller.resume();
+      await tester.pump();
+      for (var i = 0; i < 360; i++) {
+        await tester.pump(const Duration(milliseconds: 17));
+      }
+      expect(controller.staticDanmaku.nonNulls, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets('缓存后的普通弹幕连续绘制不重建 widget', (tester) async {
     final controller = await _mount(tester);
     for (var i = 0; i < 120; i++) {
