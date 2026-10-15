@@ -5,7 +5,7 @@
 
 PiliAurora 是基于 [PiliPlus 2.1.5](https://github.com/bggRGjQaUbCoE/PiliPlus/tree/2.1.5) 继续开发的 Bilibili 第三方客户端，使用 Flutter 编写，目前面向 Android 和 Windows x64。项目保留上游的内容浏览、播放、互动与账号管理能力，并将持续维护重点放在两端的播放体验、弹幕和 Windows 桌面播放场景,相较于原版具有更低占用,更高性能,并开发了额外的功能,进行了多种优化以降低资源使用(尤其是Windows方面,内存,cpu占用等全面大幅降低)。
 
-[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.4.4.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
+[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.4.5.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
 
 ## 与上游的关系
 
