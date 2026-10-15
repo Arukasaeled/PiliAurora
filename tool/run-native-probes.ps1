@@ -47,8 +47,8 @@ Write-Host "Checking Android host probes with Flutter $actualVersion..."
 & $javacPath -d $outputPath @sources
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-foreach ($probe in @('SurfaceFrameFenceProbe', 'VideoFrameSamplesProbe', 'VideoSurfaceTextureProbe', 'VideoSurfaceTextureRequestProbe')) {
+foreach ($probe in @('SurfaceFrameFenceProbe', 'VideoFrameSamplesProbe', 'VideoSurfaceTextureProbe', 'VideoSurfaceTextureRequestProbe', 'VideoSurfaceTextureAcquireProbe')) {
     & $javaPath -cp $outputPath "com.alexmercerind.media_kit_video.$probe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
-Write-Host 'Android host probes completed successfully (4 probes).'
+Write-Host 'Android host probes completed successfully (5 probes).'

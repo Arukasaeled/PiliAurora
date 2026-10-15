@@ -53,6 +53,10 @@ public final class VideoSurfaceTextureRequestProbe {
                 check(!raster.isAlive() && !arrival.isAlive(), "callbacks completed");
                 check(!sampledWhileBlocked, "phase sample must wait for engine request");
                 check(consumed.get() == 1, "consumption confirmation preserved");
+                wrapper.updateTexImage();
+                check(texture.updateCalls == 2, "notification during acquisition is preserved");
+                wrapper.updateTexImage();
+                check(texture.updateCalls == 2, "next repaint reuses image after pending notification consumed");
             } else {
                 texture.dispatchFrameAvailable();
             }

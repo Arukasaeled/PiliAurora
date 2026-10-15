@@ -27,3 +27,5 @@ Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频�
 2026-10-14：Android 输出可按配置上报纹理消费的单调时钟微秒，每 250 ms 合并一批、最多 32 个样本；重复纹理不计，Surface 重建、重新配置和销毁清理待发批次。该路径沿用引擎的 frame-available 监听，不使用媒体 PTS 作为调度时钟。Windows 输出保持原路径。
 
 2026-10-14：相位采样改到 frame-available 的引擎原 listener 返回后，记录纹理刷新请求完成的单调时钟；markDirty 与取图共用 monitor，因此锁等待必须计入请求时间。VideoSurfaceTexture 保留原 Handler、监听注销和纹理生命周期。请求批次仍为 250 ms、上限 32，重建和销毁时清理。消费监听继续负责首帧、尺寸交接及消费计数，Windows 输出不变。主机回调探针检查通知转发和采样顺序；另编译实际 Flutter SurfaceTextureWrapper，验证交替 0/9ms 取图等待后的样本与请求槽位一致。该探针未模拟 platform/UI 合并线程的全部行为，不作为 Scene 或最终呈现结论。
+
+2026-10-15：Android 视频纹理按 frame-available 通知调用原生 `updateTexImage`，弹幕或控件重复绘制时复用当前图像。原子标记在取图前消耗，保留并发到达的下一帧；取图失败与 GL 上下文重建允许重新获取。关闭相位采样时沿用相同取图策略。主机探针使用固定 Flutter 的实际 wrapper 检查取图次数、并发通知和生命周期。此修正消除重复原生取图，真机日志中约 9.4ms 的周期性 Raster 峰值仍需目标设备复测。

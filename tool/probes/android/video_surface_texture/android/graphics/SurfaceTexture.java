@@ -11,6 +11,8 @@ public class SurfaceTexture {
 
     private OnFrameAvailableListener listener;
     public Handler handler;
+    public int updateCalls;
+    public RuntimeException updateFailure;
     public final CountDownLatch updateEntered = new CountDownLatch(1);
     private CountDownLatch updateContinue;
 
@@ -38,6 +40,8 @@ public class SurfaceTexture {
     }
 
     public void updateTexImage() {
+        updateCalls++;
+        if (updateFailure != null) throw updateFailure;
         updateEntered.countDown();
         if (updateContinue != null) {
             try {

@@ -139,16 +139,13 @@ public class VideoOutput {
             throw new RuntimeException("Failed to initialize com.alexmercerind.media_kit_video.VideoOutput.");
         }
 
-        if (reportTimings) {
-            final VideoSurfaceTexture texture = new VideoSurfaceTexture(this::onFrameRequested);
-            try {
-                surfaceTextureEntry = textureRegistryReference.registerSurfaceTexture(texture);
-            } catch (RuntimeException | Error error) {
-                texture.release();
-                throw error;
-            }
-        } else {
-            surfaceTextureEntry = textureRegistryReference.createSurfaceTexture();
+        final VideoSurfaceTexture texture = new VideoSurfaceTexture(
+                reportTimings ? this::onFrameRequested : null);
+        try {
+            surfaceTextureEntry = textureRegistryReference.registerSurfaceTexture(texture);
+        } catch (RuntimeException | Error error) {
+            texture.release();
+            throw error;
         }
         id = surfaceTextureEntry.id();
         // This listener runs after Flutter's raster thread calls updateTexImage.
