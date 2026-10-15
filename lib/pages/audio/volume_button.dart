@@ -1,6 +1,7 @@
 import 'dart:async' show Timer;
 import 'dart:math' as math;
 
+import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:pili_aurora/common/widgets/flutter/vertical_slider.dart';
 import 'package:pili_aurora/pages/audio/controller.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
@@ -142,6 +143,7 @@ class _VolumeButtonState extends State<VolumeButton> {
                         year2023: true,
                         min: 0.0,
                         max: Pref.maxVolume,
+                        divisions: volumePercent(Pref.maxVolume).toInt(),
                         value: volume,
                         showValueIndicator: .never,
                         onChanged: widget.controller.setVolume,

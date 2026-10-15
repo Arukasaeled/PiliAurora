@@ -3,6 +3,7 @@ import 'dart:convert' show ascii;
 import 'dart:io' show Platform;
 import 'dart:math' show max, min;
 
+import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 
 import 'package:pili_aurora/common/assets.dart';
@@ -55,7 +56,6 @@ import 'package:pili_aurora/utils/asset_utils.dart';
 import 'package:pili_aurora/utils/device_utils.dart';
 import 'package:pili_aurora/utils/duration_utils.dart';
 import 'package:pili_aurora/utils/extension/box_ext.dart';
-import 'package:pili_aurora/utils/extension/num_ext.dart';
 import 'package:pili_aurora/utils/feed_back.dart';
 import 'package:pili_aurora/utils/image_utils.dart';
 import 'package:pili_aurora/utils/page_utils.dart';
@@ -209,7 +209,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
   Future<void> setMuted(bool value) async {
     muted.value = value;
-    await _videoPlayerController?.setVolume(value ? 0 : volume.value * 100);
+    await _videoPlayerController?.setVolume(
+      value ? 0 : volumePercent(volume.value),
+    );
     _audioRecovery?.onPlaybackChanged();
   }
 
@@ -1556,15 +1558,15 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   Timer? volumeTimer;
   bool volumeInterceptEventStream = false;
 
-  final double maxVolume = PlatformUtils.isDesktop ? Pref.maxVolume : 1.0;
+  final double maxVolume = 1.0;
   Future<void> setVolume(double volume, {bool showIndicator = true}) async {
-    volume = volume.clamp(0.0, maxVolume);
+    volume = roundVolumeRatio(volume.clamp(0.0, maxVolume));
     if (this.volume.value != volume || isMuted) {
       this.volume.value = volume;
       muted.value = false;
       try {
         if (PlatformUtils.isDesktop) {
-          await _videoPlayerController?.setVolume(volume * 100);
+          await _videoPlayerController?.setVolume(volumePercent(volume));
         } else {
           FlutterVolumeController.updateShowSystemUI(false);
           await FlutterVolumeController.setVolume(volume);
@@ -1585,7 +1587,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       if (PlatformUtils.isDesktop) {
         setting.put(
           SettingBoxKey.desktopVolume,
-          DoubleExt(volume).toPrecision(3),
+          roundVolumeRatio(volume),
         );
       }
     });

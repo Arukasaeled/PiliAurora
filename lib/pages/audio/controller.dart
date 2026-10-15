@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:pili_aurora/common/constants.dart';
 import 'package:pili_aurora/common/widgets/dialog/simple_dialog_option.dart';
 import 'package:pili_aurora/grpc/audio.dart';
@@ -18,7 +19,9 @@ import 'package:pili_aurora/http/browser_ua.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/common/audio_normalization.dart';
-import 'package:pili_aurora/models/video/play/url.dart' as http_model show Volume;
+import 'package:pili_aurora/models/video/play/url.dart'
+    as http_model
+    show Volume;
 import 'package:pili_aurora/pages/common/common_intro_controller.dart'
     show FavMixin;
 import 'package:pili_aurora/pages/dynamics_repost/view.dart';
@@ -142,16 +145,17 @@ class AudioController extends GetxController
     if (clearLastVolme) {
       _lastVolume = null;
     }
+    volume = roundVolumeRatio(volume.clamp(0.0, Pref.maxVolume));
     desktopVolume.value = volume;
-    player?.setVolume(volume * 100);
+    player?.setVolume(volumePercent(volume));
   }
 
   void syncVolume([_]) {
     final volume = desktopVolume.value;
     PlPlayerController.instance
       ?..volume.value = volume
-      ..videoPlayerController?.setVolume(volume * 100);
-    GStorage.setting.put(SettingBoxKey.desktopVolume, volume.toPrecision(3));
+      ..videoPlayerController?.setVolume(volumePercent(volume));
+    GStorage.setting.put(SettingBoxKey.desktopVolume, roundVolumeRatio(volume));
   }
 
   @override
@@ -394,7 +398,7 @@ class AudioController extends GetxController
         options: {
           if (Platform.isAndroid) 'ao': Pref.audioOutput,
           'volume': PlatformUtils.isDesktop
-              ? (desktopVolume.value * 100).toString()
+              ? volumePercent(desktopVolume.value).toStringAsFixed(0)
               : Pref.playerVolume.toString(),
           ...Pref.initBuffer(),
         },

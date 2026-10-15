@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:async' show StreamSubscription;
 import 'dart:developer' show Timeline;
 
+import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -59,8 +60,9 @@ class NativePlaybackRuntime {
       // 使用完整渲染路径保留有效画面边界，解码器配置继续由 VideoController 管理。
       if (Platform.isWindows) 'gpu-dumb-mode': 'no',
       if (Platform.isAndroid) 'ao': Pref.audioOutput,
-      'volume': (PlatformUtils.isMobile ? Pref.playerVolume : volume * 100)
-          .toString(),
+      'volume':
+          (PlatformUtils.isMobile ? Pref.playerVolume : volumePercent(volume))
+              .toString(),
       if (Pref.autosync != '0') 'autosync': Pref.autosync,
     };
     final player = await Player.create(

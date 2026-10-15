@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:pili_aurora/common/widgets/gesture/horizontal_drag_gesture_recognizer.dart'
     show deviceTouchSlop;
 import 'package:pili_aurora/common/widgets/pair.dart';
@@ -1035,8 +1036,11 @@ abstract final class Pref {
   static bool get showWindowTitleBar =>
       _setting.get(SettingBoxKey.showWindowTitleBar, defaultValue: true);
 
-  static double get desktopVolume =>
-      _setting.get(SettingBoxKey.desktopVolume, defaultValue: 1.0);
+  static double get desktopVolume => readVolumePreference(
+    _setting,
+    SettingBoxKey.desktopVolume,
+    defaultValue: 1.0,
+  );
 
   static SkipType get pgcSkipType =>
       SkipType.values[_setting.get(SettingBoxKey.pgcSkipType) ??
@@ -1099,10 +1103,19 @@ abstract final class Pref {
       _setting.get(SettingBoxKey.angleDegrees, defaultValue: 30);
 
   static double get playerVolume => // mobile
-      _setting.get(SettingBoxKey.playerVolume, defaultValue: 100.0);
+  readVolumePreference(
+    _setting,
+    SettingBoxKey.playerVolume,
+    defaultValue: 100.0,
+    percentage: true,
+  );
 
   static double get maxVolume => // desktop
-      _setting.get(SettingBoxKey.maxVolume, defaultValue: 2.0);
+  readVolumePreference(
+    _setting,
+    SettingBoxKey.maxVolume,
+    defaultValue: 1.0,
+  );
 
   static List? get liveStream => _setting.get(SettingBoxKey.liveStream);
 

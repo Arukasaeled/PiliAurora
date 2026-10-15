@@ -19,7 +19,6 @@ import 'package:pili_aurora/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/services/service_locator.dart';
-import 'package:pili_aurora/utils/extension/num_ext.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
@@ -38,14 +37,6 @@ List<SettingsModel> get playSettings => [
           leading: const Icon(Icons.volume_up),
           getSubtitle: () => '当前:「${Pref.playerVolume.toStringAsFixed(0)}%」',
           onTap: showPlayerVolumeDialog,
-        )
-      else
-        NormalModel(
-          title: '最高音量',
-          leading: const Icon(Icons.volume_up),
-          getSubtitle: () =>
-              '当前:「${(Pref.maxVolume * 100).toStringAsFixed(0)}%」',
-          onTap: _showMaxVolumeDialog,
         ),
       NormalModel(
         onTap: (context, setState) => Get.toNamed('/playSpeedSet'),
@@ -411,36 +402,13 @@ Future<void> showPlayerVolumeDialog(
     title: const Text('播放器音量'),
     value: Pref.playerVolume,
     onChanged: (value) => GStorage.setting
-        .put(SettingBoxKey.playerVolume, value)
+        .put(SettingBoxKey.playerVolume, value.roundToDouble())
         .whenComplete(() {
           setState();
-          onChanged?.call(value);
+          onChanged?.call(value.roundToDouble());
         }),
   );
 }
-
-Future<void> _showMaxVolumeDialog(
-  BuildContext context,
-  VoidCallback setState,
-) {
-  return showVolumeDialog(
-    context,
-    title: const Text('最高音量'),
-    value: Pref.maxVolume * 100,
-    onChanged: (rawValue) {
-      final maxVolume = (rawValue / 100).toPrecision(2);
-      if (Pref.desktopVolume > maxVolume) {
-        GStorage.setting.put(SettingBoxKey.desktopVolume, maxVolume);
-      }
-      GStorage.setting
-          .put(SettingBoxKey.maxVolume, maxVolume)
-          .whenComplete(setState);
-    },
-  );
-}
-
-const kMinVolume = 100.0;
-const kMaxVolume = 300.0;
 
 Future<void> showVolumeDialog(
   BuildContext context, {
@@ -452,9 +420,9 @@ Future<void> showVolumeDialog(
     context: context,
     builder: (context) => SliderDialog(
       title: title,
-      min: kMinVolume,
-      max: kMaxVolume,
-      divisions: 40,
+      min: 0,
+      max: 100,
+      divisions: 100,
       precise: 0,
       value: value,
       suffix: '%',

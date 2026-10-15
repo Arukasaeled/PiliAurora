@@ -28,7 +28,7 @@ void main() {
               child: DesktopVolumeControl(
                 volume: 0.8.obs,
                 muted: false.obs,
-                maxVolume: 2,
+                maxVolume: 1,
                 onChanged: (_) {},
                 onMuteChanged: (_) {},
               ),
@@ -82,7 +82,7 @@ void main() {
                         desktopVolumeAfterScroll(
                           volume.value,
                           event.scrollDelta.dy,
-                          2,
+                          1,
                         ),
                       );
                     },
@@ -94,7 +94,7 @@ void main() {
                 child: DesktopVolumeControl(
                   volume: volume,
                   muted: muted,
-                  maxVolume: 2,
+                  maxVolume: 1,
                   onChanged: changeVolume,
                   onMuteChanged: (value) => muted.value = value,
                 ),
@@ -143,7 +143,7 @@ void main() {
           body: DesktopVolumeControl(
             volume: volume,
             muted: muted,
-            maxVolume: 2,
+            maxVolume: 1,
             onChanged: (value) {
               volume.value = value;
               muted.value = false;
@@ -164,7 +164,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(volume.value, closeTo(0.825, 0.001));
+    expect(volume.value, 0.83);
     expect(tester.widget<Slider>(find.byType(Slider)).value, volume.value);
     expect(opened, 1);
     await tester.tapAt(const Offset(700, 500));
@@ -173,7 +173,7 @@ void main() {
     expect(closed, 1);
   });
 
-  testWidgets('音量菜单支持增强音量、静音与外部状态同步', (tester) async {
+  testWidgets('音量菜单限制为100%、支持静音与外部状态同步', (tester) async {
     final volume = 0.8.obs;
     final muted = false.obs;
     await tester.pumpWidget(
@@ -182,7 +182,7 @@ void main() {
           body: DesktopVolumeControl(
             volume: volume,
             muted: muted,
-            maxVolume: 2,
+            maxVolume: 1,
             onChanged: (value) {
               volume.value = value;
               muted.value = false;
@@ -196,14 +196,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('80%'), findsOneWidget);
     final slider = tester.widget<Slider>(find.byType(Slider));
-    expect(slider.max, 2);
+    expect(slider.max, 1);
     slider.onChanged!(1.5);
     await tester.pump();
-    expect(find.text('150%'), findsOneWidget);
+    expect(find.text('100%'), findsOneWidget);
     await tester.tap(find.byTooltip('静音'));
     await tester.pump();
     expect(muted.value, isTrue);
-    expect(volume.value, 1.5);
+    expect(volume.value, 1.0);
     volume.value = 0.4;
     await tester.pump();
     expect(find.text('40%'), findsOneWidget);
