@@ -38,6 +38,34 @@ Future<DanmakuController<void>> _mount(
 }
 
 void main() {
+  for (final fps in [90, 120]) {
+    testWidgets('$fps FPS 档位在 120 Hz 上实际绘制对应数量的运动帧', (tester) async {
+      tester.view.display.refreshRate = 120;
+      addTearDown(tester.view.display.resetRefreshRate);
+      final controller = await _mount(tester, frameRate: fps);
+      controller.addDanmaku(DanmakuContentItem<void>('高刷滚动'));
+      await tester.pump();
+      final item = controller.scrollDanmaku.first.single;
+      final initialUpdates = controller.schedulerDiagnostics['updates'] as int;
+      var paints = 0;
+      for (var slot = 1; slot <= 480; slot++) {
+        await tester.binding.delayed(const Duration(microseconds: 8334));
+        // 同时提供 60 FPS 的外部帧，检查绘制没有退回视频帧率。
+        if (slot.isEven) tester.binding.scheduleFrame();
+        final previous = item.drawTick;
+        if (tester.binding.hasScheduledFrame) await tester.pump();
+        if (item.drawTick != previous) paints++;
+      }
+      final updates =
+          (controller.schedulerDiagnostics['updates'] as int) - initialUpdates;
+      expect(controller.schedulerDiagnostics['targetFrameRate'], fps);
+      expect(updates, closeTo(fps * 4, 1));
+      expect(paints, closeTo(fps * 4, 1));
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('固定弹幕同帧等数量替换后绘制新项并正常到期', (tester) async {
     tester.view.display.refreshRate = 120;
     addTearDown(tester.view.display.resetRefreshRate);

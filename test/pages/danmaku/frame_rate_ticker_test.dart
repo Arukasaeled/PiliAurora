@@ -4,6 +4,81 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('90 FPS 锁定 30 FPS 视频时，在请求截止前保持目标更新率', (tester) async {
+    tester.view.display.refreshRate = 120.00000762939453;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final frames = ValueNotifier<List<int>>(const []);
+    addTearDown(frames.dispose);
+    final started = tester.binding.clock.now().microsecondsSinceEpoch;
+    var ticks = 0;
+    final ticker = _DeadlineTicker(
+      (_) => ticks++,
+      90,
+      // Android BeginFrame 的目标时间领先回调所处时刻一个屏幕周期。
+      () => tester.binding.clock.now().microsecondsSinceEpoch - 8333,
+      frames,
+    )..start();
+    await tester.pump();
+    final available = <int>[];
+    var stableTicks = 0;
+    for (var slot = 1; slot <= 720; slot++) {
+      final deadline = started + slot * 8333 - 500;
+      await tester.binding.delayed(
+        Duration(
+          microseconds:
+              deadline - tester.binding.clock.now().microsecondsSinceEpoch,
+        ),
+      );
+      final requested = tester.binding.hasScheduledFrame;
+      await tester.binding.delayed(const Duration(microseconds: 500));
+      final before = ticks;
+      if (requested) await tester.pump();
+      if (slot % 4 == 0) {
+        available.add(started + (slot - 2) * 8333 + 1000);
+      }
+      if (slot % 30 == 0) {
+        frames.value = available.toList();
+        available.clear();
+      }
+      if (slot > 240) stableTicks += ticks - before;
+    }
+    ticker.dispose();
+    await tester.pump();
+    expect(stableTicks, closeTo(360, 3));
+  });
+
+  for (final fps in [90, 120]) {
+    testWidgets('$fps FPS 在 vsync 前关闭接收本帧请求时仍保持目标更新率', (tester) async {
+      tester.view.display.refreshRate = 120.00000762939453;
+      addTearDown(tester.view.display.resetRefreshRate);
+      final started = tester.binding.clock.now().microsecondsSinceEpoch;
+      var ticks = 0;
+      final ticker = _DeadlineTicker(
+        (_) => ticks++,
+        fps,
+        () => tester.binding.clock.now().microsecondsSinceEpoch,
+      )..start();
+      await tester.pump();
+      final initial = ticks;
+      for (var slot = 1; slot <= 480; slot++) {
+        final deadline = started + slot * 8333 - 500;
+        await tester.binding.delayed(
+          Duration(
+            microseconds:
+                deadline - tester.binding.clock.now().microsecondsSinceEpoch,
+          ),
+        );
+        final requestedBeforeVsync = tester.binding.hasScheduledFrame;
+        await tester.binding.delayed(const Duration(microseconds: 500));
+        // 临近 vsync 才发起的请求由下一次 vsync 承载。
+        if (requestedBeforeVsync) await tester.pump();
+      }
+      ticker.dispose();
+      await tester.pump();
+      expect(ticks - initial, closeTo(fps * 4, 2));
+    });
+  }
+
   testWidgets('使用所属视图的已知刷新率，屏幕降频后限制目标帧率', (tester) async {
     // 首个视图为 60 Hz，弹幕所在视图的刷新率由调用者提供。
     tester.view.display.refreshRate = 60;
@@ -159,4 +234,18 @@ void main() {
     expect(ticks.length, 121);
     ticker.dispose();
   });
+}
+
+class _DeadlineTicker extends FrameRateTicker {
+  _DeadlineTicker(
+    super.onTick,
+    int fps,
+    this.now, [
+    ValueNotifier<List<int>>? frames,
+  ]) : super(frameRate: fps, videoFrameTimings: frames);
+
+  final int Function() now;
+
+  @override
+  int get clockMicroseconds => now();
 }

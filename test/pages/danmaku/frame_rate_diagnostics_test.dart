@@ -4,6 +4,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'frame_sync_fixture.dart';
 
 void main() {
+  for (final rate in [120.00000762939453, 120.12]) {
+    testWidgets('120 FPS 在 $rate Hz 屏幕上直接跟随 vsync', (tester) async {
+      tester.view.display.refreshRate = rate;
+      addTearDown(tester.view.display.resetRefreshRate);
+      final ticker = FrameRateTicker((_) {}, frameRate: 120)..start();
+      await tester.pump();
+      expect(ticker.diagnostics['mode'], 'vsync');
+      expect(ticker.diagnostics['timerWakeups'], 0);
+      ticker.dispose();
+      await tester.pump();
+    });
+  }
+
   testWidgets('诊断累计实际更新和请求，停止后无定时器活动', (tester) async {
     tester.view.display.refreshRate = 120;
     addTearDown(tester.view.display.resetRefreshRate);

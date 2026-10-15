@@ -11,6 +11,7 @@ class FrameRateTicker extends Ticker {
   static const _timingWindowMicros = 1500000;
   static const _stableIntervalCount = 6;
   static const _frameToleranceMicros = 500;
+  static const _refreshRateTolerance = 0.5;
   FrameRateTicker(
     super.onTick, {
     int frameRate = 0,
@@ -60,8 +61,7 @@ class FrameRateTicker extends Ticker {
             ? 'stopped'
             : muted
                 ? 'muted'
-                : _frameRate <= 0 ||
-                        (_screenRate != null && _frameRate >= _screenRate!)
+                : _followVsync
                     ? 'vsync'
                     : _syncPeriod != null
                         ? 'locked'
@@ -183,7 +183,14 @@ class FrameRateTicker extends Ticker {
 
   int get _screenPeriod => (1000000 / (_screenRate ?? 60)).round();
 
+  // Android 可能把 120 Hz 报成 120.000007 Hz；标称同频时直接复用 vsync。
+  bool get _followVsync =>
+      _frameRate <= 0 ||
+      (_screenRate != null &&
+          _frameRate >= _screenRate! - _refreshRateTolerance);
+
   int get _frameInterval {
+    if (_followVsync && _screenRate != null) return _screenPeriod;
     final requested = (1000000 / _frameRate).floor();
     if (_screenRate == null) return requested;
     final screen = _screenPeriod;
@@ -234,14 +241,32 @@ class FrameRateTicker extends Ticker {
           anchor + ((target - anchor - 1000) / screen).ceil() * screen;
       // BeginFrame 使用目标时刻，相位锚点保存对应的 vsync 开始。
       // 选择仍来得及请求的槽位，并提前半个屏幕周期唤醒。
+      final lead = _lastSystemFrame.inMicroseconds - _frameStartedAt;
+      final targetLead = lead > 0 && lead <= screen ? screen : 0;
       while (screenTarget() <= _lastSystemFrame.inMicroseconds + 1000 ||
-          screenTarget() < now + screen ~/ 2) {
+          screenTarget() < now + targetLead + screen ~/ 2) {
         target += period;
       }
       _nextFrameTime = _lastFrame +
           Duration(microseconds: target - _lastSystemFrame.inMicroseconds);
-      delay = Duration(microseconds: screenTarget() - now - screen ~/ 2);
+      // Android 的目标时间领先实际 vsync 一个周期，锁相唤醒也须还原到请求时刻。
+      delay = Duration(
+        microseconds: screenTarget() - targetLead - now - screen ~/ 2,
+      );
     } else {
+      if (_screenRate != null) {
+        final screen = _screenPeriod;
+        var slots =
+            ((delay.inMicroseconds - _frameToleranceMicros) / screen).ceil();
+        if (slots < 1) slots = 1;
+        // 在承载目标的 vsync 前唤醒，边界上的 Timer 请求可能赶不上这一帧。
+        delay = Duration(microseconds: slots * screen - screen ~/ 2);
+        final lead = _lastSystemFrame.inMicroseconds - _frameStartedAt;
+        if (lead > 0 && lead <= screen) {
+          // Android BeginFrame 使用下一周期目标时间，扣除回调已消耗的槽位时间。
+          delay -= Duration(microseconds: screen - lead);
+        }
+      }
       // 弹幕更新占用的时间已属于本周期，避免每帧把这段耗时累加到等待中。
       delay -= Duration(microseconds: clockMicroseconds - _frameStartedAt);
     }
@@ -346,9 +371,7 @@ class FrameRateTicker extends Ticker {
       rescheduling: rescheduling,
       scheduleNewFrame: false,
     );
-    if (_frameRate <= 0 ||
-        _nextFrameTime == null ||
-        (_screenRate != null && _frameRate >= _screenRate!)) {
+    if (_followVsync || _nextFrameTime == null) {
       // 已达到屏幕上限时直接请求下一次 vsync，省去同频定时器唤醒。
       _timer?.cancel();
       _timer = null;
@@ -388,7 +411,7 @@ class FrameRateTicker extends Ticker {
       }
     }
     // 刷新周期取整可能使目标晚于真实 vsync 数微秒；按累计目标限频并容忍该误差。
-    if (_frameRate <= 0 ||
+    if (_followVsync ||
         next == null ||
         timestamp.inMicroseconds + _frameToleranceMicros >=
             next.inMicroseconds) {
