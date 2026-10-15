@@ -52,6 +52,14 @@ pwsh -File tool/build.ps1 -Platform android -Mode release -Abi arm64-v8a
 
 支持 `armeabi-v7a`、`arm64-v8a` 和 `x86_64`。省略 `-Abi` 时保持通用 APK；指定 Windows 平台和 `-Abi` 会报错。
 
+真机性能测试可构建独立包名的 arm64-v8a release 包：
+
+```powershell
+pwsh -NoProfile -File tool/build-android-test.ps1
+```
+
+脚本通过 `PILIAURORA_TEST_RELEASE=true` 启用现有 `dev` 包名和应用名，并限制打包 ABI 为 arm64-v8a。包名为 `io.github.wallpap.piliaurora.dev`，应用名为 `PiliAurora dev`，可与正式应用并存，账号与私有数据独立。沿用本机 release 签名配置，输出到 `build/android-test/PiliAurora-dev-arm64-v8a-release.apk` 并显示 SHA256。支持 `-SkipPubGet`、`-SkipPatch` 和 `-Verbose`；构建参数通过子进程传递，结束后恢复原有环境变量。
+
 构建脚本统一执行一次 `pub get --enforce-lockfile`，随后检查并补齐补丁、验收依赖来源，最后通过 `--no-pub` 构建。已应用的补丁会复用；切换到 Windows 时会移除项目的 Android 专用补丁。补丁目标按 `.dart_tool/package_config.json` 的实际解析结果定位。
 
 常规输出显示准备步骤的汇总和构建进度。使用 `-Verbose` 可查看完整依赖解析输出和逐项补丁状态；步骤失败时会显示错误详情。依赖声明和锁文件未改动、依赖已准备时，可传入 `-SkipPubGet`；补丁已准备时，可再传入 `-SkipPatch`：

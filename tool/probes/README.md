@@ -74,12 +74,13 @@ uv run --locked python tool/probes/android/paused_rotation_probe.py --adb <adb�
 pwsh -NoProfile -File tool/run-native-probes.ps1
 ```
 
-入口从项目依赖配置定位 `.fvmrc` 固定版本的 Flutter SDK，编译其真实 `SurfaceTextureWrapper.java`，依次执行四个主机 JVM 探针：
+入口从项目依赖配置定位 `.fvmrc` 固定版本的 Flutter SDK，编译其真实 `SurfaceTextureWrapper.java`，依次执行五个主机 JVM 探针：
 
 - `SurfaceFrameFenceProbe`：生产帧栅栏的时间戳、尺寸和 Surface 代次条件。
 - `VideoFrameSamplesProbe`：请求时间缓冲的 32 个样本上限、微秒转换、批次提取和 Surface 重置清理。
 - `VideoSurfaceTextureProbe`：生产 listener 完成后采样、回调转发、Handler、注销和消费确认。
 - `VideoSurfaceTextureRequestProbe`：真实 Flutter wrapper 的 monitor 竞争，交替 0/9ms 取图锁等待计入请求样本。
+- `VideoSurfaceTextureAcquireProbe`：30 FPS 视频叠加 120 FPS 重绘时取图 30 次，并检查暂停恢复、通知合并、异常重试、关闭采样和上下文重建；请求探针另检查取图期间的新通知不会丢失。
 
 缺失 SDK 源码、编译或断言失败均返回非零退出码；产物留在 `build/probe-validation/android/`。Android 桩位于探针目录，不加入生产编译。探针不创建 GL、原生 Surface 或真实消息循环，也未模拟 platform/UI 合并线程的全部行为。采样顺序与 monitor 等待由主机检查，平台 API 由 Android 构建检查，实际 Scene 与呈现由目标设备检查。
 
@@ -102,6 +103,26 @@ uv run --locked python tool/probes/android/frame_timing_capture.py --adb <adb路
 ```powershell
 uv run --locked python -m unittest discover -s tool/probes/android -p '*_test.py' -v
 ```
+
+## Android 高刷呈现探针
+
+`android/high_refresh.dart` 使用真实 Canvas 弹幕，在同一组本地弹幕上依次运行 120、90、60 FPS。每段先等待 3 秒，首段确认轨道与弹幕加入成功，再测量 7 秒，不读取账号或媒体，也不访问网络。使用独立 `.profile` 包运行：
+
+```powershell
+fvm flutter run --profile --no-pub -d <设备ID> -t tool/probes/android/high_refresh.dart
+```
+
+控制台 `SCENE-HIGH-REFRESH` 输出弹幕实际更新频率、Flutter 上报帧频率与平均 Build/Raster 耗时。Flutter timing 延迟批量回报，窗口边界可能有偏差；这些计数不等同于 Scene 或最终呈现。另用上面的 `frame_timing_capture.py` 针对 `io.github.wallpap.piliaurora.profile` 采集 SurfaceFlinger 数值帧时间。存在多个匹配图层时显式传入 `--layer`；优先检查具有实际 BufferQueue 帧记录的 Flutter 输出图层。
+
+## Android 播放慢帧对照
+
+`android/playback_jank.dart` 在本地媒体上依次测量 90、120、60、跟随屏幕四档弹幕。视频首帧呈现后开始，每档稳定 4 秒、测量 8 秒；`PILI_JANK` 输出更新频率、Raster 均值/P95/最大值、屏幕周期超预算计数和锁相状态。探针不初始化应用账号或诊断日志。使用独立 `.profile` 包，素材须为该应用可读取的本地文件；可在包已安装后用 `adb push` 和 `run-as io.github.wallpap.piliaurora.profile cp` 将素材放入其 `cache/`。
+
+```powershell
+fvm flutter run --profile --no-pub -d <设备ID> -t tool/probes/android/playback_jank.dart --dart-define=JANK_MEDIA_URI=file:///data/user/0/io.github.wallpap.piliaurora.profile/cache/jank-fixture.mp4
+```
+
+仅在首帧等待成功且 `scheduler.nativePeriodUs` 有有效视频周期时，将结果作为视频播放测量。FrameTiming 批量回报造成边界偏差；超预算计数与 Scene 呈现帧数应分别解释。首次安装时可先构建并安装 profile 包，再复制素材、启动探针。
 
 ## Windows 尺寸通道回归探针
 

@@ -17,6 +17,10 @@ if (!isBuiltInKotlinEnabled) {
     apply(plugin = "org.jetbrains.kotlin.android")
 }
 
+val isTestRelease = providers.environmentVariable("PILIAURORA_TEST_RELEASE")
+    .map { it == "true" }.getOrElse(false)
+val isDevBuild = project.hasProperty("dev") || isTestRelease
+
 android {
     namespace = "io.github.wallpap.piliaurora"
     compileSdk = 37
@@ -33,9 +37,18 @@ android {
         targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        if (isTestRelease) {
+            ndk.abiFilters.add("arm64-v8a")
+        }
     }
 
     packagingOptions.jniLibs.useLegacyPackaging = true
+    if (isTestRelease) {
+        // Flutter 插件会补入其他 ABI 的预编译库，测试产物统一排除它们。
+        packagingOptions.jniLibs.excludes.addAll(
+            listOf("lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**")
+        )
+    }
 
     val keyProperties = Properties().also {
         val properties = rootProject.file("key.properties")
@@ -56,7 +69,7 @@ android {
     }
 
     buildFeatures {
-        if (project.hasProperty("dev")) {
+        if (isDevBuild) {
             resValues = true
         }
     }
@@ -82,7 +95,7 @@ android {
         }
         release {
             signingConfig = config
-            if (project.hasProperty("dev")) {
+            if (isDevBuild) {
                 applicationIdSuffix = ".dev"
                 resValue(
                     type = "string",
