@@ -56,8 +56,9 @@ class DanmakuMerger {
 
     for (final (_, element) in ordered) {
       element.count = 1;
+      // 互动池包含评分数字等普通文字弹幕，沿用普通池的合并规则。
       if (element.isSelf ||
-          element.pool != 0 ||
+          (element.pool != 0 && element.pool != 3) ||
           element.mode < 1 ||
           element.mode > 6) {
         result.add(element);

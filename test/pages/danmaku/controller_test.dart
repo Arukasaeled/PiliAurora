@@ -89,6 +89,24 @@ void main() {
   });
 
   test(
+    'background processing merges rating pool duplicates into cache',
+    () async {
+      final controller = PlDanmakuController(1, _Player(), false);
+      addTearDown(controller.dispose);
+      await controller.handleDanmaku([
+        _dm('5', 26600)..pool = 3,
+        _dm('5', 27082)..pool = 3,
+        _dm('1', 42600)..pool = 3,
+        _dm('5', 42600)..pool = 3,
+        _dm('1', 42796)..pool = 3,
+      ], segmentIndex: 0);
+      final cached = controller.peekBufferedDanmaku(26000, 43000).toList();
+      expect(cached.map((e) => e.content), ['5', '1']);
+      expect(cached.map((e) => e.count), [3, 2]);
+    },
+  );
+
+  test(
     'disabled merging retains individual messages and bucket limits',
     () async {
       final controller = PlDanmakuController(

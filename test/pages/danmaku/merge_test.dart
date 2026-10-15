@@ -21,6 +21,36 @@ DanmakuElem _dm(
 
 void main() {
   test(
+    'merges repeated rating pool text while preserving different scores',
+    () {
+      final result = DanmakuMerger().merge([
+        _dm('5', 26600, pool: 3),
+        _dm('5', 27082, pool: 3),
+        _dm('1', 42600, pool: 3),
+        _dm('5', 42600, pool: 3),
+        _dm('1', 42796, pool: 3),
+      ]);
+      expect(result.map((e) => e.content), ['5', '1']);
+      expect(result.map((e) => e.count), [3, 2]);
+      expect(result.every((e) => e.pool == 3), isTrue);
+    },
+  );
+
+  test('rating pool shares ordinary matching and the anchored time window', () {
+    final result = DanmakuMerger().merge([
+      _dm('5', 0, pool: 3),
+      _dm('５！', 1000),
+      _dm('5', 20000, pool: 3),
+      _dm('5', 20001, pool: 3),
+      _dm('5', 20002, pool: 3, self: true),
+      _dm('5', 20003, pool: 3, mode: 5),
+      _dm('5', 20004, pool: 3, mode: 7),
+    ]);
+    expect(result.map((e) => e.progress), [0, 20001, 20002, 20003, 20004]);
+    expect(result.map((e) => e.count), [3, 1, 1, 1, 1]);
+  });
+
+  test(
     'background merge preserves metadata and leaves input untouched',
     () async {
       final elements = [
@@ -160,8 +190,12 @@ void main() {
         _dm('同样的内容', 3, mode: 7),
         _dm('同样的内容', 4, pool: 1),
         _dm('同样的内容', 5, pool: 1),
+        _dm('同样的内容', 6, pool: 2),
+        _dm('同样的内容', 7, pool: 2),
+        _dm('同样的内容', 8, pool: 4),
+        _dm('同样的内容', 9, pool: 4),
       ];
-      expect(DanmakuMerger().merge(elements), hasLength(6));
+      expect(DanmakuMerger().merge(elements), hasLength(10));
       expect(elements.every((e) => e.count == 1), isTrue);
     },
   );
