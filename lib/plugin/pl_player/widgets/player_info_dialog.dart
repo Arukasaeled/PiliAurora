@@ -129,41 +129,69 @@ class PlayerInfoDialog extends StatelessWidget {
 
     return DefaultTabController(
       length: 3,
-      child: AlertDialog(
-        title: const Text('播放信息'),
-        contentPadding: const EdgeInsets.only(top: 12),
-        content: SizedBox(
+      child: Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        clipBehavior: Clip.antiAlias,
+        child: SizedBox(
           width: 440,
-          height: (MediaQuery.sizeOf(context).height * .6).clamp(120.0, 520.0),
+          height: 560,
           child: Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '打开时快照',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: ColorScheme.of(context).onSurfaceVariant,
-                    ),
+              SizedBox(
+                key: const ValueKey('player-info-toolbar'),
+                height: 48,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      const Text(
+                        '播放信息',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: TabBar(
+                          labelStyle: TextStyle(fontSize: 12),
+                          labelPadding: EdgeInsets.zero,
+                          dividerColor: Colors.transparent,
+                          tabs: [
+                            Tab(text: '视频'),
+                            Tab(text: '音频'),
+                            Tab(text: '来源'),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        width: 32,
+                        child: IconButton(
+                          tooltip: '复制信息摘要',
+                          padding: EdgeInsets.zero,
+                          onPressed: () => Utils.copyText(summary),
+                          icon: const Icon(Icons.copy_outlined, size: 18),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 32,
+                        child: IconButton(
+                          tooltip: '关闭播放信息',
+                          padding: EdgeInsets.zero,
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close, size: 20),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const TabBar(
-                tabs: [
-                  Tab(text: '视频'),
-                  Tab(text: '音频'),
-                  Tab(text: '来源'),
-                ],
-              ),
+              const Divider(height: 1),
               Expanded(
                 child: TabBarView(
                   children: [
                     _page(
                       context,
-                      Icons.videocam_outlined,
-                      resolution,
                       '视频参数',
                       videoRows,
                       '原始视频参数',
@@ -171,47 +199,24 @@ class PlayerInfoDialog extends StatelessWidget {
                     ),
                     _page(
                       context,
-                      Icons.audiotrack_outlined,
-                      _text(audio.codec?.toUpperCase()),
                       '音频参数',
                       audioRows,
                       '原始音频参数',
                       '${state.audioParams}\n\n$audio',
                     ),
-                    _page(
-                      context,
-                      Icons.link,
-                      '当前媒体源',
-                      '地址与查询参数在复制时脱敏',
-                      sourceRows,
-                      '原始参数（已脱敏）',
-                      raw,
-                    ),
+                    _page(context, '来源参数', sourceRows, '原始参数（已脱敏）', raw),
                   ],
                 ),
               ),
             ],
           ),
         ),
-        actions: [
-          TextButton.icon(
-            onPressed: () => Utils.copyText(summary),
-            icon: const Icon(Icons.copy_outlined, size: 18),
-            label: const Text('复制信息摘要'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('完成'),
-          ),
-        ],
       ),
     );
   }
 
   Widget _page(
     BuildContext context,
-    IconData icon,
-    String title,
     String subtitle,
     List<(String, String)> rows,
     String rawTitle,
@@ -221,43 +226,19 @@ class PlayerInfoDialog extends StatelessWidget {
     final safeRaw = DiagnosticRedactor.text(raw, maxLength: 16384);
     return ListView(
       key: ValueKey(subtitle),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: colors.secondaryContainer,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: colors.onSecondaryContainer),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: Theme.of(context).textTheme.titleMedium),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        Text(
+          '打开时快照',
+          style: TextStyle(fontSize: 11, color: colors.onSurfaceVariant),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 6),
         for (final row in rows)
           InkWell(
             onTap: () =>
                 Utils.copyText(DiagnosticRedactor.text('${row.$1}：${row.$2}')),
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 13),
+              padding: const EdgeInsets.symmetric(vertical: 7),
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
@@ -272,19 +253,26 @@ class PlayerInfoDialog extends StatelessWidget {
                     flex: 2,
                     child: Text(
                       row.$1,
-                      style: TextStyle(color: colors.onSurfaceVariant),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     flex: 3,
-                    child: Text(row.$2, textAlign: TextAlign.end),
+                    child: Text(
+                      row.$2,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(fontSize: 13),
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         ExpansionTile(
           tilePadding: EdgeInsets.zero,
           title: Text(rawTitle, style: const TextStyle(fontSize: 13)),
