@@ -1,4 +1,5 @@
 import 'package:pili_aurora/common/widgets/flutter/vertical_tabs.dart';
+import 'package:pili_aurora/common/widgets/tab_activity.dart';
 import 'package:pili_aurora/models/common/rank_type.dart';
 import 'package:pili_aurora/pages/rank/controller.dart';
 import 'package:pili_aurora/pages/rank/zone/view.dart';
@@ -30,14 +31,17 @@ class _RankPageState extends State<RankPage>
           child: TabBarView(
             physics: const NeverScrollableScrollPhysics(),
             controller: _rankController.tabController,
-            children: RankType.values
-                .map(
-                  (item) => ZonePage(
+            children: [
+              for (final (index, item) in RankType.values.indexed)
+                TabActivity(
+                  controller: _rankController.tabController,
+                  index: index,
+                  child: ZonePage(
                     rid: item.rid,
                     seasonType: item.seasonType,
                   ),
-                )
-                .toList(),
+                ),
+            ],
           ),
         ),
       ],

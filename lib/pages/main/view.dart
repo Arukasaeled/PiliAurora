@@ -9,6 +9,7 @@ import 'package:pili_aurora/common/widgets/flutter/pop_scope.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/common/widgets/main_layout.dart';
 import 'package:pili_aurora/common/widgets/route_aware_mixin.dart';
+import 'package:pili_aurora/common/widgets/tab_activity.dart';
 import 'package:pili_aurora/models/common/nav_bar_config.dart';
 import 'package:pili_aurora/pages/home/view.dart';
 import 'package:pili_aurora/pages/main/controller.dart';
@@ -526,13 +527,28 @@ class _MainAppState extends PopScopeState<MainApp>
         controller: _mainController.controller,
         physics: const NeverScrollableScrollPhysics(),
         scrollDirection: _mainController.useBottomNav ? .horizontal : .vertical,
-        children: _mainController.navigationBars.map((i) => i.page).toList(),
+        children: [
+          for (final (index, tab) in _mainController.navigationBars.indexed)
+            TabActivity(
+              controller: _mainController.controller,
+              index: index,
+              child: tab.page,
+            ),
+        ],
       );
     } else {
       child = PageView(
         controller: _mainController.controller,
         physics: const NeverScrollableScrollPhysics(),
-        children: _mainController.navigationBars.map((i) => i.page).toList(),
+        children: [
+          for (final (index, tab) in _mainController.navigationBars.indexed)
+            Obx(
+              () => TickerMode(
+                enabled: _mainController.selectedIndex.value == index,
+                child: tab.page,
+              ),
+            ),
+        ],
       );
     }
 

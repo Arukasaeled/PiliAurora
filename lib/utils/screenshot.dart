@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
+import 'package:pili_aurora/common/widgets/image/cached_image.dart';
 
 abstract final class Screenshot {
   static Future<ui.Image> screenshot(
@@ -17,7 +18,10 @@ abstract final class Screenshot {
       context,
       MediaQuery(
         data: context.getInheritedWidgetOfExactType<MediaQuery>()!.data,
-        child: TickerMode(enabled: false, child: widget),
+        child: ImageLoadingScope(
+          enabled: true,
+          child: TickerMode(enabled: false, child: widget),
+        ),
       ),
     );
 

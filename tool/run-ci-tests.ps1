@@ -14,6 +14,7 @@ $ciTests = @(
     "test/common/widgets/font_awesome_icons_test.dart",
     "test/common/widgets/debounced_state_test.dart",
     "test/common/widgets/image/image_lifecycle_test.dart",
+    "test/common/widgets/tab_activity_test.dart",
     "test/utils/random_id_test.dart",
     "test/utils/rate_limiter_test.dart",
     "test/utils/video_utils_test.dart",

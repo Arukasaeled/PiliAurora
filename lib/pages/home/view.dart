@@ -4,6 +4,7 @@ import 'package:pili_aurora/common/style.dart';
 import 'package:pili_aurora/common/widgets/custom_height_widget.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
 import 'package:pili_aurora/common/widgets/scroll_physics.dart' show tabBarView;
+import 'package:pili_aurora/common/widgets/tab_activity.dart';
 import 'package:pili_aurora/pages/common/common_page.dart';
 import 'package:pili_aurora/pages/home/controller.dart';
 import 'package:pili_aurora/pages/main/controller.dart';
@@ -87,7 +88,14 @@ class _HomePageState extends CommonPageState<HomePage>
           child: onBuild(
             tabBarView(
               controller: _homeController.tabController,
-              children: _homeController.tabs.map((e) => e.page).toList(),
+              children: [
+                for (final (index, tab) in _homeController.tabs.indexed)
+                  TabActivity(
+                    controller: _homeController.tabController,
+                    index: index,
+                    child: tab.page,
+                  ),
+              ],
             ),
           ),
         ),

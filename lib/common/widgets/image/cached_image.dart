@@ -10,6 +10,27 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 
+/// 静态导出可在暂停动画时继续加载图片。
+class ImageLoadingScope extends InheritedWidget {
+  const ImageLoadingScope({
+    super.key,
+    required this.enabled,
+    required super.child,
+  });
+
+  final bool enabled;
+
+  static bool isEnabled(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<ImageLoadingScope>()
+          ?.enabled ??
+      TickerMode.valuesOf(context).enabled;
+
+  @override
+  bool updateShouldNotify(ImageLoadingScope oldWidget) =>
+      enabled != oldWidget.enabled;
+}
+
 /// 复用磁盘缓存，由 Flutter 管理解码器、帧和图片缓存的生命周期。
 class CachedImageProvider extends ImageProvider<CachedImageProvider> {
   const CachedImageProvider(
@@ -77,38 +98,48 @@ class CachedImageProvider extends ImageProvider<CachedImageProvider> {
   ImageStreamCompleter loadImage(
     CachedImageProvider key,
     ImageDecoderCallback decode,
-  ) => _ImageCompleter(
-    codec: _load(decode),
-    scale: scale,
-    debugLabel: url,
-  );
+  ) {
+    final owner = _CodecOwner();
+    return _ImageCompleter(
+      owner,
+      codec: _load(decode, owner),
+      scale: scale,
+      debugLabel: url,
+    );
+  }
 
-  Future<ui.Codec> _load(ImageDecoderCallback decode) async {
+  Future<ui.Codec> _load(ImageDecoderCallback decode, _CodecOwner owner) async {
     TraceOperation? operation;
     try {
       final file = await _getFile();
-      operation = Diagnostics.instance.begin(
-        'imageDecode',
-        '创建图片解码器',
-        details: {
-          'width': width,
-          'height': height,
-          'maxPixels': maxDecodePixels,
-        },
-      );
-      // 直接映射缓存文件，避免 readAsBytes 与 ImmutableBuffer 各持有一份数据。
-      final buffer = await ui.ImmutableBuffer.fromFilePath(file.path);
-      final codec = await decode(
-        buffer,
-        getTargetSize:
-            width != null || height != null || maxDecodePixels != null
-            ? _targetSize
-            : null,
-      );
-      return codec;
+      return await owner.load(() async {
+        operation = Diagnostics.instance.begin(
+          'imageDecode',
+          '创建图片解码器',
+          details: {
+            'width': width,
+            'height': height,
+            'maxPixels': maxDecodePixels,
+          },
+        );
+        // 直接映射缓存文件，避免 readAsBytes 与 ImmutableBuffer 各持有一份数据。
+        final buffer = await ui.ImmutableBuffer.fromFilePath(file.path);
+        final codec = await decode(
+          buffer,
+          getTargetSize:
+              width != null || height != null || maxDecodePixels != null
+              ? _targetSize
+              : null,
+        );
+        return codec;
+      });
     } catch (error) {
       operation?.finish(error: error);
-      scheduleMicrotask(() => PaintingBinding.instance.imageCache.evict(this));
+      if (error is! _ImageDecodeCancelled) {
+        scheduleMicrotask(
+          () => PaintingBinding.instance.imageCache.evict(this),
+        );
+      }
       rethrow;
     } finally {
       operation?.finish();
@@ -146,26 +177,12 @@ class CachedImageProvider extends ImageProvider<CachedImageProvider> {
 /// 滚动或刷新可能早于文件读取完成；缓存和监听者都退出后，迟到的 codec
 /// 也必须释放。只移除监听时不能释放仍被 ImageCache 保活的动图。
 class _ImageCompleter extends MultiFrameImageStreamCompleter {
-  factory _ImageCompleter({
-    required Future<ui.Codec> codec,
-    required double scale,
+  _ImageCompleter(
+    this._owner, {
+    required super.codec,
+    required super.scale,
     required String debugLabel,
-  }) {
-    final owner = _CodecOwner();
-    return _ImageCompleter._(
-      owner,
-      codec.then(owner.attach),
-      scale,
-      debugLabel,
-    );
-  }
-
-  _ImageCompleter._(
-    this._owner,
-    Future<ui.Codec> codec,
-    double scale,
-    String debugLabel,
-  ) : super(codec: codec, scale: scale, debugLabel: debugLabel);
+  }) : super(debugLabel: debugLabel);
 
   final _CodecOwner _owner;
   int _handles = 0;
@@ -174,12 +191,15 @@ class _ImageCompleter extends MultiFrameImageStreamCompleter {
   @override
   void addListener(ImageStreamListener listener) {
     _hadListener = true;
+    _owner.hasListeners = true;
     super.addListener(listener);
   }
 
   @override
   void removeListener(ImageStreamListener listener) {
     super.removeListener(listener);
+    _owner.hasListeners = hasListeners;
+    if (!hasListeners) _owner.releaseIdleAdmission();
     _releaseIfUnused();
   }
 
@@ -231,24 +251,46 @@ class _ImageHandle implements ImageStreamCompleterHandle {
 
 class _CodecOwner {
   _ThrottledCodec? _codec;
+  _DecodeAdmission? _admission;
   bool _disposed = false;
+  bool hasListeners = false;
 
-  ui.Codec attach(ui.Codec codec) {
-    final managed = _codec = _ThrottledCodec(codec);
-    if (_disposed) managed.dispose();
-    return managed;
+  Future<ui.Codec> load(Future<ui.Codec> Function() create) async {
+    if (_disposed) throw const _ImageDecodeCancelled();
+    final admission = _admission = _DecodeBudget.admit();
+    try {
+      await admission.ready;
+      if (_disposed) throw const _ImageDecodeCancelled();
+      final codec = await create();
+      final managed = _codec = _ThrottledCodec(codec, admission);
+      if (_disposed) {
+        managed.dispose();
+        throw const _ImageDecodeCancelled();
+      }
+      // 暂停的保活流可能暂不请求首帧，先归还名额，避免阻塞其他图片。
+      if (!hasListeners) managed.releaseIdleAdmission();
+      return managed;
+    } catch (_) {
+      admission.release();
+      rethrow;
+    } finally {
+      _admission = null;
+    }
   }
 
   void dispose() {
     _disposed = true;
+    _admission?.cancel();
     _codec?.dispose();
     _codec = null;
   }
+
+  void releaseIdleAdmission() => _codec?.releaseIdleAdmission();
 }
 
 /// 延续原组件的动图帧率限制，避免短帧 GIF 持续占用 CPU。
 class _ThrottledCodec implements ui.Codec {
-  _ThrottledCodec(this._codec) {
+  _ThrottledCodec(this._codec, this._decodeAdmission) {
     Diagnostics.instance.gauge('imageCodecs', ++_activeCodecs);
   }
 
@@ -257,6 +299,7 @@ class _ThrottledCodec implements ui.Codec {
   final ui.Codec _codec;
   bool _disposed = false;
   bool _firstFrame = true;
+  bool _decoding = false;
   _FrameAdmission? _admission;
   _DecodeAdmission? _decodeAdmission;
 
@@ -266,21 +309,22 @@ class _ThrottledCodec implements ui.Codec {
   @override
   int get repetitionCount => _codec.repetitionCount;
 
+  void releaseIdleAdmission() {
+    if (_decoding) return;
+    _decodeAdmission?.release();
+    _decodeAdmission = null;
+  }
+
   @override
   Future<ui.FrameInfo> getNextFrame() async {
-    final admission = _decodeAdmission = _DecodeBudget.admit();
+    _decoding = true;
+    final admission = _decodeAdmission ??= _DecodeBudget.admit();
     TraceOperation? operation;
     try {
       await admission.ready;
       if (_disposed) throw const _ImageDecodeCancelled();
       operation = Diagnostics.instance.begin('imageFrame', '解码图片帧');
-      late final ui.FrameInfo frame;
-      try {
-        frame = await _codec.getNextFrame();
-      } finally {
-        admission.release();
-        _decodeAdmission = null;
-      }
+      final frame = await _codec.getNextFrame();
       operation?.finish(
         details: {
           'width': frame.image.width,
@@ -309,6 +353,7 @@ class _ThrottledCodec implements ui.Codec {
       operation?.finish(error: error);
       rethrow;
     } finally {
+      _decoding = false;
       admission.release();
       _decodeAdmission = null;
       operation?.finish();
@@ -319,7 +364,11 @@ class _ThrottledCodec implements ui.Codec {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _decodeAdmission?.cancel();
+    if (_decoding) {
+      _decodeAdmission?.cancel();
+    } else {
+      _decodeAdmission?.release();
+    }
     _admission?.cancel();
     _admission = null;
     Diagnostics.instance.gauge('imageCodecs', --_activeCodecs);
@@ -530,33 +579,40 @@ class CachedImage extends StatelessWidget {
   final Duration fadeOutDuration;
 
   @override
-  Widget build(BuildContext context) => Image(
-    image: CachedImageProvider(
-      imageUrl,
-      cacheManager: cacheManager,
-      width: memCacheWidth,
-      height: memCacheHeight,
-      maxDecodePixels: maxDecodePixels,
-    ),
-    width: width,
-    height: height,
-    fit: fit,
-    alignment: alignment,
-    filterQuality: filterQuality,
-    color: color,
-    colorBlendMode: colorBlendMode,
-    errorBuilder: errorBuilder ?? (context, _, _) => _placeholder(context),
-    frameBuilder: (context, child, frame, synchronouslyLoaded) => _ImageFadeIn(
-      key: ValueKey(imageUrl),
-      ready: frame != null,
-      // 同步命中缓存时直接显示，与原来 `if (synchronouslyLoaded) return child;` 一致。
-      animate: !synchronouslyLoaded,
-      duration: fadeInDuration,
-      fadeOutDuration: fadeOutDuration,
-      placeholder: _placeholder(context),
-      child: child,
-    ),
-  );
+  Widget build(BuildContext context) {
+    // 隐藏页面保留业务状态，缩略图交还 LRU；恢复时只加载活动页面。
+    if (!ImageLoadingScope.isEnabled(context)) {
+      return SizedBox(width: width, height: height);
+    }
+    return Image(
+      image: CachedImageProvider(
+        imageUrl,
+        cacheManager: cacheManager,
+        width: memCacheWidth,
+        height: memCacheHeight,
+        maxDecodePixels: maxDecodePixels,
+      ),
+      width: width,
+      height: height,
+      fit: fit,
+      alignment: alignment,
+      filterQuality: filterQuality,
+      color: color,
+      colorBlendMode: colorBlendMode,
+      errorBuilder: errorBuilder ?? (context, _, _) => _placeholder(context),
+      frameBuilder: (context, child, frame, synchronouslyLoaded) =>
+          _ImageFadeIn(
+            key: ValueKey(imageUrl),
+            ready: frame != null,
+            // 同步命中缓存时直接显示，与原来 `if (synchronouslyLoaded) return child;` 一致。
+            animate: !synchronouslyLoaded,
+            duration: fadeInDuration,
+            fadeOutDuration: fadeOutDuration,
+            placeholder: _placeholder(context),
+            child: child,
+          ),
+    );
+  }
 
   Widget _placeholder(BuildContext context) => SizedBox(
     width: width,
@@ -617,7 +673,7 @@ class _FrameAdmission {
   void cancel() => _FrameBudget.cancel(this);
 }
 
-/// 在原生帧请求开始前限制并发，避免多个可见卡片同时提交整批解码。
+/// 从文件映射、codec 创建到首帧交付共用名额，避免队列持有整批原生解码器。
 abstract final class _DecodeBudget {
   static const _limit = 2;
   static int _active = 0;
