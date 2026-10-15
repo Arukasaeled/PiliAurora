@@ -18,7 +18,7 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 
 ### 普通发布依赖
 
-根 `dependencies` 和 `dev_dependencies` 的 hosted 包统一使用精确版本号，不使用 `^`、区间或 `any`；根 hosted override 也遵循相同规则。版本以已验收的 `pubspec.lock` 为准，不会自动跟随最新发布版。SDK 包由 `.fvmrc` 管理，第三方包自己的传递约束不机械改写，传递解析结果由锁文件和 `--enforce-lockfile` 固定。
+根 `dependencies` 和 `dev_dependencies` 的 hosted 包统一使用精确版本号，不使用 `^`、区间或 `any`；根 hosted override 也遵循相同规则。版本以已验收的 `pubspec.lock` 为准，不会自动跟随最新发布版。SDK 包由 `.fvmrc` 管理，第三方包传递解析结果由锁文件和 `--enforce-lockfile` 固定。
 
 1. 修改目标包的精确版本号，再执行 `fvm flutter pub get` 解析目标版本。
 2. 审核 `pubspec.lock`，避免无关依赖更新；依赖校验必须确认根声明和锁定版本逐字一致，包括预发布与 build 后缀。
@@ -42,13 +42,13 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 
 6. 将单个更新及其适配、测试作为可独立回滚的提交。新版本若可以去掉定制，则切回已验证的发布版，并同时移除 override、本地源码和登记。
 
-后台通知、GPU/MediaCodec、窗口主题和 WebView 退出仍需人工实机回归；平台构建只验证编译和打包。`third_party` 的上游检查告警应如实记录，不通过关闭检查或削弱测试来清零。
+平台构建覆盖编译和打包，后台通知、GPU/MediaCodec、窗口主题和 WebView 退出由人工实机回归覆盖。`third_party` 的上游检查告警如实记录，不靠关闭检查或削弱测试来清零。
 
 ## 原生二进制与 SDK
 
 Windows 各构建模式使用 [mpv 预编译包](mpv/README.md)。源码、重建脚本、许可与 `prebuilt/` 中的归档和摘要均纳入 Git；工具链、编译缓存与解压目录保存在 `build/`。应用 CI 直接校验并使用预编译包，独立原生库工作流负责从固定源码重建。打包收集 libmpv、ANGLE 的 DLL 依赖闭包，并随应用交付许可与包来源记录。
 
-Android 原生库继续使用版本化下载地址与 SHA-256 校验。mpv 属于原生构建材料，不是额外的 Dart path 包；`dependencies.json` 仍登记 19 个本地 Dart/Flutter 包。
+Android 原生库继续使用版本化下载地址与 SHA-256 校验。mpv 属于原生构建材料；`dependencies.json` 仍登记 19 个本地 Dart/Flutter 包。
 
 Windows x64 的 cnativeapi 使用 [预编译入口](nativeapi/README.md)，内部 nativeapi 已静态链接。固定的 cnativeapi 0.3.0 源码保留在本地包中，重建产物位于 `nativeapi/prebuilt/`，许可随应用分发。
 

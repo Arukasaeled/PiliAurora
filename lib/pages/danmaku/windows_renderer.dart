@@ -63,7 +63,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
   static const maxActiveBytes = maxActiveBytesMiB * 1024 * 1024;
   static const maxActiveItems = 600;
   static const maxPendingPrewarm = 64;
-  // 候选尚未完成长测和尾延迟验证，只通过编译参数显式启用。
+  // 实验性实现，仅通过编译参数启用。
   static const adaptivePrewarm = bool.fromEnvironment(
     'WINDOWS_DANMAKU_ADAPTIVE_PREWARM',
     defaultValue: false,

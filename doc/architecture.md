@@ -58,7 +58,7 @@ flowchart LR
 | `lib/common/`、`lib/utils/` | 通用 UI、存储、缓存、平台判断及辅助逻辑 | 全部调用方，避免把页面状态放进通用层 |
 | `android/`、`windows/`、`third_party/` | 平台工程、插件和本地维护的依赖实现 | 依赖登记、生成脚本和平台构建配置 |
 
-部分页面 controller 直接调用 `http/`，另一些经由 `services/`。`models/` 同时包含远端响应和页面间共享对象，不等同于数据库实体。
+部分页面 controller 直接调用 `http/`，另一些经由 `services/`。`models/` 同时包含远端响应和页面间共享对象，用途比数据库实体更宽。
 
 ## 关键边界与约束
 
@@ -68,7 +68,7 @@ flowchart LR
 - `services/messaging/` 按主账号的 `MessagingSession` 管理消息业务。GetX 保留路由，Riverpod 订阅业务快照；聊天和分享共用会话缓存及发送锁。分类消息句柄由页面 Notifier 创建和释放，未读概览、会话列表及聊天缓存由 Session 持有。入口和异步约定见[消息模块](../lib/services/messaging/README.md)。
 - `DownloadRepository` 负责下载目录布局和记录读写；`DownloadService` 负责队列、状态和任务调度；`DownloadManager` 负责单路媒体传输。详情见[下载流程](runtime-flows.md#下载)。
 - `DownloadRepository.load()` 跳过损坏的单条记录并通过回调报告；写入在进入串行队列前编码数据快照。它是文件存储，不提供事务或崩溃原子性。
-- `pl_player/` 是项目与 `media_kit`、mpv 及平台输出之间的协调层。`PlPlayerController` 保留交互、可观察状态和事件接线；`playback/` 管理页面借用、查询有效性、串行加载、原生资源与网络恢复。平台渲染行为仍需在目标设备验证。
+- `pl_player/` 是项目与 `media_kit`、mpv 及平台输出之间的协调层。`PlPlayerController` 保留交互、可观察状态和事件接线；`playback/` 管理页面借用、查询有效性、串行加载、原生资源与网络恢复。平台渲染行为在目标设备验证。
 - `PlaybackSession` 与网络恢复模块通过操作及状态回调连接调用者，不依赖 GetX、页面、HTTP 或全局设置。`NativePlaybackRuntime` 集中处理原生初始化、平台配置与资源释放；点播来源选择集中在 `pages/video/playback_source.dart`。
 - 播放状态区分用户的播放意图与原生加载过程中的短暂暂停。切画质、音质和网络恢复沿用播放意图；字幕等媒体附属请求提交前检查当前媒体与页面归属。
 - 快速切源共享一套 Player、VideoController、事件订阅和纹理输出。会话协调发生在查询、切源和恢复路径，不新增每帧状态广播；过期排队加载跳过原生操作。

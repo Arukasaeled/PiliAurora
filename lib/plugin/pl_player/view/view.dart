@@ -1115,7 +1115,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
         ..._captureVideoOutputDiagnostics(),
         'requested': {'width': size.width, 'height': size.height},
         'requestGeneration': generation,
-        // Windows 确认新帧绘制并标记可用；不代表像素级无闪保证。
+        // Windows 在新帧绘制完成后标记可用。
         // Android 的固定输出不进入视口 resize / handoff。
         'accepted': accepted,
       },

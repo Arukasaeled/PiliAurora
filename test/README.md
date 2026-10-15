@@ -27,7 +27,7 @@ CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dar
 
 `pages/danmaku/video_frame_sync_test.dart` 在模拟 120 Hz 时间槽上覆盖视频与弹幕的相位同步，以及原生纹理帧时间的逐帧、100 ms 和 release 一秒批量报告；调用真实弹幕 ticker，验证稳定后的额外帧请求。该测试不测量 GPU 合成次数或实机屏幕 Hz。
 
-`pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理刷新请求批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、30 FPS 视频配 60 FPS 弹幕在 90/120 Hz 上的相位变化、匹配到失配再匹配时的退化与恢复、mpv 显示同步状态切换与订阅释放、批次限界、请求时间抖动、29.97/59.94 FPS 漂移与来源释放。相位变化测试同时断言弹幕更新频率和视频、弹幕合计刷新的次数。`native_video_frame_phase_test.dart` 检查下一次 vsync 与 BeginFrame 目标时间的换算，以及 mpv 同步关闭时仍按稳定的原生请求节奏锁定；119.88／120／120.12Hz 共 24 个场景覆盖隔离调度与 Android 时序。Android 模型同时包含 target=start+screen 时间差和纹理请求驱动 Dart 帧的行为，不将隔离模型单独视为实机结论。实际屏幕槽位与呈现仍需设备检查。
+`pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理刷新请求批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、30 FPS 视频配 60 FPS 弹幕在 90/120 Hz 上的相位变化、匹配到失配再匹配时的退化与恢复、mpv 显示同步状态切换与订阅释放、批次限界、请求时间抖动、29.97/59.94 FPS 漂移与来源释放。相位变化测试同时断言弹幕更新频率和视频、弹幕合计刷新的次数。`native_video_frame_phase_test.dart` 检查下一次 vsync 与 BeginFrame 目标时间的换算，以及 mpv 同步关闭时仍按稳定的原生请求节奏锁定；119.88／120／120.12Hz 共 24 个场景覆盖隔离调度与 Android 时序。Android 模型同时包含 target=start+screen 时间差和纹理请求驱动 Dart 帧的行为；屏幕槽位与呈现的结论来自设备检查。
 
 `pages/danmaku/frame_rate_matrix_test.dart` 检查屏幕 60/90/120/144 Hz、视频 24/30/60 FPS 与弹幕 30/60/90/120 FPS 的 48 种组合，每组覆盖 mpv 显示同步实际开启与关闭，共 96 个场景。视频按媒体周期映射到屏幕槽位，覆盖非整数比例，并在三秒后延后一个槽位。全部组合检查视频帧数、受屏幕刷新率上限约束的弹幕更新频率，以及相位变化前后的稳定更新频率；具备原生到达通知且视频周期可稳定映射到屏幕槽位的整数倍或整数分频组合，在两种 mpv 状态下都检查合计刷新次数，失配时检查退化后的目标更新频率。`frame_rate_ticker_test.dart` 另检查所属视图刷新率、屏幕降频与刷新率不可用的调度。该测试使用模拟时钟，不测量设备屏幕或 GPU 合成。
 
@@ -42,4 +42,4 @@ fvm flutter test test/services/diagnostics/ test/pages/about/diagnostics_page_te
 
 `pages/danmaku/frame_rate_workload_test.dart` 用固定 vsync 时刻检查 60/90/120/144 Hz 与四个弹幕档位，分别模拟 0/2 ms 同步更新耗时以及一段持续的高频 UI 帧。32 个场景同时检查更新总数、最长更新间隔和停止后的调度释放，防止处理耗时累积造成漏帧或外部帧反复校准造成超额更新。
 
-`pages/danmaku/canvas_repaint_test.dart` 检查通用 Canvas 渲染器连续动画的零 widget 重建、图片复用、点击命中与单条悬停、速度变化、暂停恢复、清空和高级弹幕按期清理。固定弹幕新增与运动弹幕合帧，并覆盖固定弹幕单独出现的首帧、暂停恢复与到期清理；新增与到期清理同帧且最终数量不变时，检查新项绘制及正常过期。120 条混合弹幕另检查逐帧通知相位。点击回归使用与 Android 播放器相同的控制器查询与 suspend 状态，真实触屏和菜单操作仍需设备检查。
+`pages/danmaku/canvas_repaint_test.dart` 检查通用 Canvas 渲染器连续动画的零 widget 重建、图片复用、点击命中与单条悬停、速度变化、暂停恢复、清空和高级弹幕按期清理。固定弹幕新增与运动弹幕合帧，并覆盖固定弹幕单独出现的首帧、暂停恢复与到期清理；新增与到期清理同帧且最终数量不变时，检查新项绘制及正常过期。120 条混合弹幕另检查逐帧通知相位。点击回归使用与 Android 播放器相同的控制器查询与 suspend 状态，真实触屏和菜单操作在设备上检查。

@@ -20,7 +20,7 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 
 视频详情或播放器 → 弹幕 API 与解析 → 弹幕状态和渲染。Windows 高密度场景请记录编码、分辨率、输出尺寸、弹幕密度、硬件解码状态、构建模式和复现时长。
 
-Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，播放器快照的 `danmakuScheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 包含被引擎合并的请求，不能据此计算 Scene。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Windows 在 `danmaku.renderer.*` 快照的 `scheduler` 中提供相同字段。计数读取沿用现有诊断周期。
+Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，播放器快照的 `danmakuScheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 是提交给引擎的帧请求数，含被合并的请求。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Windows 在 `danmaku.renderer.*` 快照的 `scheduler` 中提供相同字段。计数读取沿用现有诊断周期。
 
 设备侧可运行[Android 帧时间采集](../tool/probes/README.md#android-帧时间采集)，明确指定设备和包名。采集结果与应用诊断分别保留时钟域，结合相同复现窗口检查；SurfaceFlinger 图层、Android gfxinfo、Flutter UI 和 Scene 使用各自统计口径。
 
@@ -62,7 +62,7 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 - 应用版本、Git 提交、构建模式和目标平台，以及操作系统、设备或显卡型号。
 - Flutter/JDK 版本、复现步骤、媒体编码与分辨率、弹幕密度和复现频率。
 - 登录、硬件解码和网络状态，以及脱敏后的诊断摘要和时间范围。
-- 尚未验证的假设。
+- 你推测但还没确认的部分。
 
 ## 复现和测量
 
@@ -70,7 +70,7 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 - 分别记录 Flutter Build/Raster 帧时间、mpv 丢帧、进程内存和 GPU 显存。用 `hwdec-current` 确认解码后端；零拷贝和最终显示效果需要单独验证。输出尺寸限幅会改变渲染表面，源视频仍按原分辨率解码。
 - 弹幕优化要同时检查接受数量、普通与高级弹幕的像素和透明度、慢帧及内存。预热会提前承担栅格化开销；缓存淘汰后仍可能被活动图片引用，因此也要观察活动工作集、字节上限和条目上限。
 - Android 解码恢复要结合媒体生命周期、暂停、缓冲、seek、EOF、持续错误和实际出帧判断。单次取图错误或播放位置推进都不足以证明画面恢复。旋转验收覆盖播放中、暂停、恢复播放和切源。
-- 独立音轨和视频使用同一绝对 seek 目标。Windows 空音视频输出烟测检查命令和时序；实际音频及 Android MediaCodec 仍需分别验收。
+- 独立音轨和视频使用同一绝对 seek 目标。Windows 空音视频输出烟测覆盖命令和时序，实际音频与 Android MediaCodec 分别验收。
 - 直播历史与滚动期间的新消息积压分别限界，并检查恢复跟随、略过计数和退出清理。WebView 与原生播放器销毁前应等待异步任务退出，再检查退出、重建和多引擎场景。
 
 本地实验记录放在 Git 忽略的 `doc/dev/`，临时输出放在 `build/`。保留复现条件和结论，清理失效样本、重复二进制和日志。历史设备数值应重新测量后再用于当前决策。
@@ -81,7 +81,7 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 
 - adapters 通过 LUID 关联名称、VendorId、DeviceId，flutterUi 标识 Flutter 实际渲染显卡。usedByProcess 表示 Flutter 绑定、有效显存用量或非零引擎活动所确认的本进程使用证据。
 - engines 保留本 PID 各物理适配器/引擎计数，busiestEnginePercent 是其中最繁忙引擎的比例。不同引擎并行工作，数值不直接相加。
-- local、nonLocal 的 usageBytes、budgetBytes 来自 DXGI，均为调用进程口径。集显本地内存可能来自系统内存；local 不等同于独显物理显存。
+- local、nonLocal 的 usageBytes、budgetBytes 来自 DXGI，均为调用进程口径；集显的 local 内存可能来自系统内存，与独显物理显存口径不同。
 - warmingUp、PDH/DXGI 和内存 HRESULT 区分初始化、接口失败与合法零值。无有效引擎实例时不生成负载数值。
 
-播放器和 Flutter 的活动在同 PID 下汇总。当前采样未将 ANGLE、纹理复制及硬解设备逐个绑定到播放器实例，跨显卡活动由 LUID 与引擎证据呈现。混合显卡、驱动不支持、设备丢失与采集开销需要目标设备验证。
+播放器和 Flutter 的活动在同 PID 下汇总。当前采样按 LUID 与引擎证据呈现跨显卡活动，未把 ANGLE、纹理复制及硬解设备逐个绑定到播放器实例。混合显卡、驱动不支持、设备丢失与采集开销的实测在目标设备上进行。

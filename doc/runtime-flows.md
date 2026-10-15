@@ -157,7 +157,7 @@ flowchart TD
 
 点播重载保留位置，直播重载不设置起始位置。切换画质、音质或重新解析已加载媒体时保留位置与播放意图。两者先暂停加载，完成后检查媒体有效性与最新播放意图；加载期间用户主动暂停时不会被恢复操作覆盖。开启多 CDN 时，直播仅使用当前协议、格式和编码提供的候选地址。
 
-Windows 在确定硬件或软件后端后注册纹理，硬件初始化失败时先释放 GL 资源再进入软件路径。Android 保留既有 MediaCodec、Surface 与解码恢复实现。GPU、MediaCodec、Surface 行为和帧率仍需在目标设备验证。
+Windows 在确定硬件或软件后端后注册纹理，硬件初始化失败时先释放 GL 资源再进入软件路径。Android 保留既有 MediaCodec、Surface 与解码恢复实现，GPU、MediaCodec、Surface 行为和帧率在目标设备验证。
 
 Windows 超分切换使用独立的串行更新队列，暂停视频输出后重建渲染器，再提交 shader 并恢复输出。释放顺序和首帧条件见[Windows 视频输出](windows-video-output.md#超分切换)。
 

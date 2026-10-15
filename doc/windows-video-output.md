@@ -36,4 +36,4 @@ Windows 的 Debug、Profile、Release 构建均使用 `third_party/mpv/prebuilt/
 - `tool/probes/windows/windows_texture_frame_probe.py`：模拟纹理首帧和重建后的帧发布条件。
 - `tool/probes/playback/windows_shader_switch.dart`：实际 Flutter、ANGLE、libmpv 的超分切换；运行参数见[平台探针](../tool/probes/README.md#windows-超分切换探针)。
 
-历史本机测量中，暂停重建出现过约 0.33 秒时间线回退。实际音频输出、长时间播放和更多 GPU/驱动仍需实测；编译和模拟测试不覆盖这些行为。
+历史本机测量中，暂停重建出现过约 0.33 秒时间线回退。上述入口覆盖编译与模拟路径，音频输出、长时间播放和更多 GPU 驱动的实测单独进行。

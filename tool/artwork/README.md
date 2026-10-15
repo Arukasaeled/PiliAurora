@@ -41,7 +41,7 @@ Android 普通自适应前景使用 `drawable-nodpi/app_icon_artwork.png`，108d
 
 暗色 SVG / PNG 复用源稿几何，调色映射保存在 `tool/generate_app_artwork.dart`；角色暗色原稿位于 `raster/app-icon-dark.png`。Android 夜间资源跟随系统配置。`lib/app/desktop_theme.dart` 在应用根节点同步 Windows 窗口外观，覆盖主窗口和独立播放窗口；托盘由主页同步并释放替换后的图片。EXE 文件和静态快捷方式保留通用彩色图标。单色标记由调用方按 `ColorScheme` 着色。封面播放、缓冲、直播背景和投币弹窗的通用资源按其自身内容背景设计，明暗主题共用。
 
-`test/common/widgets/themed_assets_test.dart` 检查 bundle 加载、图片和 SVG 解码，以及主题来回切换和空状态重试。`test/app/desktop_theme_test.dart` 用模拟通道验证窗口图标跟随主题且不依赖主页。Android 桌面刷新、系统启动动画、Windows 任务栏和托盘的实际显示仍需平台实机验证。
+`test/common/widgets/themed_assets_test.dart` 检查 bundle 加载、图片和 SVG 解码，以及主题来回切换和空状态重试。`test/app/desktop_theme_test.dart` 用模拟通道验证窗口图标跟随主题且不依赖主页。Android 桌面刷新、系统启动动画、Windows 任务栏和托盘的实际显示在对应平台上验证。
 
 `assets/screenshots/` 是已有产品截图，未作为应用插画重绘。数字字体和 shader 是运行资源，未纳入本次视觉替换。
 

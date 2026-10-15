@@ -41,7 +41,7 @@ Windows 构建完成后，可用 Python 和 libmpv 检查独立音轨、特殊�
 uv run --locked python tool/probes/playback/native_media_smoke.py --library build/windows/x64/runner/Debug/libmpv-2.dll --video <本地视频文件>
 ```
 
-同一命令追加 `--audio-reload`，可验证后台音轨重连时音频时钟恢复、视频继续输出新帧，且媒体位置和暂停状态保持。输入需为超过 3 秒的连续视频；真实画面与声音仍需实机检查。
+同一命令追加 `--audio-reload`，可验证后台音轨重连时音频时钟恢复、视频继续输出新帧，且媒体位置和暂停状态保持。输入需为超过 3 秒的连续视频；画面与声音在实机上检查。
 
 传入 `--seek-target <秒数>` 可检查 Android 独立音轨的前进、后退和重复跳转命令。`tool/probes/playback/native_seek_command.dart` 会调用应用使用的命令构造器；烟测检查视频恢复后音轨等待是否小于 100 ms。视频长度应超过目标时间，目标时间应落在关键帧之间。`--keyframes-control` 使用旧策略作对照，预期会触发静音断言。
 
@@ -49,7 +49,7 @@ uv run --locked python tool/probes/playback/native_media_smoke.py --library buil
 uv run --locked python tool/probes/playback/native_media_smoke.py --library build/windows/x64/runner/Debug/libmpv-2.dll --video <本地视频文件> --seek-target 2.4
 ```
 
-该检查通过 Windows libmpv、`vo=null`、`ao=null` 和软件解码运行，视频帧依据 mpv 的 trace 日志计数。它不覆盖 Android GPU/MediaCodec、真实扬声器或完整应用性能。画面和硬件解码仍需在目标设备上验证。
+该检查通过 Windows libmpv、`vo=null`、`ao=null` 和软件解码运行，视频帧依据 mpv 的 trace 日志计数，覆盖 Windows 软件解码这一条路径。Android GPU/MediaCodec、扬声器输出和完整应用性能由对应平台验收，画面和硬件解码在目标设备上验证。
 
 ## 暂停旋转探针
 
@@ -112,7 +112,7 @@ uv run --locked python -m unittest discover -s tool/probes/android -p '*_test.py
 fvm flutter run --profile --no-pub -d <设备ID> -t tool/probes/android/high_refresh.dart
 ```
 
-控制台 `SCENE-HIGH-REFRESH` 输出弹幕实际更新频率、Flutter 上报帧频率与平均 Build/Raster 耗时。Flutter timing 延迟批量回报，窗口边界可能有偏差；这些计数不等同于 Scene 或最终呈现。另用上面的 `frame_timing_capture.py` 针对 `io.github.wallpap.piliaurora.profile` 采集 SurfaceFlinger 数值帧时间。存在多个匹配图层时显式传入 `--layer`；优先检查具有实际 BufferQueue 帧记录的 Flutter 输出图层。
+控制台 `SCENE-HIGH-REFRESH` 输出弹幕实际更新频率、Flutter 上报帧频率与平均 Build/Raster 耗时。Flutter timing 延迟批量回报，窗口边界可能有偏差；这些计数是 Flutter 上报口径，Scene 和最终呈现看 `frame_timing_capture.py` 采集的 SurfaceFlinger 数值帧时间。存在多个匹配图层时显式传入 `--layer`；优先检查具有实际 BufferQueue 帧记录的 Flutter 输出图层。
 
 ## Android 播放慢帧对照
 
@@ -132,7 +132,7 @@ fvm flutter run --profile --no-pub -d <设备ID> -t tool/probes/android/playback
 uv run --locked python tool/probes/windows/windows_source_size_channel_probe.py
 ```
 
-需要 Python 和支持 C++17 的 `g++`，可用 `--compiler` 指定编译器。输出保存在 `build/windows-playback-diagnosis/`。探针使用模拟播放器，不覆盖 GPU 和实际视频播放。
+需要 Python 和支持 C++17 的 `g++`，可用 `--compiler` 指定编译器。输出保存在 `build/windows-playback-diagnosis/`。探针使用模拟播放器，验证命令与时序；GPU 和实际视频播放在应用内检查。
 
 ## Windows 开播纹理回归探针
 
@@ -155,7 +155,7 @@ uv run --locked python tool/probes/windows/windows_video_sampling_probe.py --vid
 
 默认使用 `build/windows/x64/runner/Release/` 下的 DLL，以 `d3d11va` 解码并输出 `1920×1080`。可用 `--library-dir`、`--width`、`--height` 指定构建目录和输出尺寸；`--output-dir` 默认是 `build/windows-video-sampling/`，保存最后一帧 PNG、实际解码器日志与逐帧绿色行数 JSON。
 
-追加 `--control-dumb-mode=auto` 可对照修复前的自动简化渲染模式。退出码 0 表示 16 个采样帧均无绿色边带且实际使用指定硬解器；检测到条带、帧不足或硬解回退会退出 1。输入需有至少 20 帧，画面底部应有正常内容，避免原片自身纯绿色边带造成误判。探针只打开本地视频，不访问网络或账号；它覆盖 mpv／ANGLE 的像素输出，Flutter 合成、控件、全屏切换和长期性能仍需应用实测。
+追加 `--control-dumb-mode=auto` 可对照修复前的自动简化渲染模式。退出码 0 表示 16 个采样帧均无绿色边带且实际使用指定硬解器；检测到条带、帧不足或硬解回退会退出 1。输入需有至少 20 帧，画面底部应有正常内容，避免原片自身纯绿色边带造成误判。探针只打开本地视频，不访问网络或账号，覆盖 mpv／ANGLE 的像素输出；Flutter 合成、控件、全屏切换和长期性能在应用内实测。
 
 ## 播放器断流恢复回归探针
 

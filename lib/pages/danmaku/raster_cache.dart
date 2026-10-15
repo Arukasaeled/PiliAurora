@@ -50,7 +50,7 @@ class DanmakuRasterCache {
   int evictionsByEntries = 0;
   int evictedLayouts = 0;
   int evictedImages = 0;
-  // 淘汰图片的账面字节，不代表共享 backing 已释放的实际内存。
+  // 淘汰图片的账面字节；共享 backing 的实际释放量另计。
   int evictedImageBytes = 0;
 
   int get length => _entries.length;
