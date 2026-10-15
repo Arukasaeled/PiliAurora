@@ -1,3 +1,4 @@
+import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:flutter/gestures.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -6,7 +7,7 @@ double desktopVolumeAfterScroll(
   double volume,
   double delta,
   double maxVolume,
-) => (volume - delta / 4000).clamp(0.0, maxVolume);
+) => roundVolumeRatio((volume - delta / 4000).clamp(0.0, maxVolume));
 
 /// 点击展开竖向音量条；浮层沿用播放器的滚轮和快捷键交互。
 class DesktopVolumeControl extends StatefulWidget {
@@ -35,6 +36,7 @@ class DesktopVolumeControl extends StatefulWidget {
 
 class _DesktopVolumeControlState extends State<DesktopVolumeControl> {
   final _overlay = OverlayPortalController();
+  final _scrollVolume = VolumeScrollAdjustment();
 
   void _close() {
     if (!_overlay.isShowing) return;
@@ -56,11 +58,7 @@ class _DesktopVolumeControlState extends State<DesktopVolumeControl> {
       // 由命中的音量控件消费一次，避免播放器画面重复处理同一滚轮事件。
       GestureBinding.instance.pointerSignalResolver.register(event, (_) {
         widget.onChanged(
-          desktopVolumeAfterScroll(
-            widget.volume.value,
-            event.scrollDelta.dy,
-            widget.maxVolume,
-          ),
+          _scrollVolume.apply(widget.volume.value, event.scrollDelta.dy),
         );
       });
     }
@@ -144,9 +142,12 @@ class _DesktopVolumeControlState extends State<DesktopVolumeControl> {
                                 widget.maxVolume,
                               ),
                               max: widget.maxVolume,
+                              divisions: volumePercent(widget.maxVolume)
+                                  .toInt(),
                               semanticFormatterCallback: (value) =>
                                   '${(value * 100).round()}%',
-                              onChanged: widget.onChanged,
+                              onChanged: (value) =>
+                                  widget.onChanged(roundVolumeRatio(value)),
                             ),
                           ),
                         ),

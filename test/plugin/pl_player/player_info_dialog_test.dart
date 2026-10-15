@@ -37,9 +37,9 @@ void main() {
     expect(find.text('0 × 0'), findsNothing);
     await tester.tap(find.text('音频'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('0.0%', skipOffstage: false));
+    await tester.ensureVisible(find.text('0%', skipOffstage: false));
     await tester.pumpAndSettle();
-    expect(find.text('0.0%'), findsOneWidget);
+    expect(find.text('0%'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.tap(find.byTooltip('关闭播放信息'));
     await tester.pumpAndSettle();

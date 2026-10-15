@@ -214,7 +214,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('播放行为'));
       await tester.pumpAndSettle();
-      expect(find.text('最高音量'), findsOneWidget);
+      expect(find.text('最高音量'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

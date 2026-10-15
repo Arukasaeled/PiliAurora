@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:pili_aurora/common/assets.dart';
 import 'package:pili_aurora/common/constants.dart';
 import 'package:pili_aurora/common/style.dart';
@@ -200,14 +201,14 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   void _onVolumeChanged(double value) {
     if (mounted && !plPlayerController.volumeInterceptEventStream) {
-      plPlayerController.volume.value = value;
+      plPlayerController.volume.value = roundVolumeRatio(value);
     }
   }
 
   void _getCurrVolume() {
     FlutterVolumeController.getVolume().then((res) {
       if (mounted) {
-        plPlayerController.volume.value = res!;
+        plPlayerController.volume.value = roundVolumeRatio(res!);
       }
     });
   }
@@ -1260,7 +1261,11 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     }
   }
 
+  double? _gestureVolume;
+  final _scrollVolume = VolumeScrollAdjustment();
+
   void _onPanStart(ScaleStartDetails details) {
+    _gestureVolume = null;
     _gestureType = null;
     _initialFocalPoint = details.localFocalPoint;
   }
@@ -1428,12 +1433,17 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     } else if (_gestureType == .right) {
       // 右边区域
       final double level = maxHeight * 0.5;
+      _gestureVolume = clampDouble(
+        (_gestureVolume ?? plPlayerController.volume.value) - delta.dy / level,
+        0,
+        1,
+      );
       ActionThrottle.run(
         'setVolume',
         const Duration(milliseconds: 20),
         () {
           final double volume = clampDouble(
-            plPlayerController.volume.value - delta.dy / level,
+            _gestureVolume!,
             0.0,
             plPlayerController.maxVolume,
           );
@@ -1444,6 +1454,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   }
 
   void _onPanEnd(ScaleEndDetails details) {
+    _gestureVolume = null;
     if (_gestureType == .horizontal) {
       _onHorizontalDragEnd();
     }
@@ -1630,12 +1641,18 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       }
 
       final double level = maxHeight * 0.5;
+      _gestureVolume = clampDouble(
+        (_gestureVolume ?? plPlayerController.volume.value) -
+            event.localPanDelta.dy / level,
+        0,
+        1,
+      );
       ActionThrottle.run(
         'setVolume',
         const Duration(milliseconds: 20),
         () {
           final double volume = clampDouble(
-            plPlayerController.volume.value - event.localPanDelta.dy / level,
+            _gestureVolume!,
             0.0,
             plPlayerController.maxVolume,
           );
@@ -1646,6 +1663,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   }
 
   void _onPointerPanZoomEnd(PointerPanZoomEndEvent event) {
+    _gestureVolume = null;
     if (_gestureType == .horizontal) {
       _onHorizontalDragEnd();
     }
@@ -1654,10 +1672,9 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
-      final volume = desktopVolumeAfterScroll(
+      final volume = _scrollVolume.apply(
         plPlayerController.volume.value,
         event.scrollDelta.dy,
-        plPlayerController.maxVolume,
       );
       plPlayerController.setVolume(volume);
     }

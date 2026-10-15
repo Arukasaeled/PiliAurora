@@ -100,7 +100,7 @@ class PlayerInfoDialog extends StatelessWidget {
       (
         '音量',
         volumeValue != null && volumeValue.isFinite
-            ? '${volumeValue.toStringAsFixed(1)}%'
+            ? '${volumeValue.round()}%'
             : '暂无',
       ),
     ];
