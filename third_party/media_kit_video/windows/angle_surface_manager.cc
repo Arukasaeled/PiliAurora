@@ -100,9 +100,6 @@ void ANGLESurfaceManager::Create() {
 
 void ANGLESurfaceManager::CleanUp(bool release_context) {
   if (release_context) {
-    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
-      eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
-    }
     if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) {
       eglDestroyContext(display_, context_);
       context_ = EGL_NO_CONTEXT;
@@ -297,11 +294,7 @@ bool ANGLESurfaceManager::CreateAndBindEGLSurface() {
   if (surface_ == EGL_NO_SURFACE) {
     FAIL("eglCreatePbufferFromClientBuffer");
   }
-  GLuint t;
-  glGenTextures(1, &t);
-  glBindTexture(GL_TEXTURE_2D, t);
-  eglBindTexImage(display_, surface_, EGL_BACK_BUFFER);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  // Surface 的 D3D 纹理由默认 framebuffer 绘制，再通过 Read 复制给 Flutter。
+  // 创建或扩容时不额外绑定 GL 纹理，避免改变 mpv 渲染上下文的纹理状态。
   return true;
 }

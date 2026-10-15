@@ -8,6 +8,11 @@ Windows 通过 media_kit 的 libmpv 渲染接口和 ANGLE 共享纹理输出视�
 
 初始纹理 ID 用于完成 Dart 控制器创建，视频首帧就绪另行通知。真实纹理替换要等渲染成功后发布；同尺寸请求沿用已发布的画面。源尺寸由 Dart 的 `video-out-params` 观察事件送入原生队列，避免渲染线程同步查询正在等待首帧的 mpv 核心。
 
+ANGLE Surface 的 D3D 纹理作为默认 framebuffer 的绘制目标，随后通过 D3D 复制供 Flutter
+读取。创建与扩容时不生成额外 GL 纹理或调用 `eglBindTexImage`，避免改动 mpv 共用的
+GL 纹理状态。真实直播的首次播放、刷新与纹理像素验证见
+[`windows_live_startup.dart`](../tool/probes/playback/windows_live_startup.dart) 及[运行说明](../tool/probes/README.md#windows-直播首帧探针)。
+
 输出尺寸策略和截图交接位于 [`view.dart`](../lib/plugin/pl_player/view/view.dart) 与 [`video_output_resizer.dart`](../lib/plugin/pl_player/utils/video_output_resizer.dart)。Windows 首次检测 Flutter 窗口所在显示器的物理尺寸并缓存上限，窗口布局变化由 Flutter 缩放。输出限幅降低渲染目标的开销，媒体解码仍使用源分辨率。
 
 ## 超分切换

@@ -167,6 +167,33 @@ uv run --locked python tool/probes/playback/playback_network_recovery_probe.py
 
 通过 FVM 运行 Flutter 测试，生成文件写入 `build/playback-network-diagnosis/` 下的临时目录，运行结束后自动清理。原生播放器由状态桩替代，真实网络传输、GPU、MediaCodec 和长时间播放需要实机验证。
 
+## Windows 直播首帧探针
+
+`playback/windows_live_startup.dart` 使用实际 Flutter、ANGLE 与 libmpv，按直播的
+“暂停加载 → 开始播放 → 挂载控件”顺序检查首次播放和刷新。断言纹理包含有效像素、
+没有 libmpv 渲染错误、D3D11 硬解保持启用；设置 `expectAudio` 时还检查音频时间推进。
+探针使用 `ao=null`，扬声器声音需另外验证。
+
+在 `build/` 下准备 UTF-8 JSON 清单，样片应有可见内容；直播流须在测试期间有效。
+地址从清单读取，签名地址不要写入构建参数或提交到仓库。可分别加入 HEVC/AVC 直播、
+本地视频，以及带 `width`、`height` 的固定输出对照：
+
+```json
+[
+  {"source": "E:/media/sample.mp4", "expectAudio": true},
+  {"source": "E:/media/sample.mp4", "width": 1920, "height": 1080}
+]
+```
+
+```powershell
+fvm flutter build windows --debug --no-pub --target tool/probes/playback/windows_live_startup.dart --dart-define=LIVE_STARTUP_INPUT=<清单绝对路径> --dart-define=LIVE_STARTUP_OUTPUT=<报告绝对路径>
+& build/windows/x64/runner/Debug/PiliAurora.exe
+```
+
+报告记录各媒体首次播放与刷新的像素范围、渲染错误数、实际解码器和音频时间推进结果，
+不记录媒体地址。像素断言会将纯黑或纯色内容判为失败，使用可见且有颜色变化的样片。
+结束后按[构建与测试](../../doc/build-and-test.md#构建)重新构建应用默认入口。
+
 ## Windows 超分切换探针
 
 `playback/windows_shader_switch.dart` 使用实际 Flutter、ANGLE 与 libmpv 检查 shader 切换、纹理更新、硬解、暂停状态、音频时间线和私有内存。先确认[mpv 预编译包](../../third_party/mpv/README.md)完整，并准备含音轨的本地视频，再构建专用入口：

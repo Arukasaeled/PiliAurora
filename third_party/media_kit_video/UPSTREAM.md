@@ -14,6 +14,12 @@
 
 本地维护修正：补齐字幕文档模板的闭合标签，不改变生产行为。
 
+2026-10-15：Windows 创建/扩容 EGL Surface 时移除额外的 GL 纹理生成、绑定和
+`eglBindTexImage`，同步移除对应释放。输出继续由 mpv 绘制到默认 framebuffer，
+通过 D3D 复制交给 Flutter。真实 HEVC/AVC FLV 直播首次播放复现的全黑画面及
+`INVALID_FRAMEBUFFER_OPERATION` 在移除此绑定后消失；验证入口为
+`tool/probes/playback/windows_live_startup.dart`。
+
 2026-10-09：Android 自动检测设备物理像素分辨率作为输出上限；超限源等比缩小，较小的源保持原尺寸，
 一个媒体加载周期内固定，不再由 Flutter 视口触发原生 resize。增加可选 Surface
 生命周期诊断回调、原生事件顺序与单调时钟；Windows 输出路径不变。
