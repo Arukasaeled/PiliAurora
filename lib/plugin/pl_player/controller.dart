@@ -206,6 +206,7 @@ class PlPlayerController
       _activeOwner?.isActive == true ? _activeOwner : null;
   ValueListenable<List<int>> get videoFrameTimings =>
       _runtime.videoFrameTimings;
+  ValueListenable<bool> get videoFramePresented => _runtime.videoFramePresented;
   ValueListenable<bool> get videoDisplaySyncActive =>
       _runtime.videoDisplaySyncActive;
   double get playbackVolumePercent =>
@@ -313,7 +314,10 @@ class PlPlayerController
         _desktopWindowPresented ||
         snapshot.loadId != loadId ||
         snapshot.phase != PlaybackPhase.ready ||
-        snapshot.actual.playing != true) {
+        snapshot.actual.playing != true ||
+        (!onlyPlayAudio.value &&
+            snapshot.capabilities.hasVideo != false &&
+            !videoFramePresented.value)) {
       return;
     }
     _desktopWindowPresented = true;

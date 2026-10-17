@@ -153,6 +153,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   final _videoKey = GlobalKey();
   final _videoFrameKey = GlobalKey();
   late final VideoOutputHandoff _videoOutputHandoff;
+  late final Listenable _videoPresentation;
   late final VideoOutputPaintBarrier _videoOutputPaintBarrier;
 
   final RxDouble _brightnessValue = 0.0.obs;
@@ -216,6 +217,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     final visible =
         (val ||
             plPlayerController.dataStatus.loading ||
+            _waitingForVideoFrame ||
             plPlayerController.dataStatus.error) &&
         !plPlayerController.controlsLock.value;
 
@@ -262,6 +264,9 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     }
   }
 
+  void _onFramePresentationChanged() =>
+      _onControlChanged(plPlayerController.showControls.value);
+
   @override
   void initState() {
     super.initState();
@@ -278,12 +283,16 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       value:
           plPlayerController.showControls.value ||
               plPlayerController.dataStatus.loading ||
+              _waitingForVideoFrame ||
               plPlayerController.dataStatus.error
           ? 1
           : 0,
     );
     _loadingListener = plPlayerController.dataStatus.listen(
       (_) => _onControlChanged(plPlayerController.showControls.value),
+    );
+    plPlayerController.videoFramePresented.addListener(
+      _onFramePresentationChanged,
     );
     videoController = plPlayerController.videoController!;
     _videoOutputPaintBarrier = VideoOutputPaintBarrier();
@@ -292,6 +301,10 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       capture: _captureVideoOutputFrame,
       waitForPaint: () => WidgetsBinding.instance.endOfFrame,
     );
+    _videoPresentation = Listenable.merge([
+      _videoOutputHandoff,
+      plPlayerController.videoFramePresented,
+    ]);
     _videoOutputResizer = VideoOutputResizer(
       enabled: _limitWindowsVideoOutput,
       settleDelay: const Duration(milliseconds: 100),
@@ -441,6 +454,9 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     _videoOutputPaintBarrier.dispose();
     _controlsListener?.cancel();
     _loadingListener?.cancel();
+    plPlayerController.videoFramePresented.removeListener(
+      _onFramePresentationChanged,
+    );
     _animationController.dispose();
     _transformationController.dispose();
     _removeDmAction();
@@ -1718,10 +1734,11 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
         // 加载或替换输出时遮住中间画面；底层纹理继续参与 raster。
         ListenableBuilder(
-          listenable: _videoOutputHandoff,
+          listenable: _videoPresentation,
           builder: (context, _) => Obx(
             () =>
                 plPlayerController.dataStatus.loading ||
+                    _waitingForVideoFrame ||
                     _videoOutputHandoff.image != null
                 ? Positioned.fill(
                     child: IgnorePointer(child: ColoredBox(color: widget.fill)),
@@ -2214,9 +2231,10 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
         ],
 
         ListenableBuilder(
-          listenable: _videoOutputHandoff,
+          listenable: _videoPresentation,
           builder: (context, _) => Obx(() {
             if (plPlayerController.dataStatus.loading ||
+                _waitingForVideoFrame ||
                 plPlayerController.dataStatus.error ||
                 _videoOutputHandoff.image != null ||
                 (plPlayerController.isBuffering.value &&
@@ -2308,92 +2326,104 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     return child;
   }
 
+  bool get _waitingForVideoFrame =>
+      (Platform.isAndroid || Platform.isWindows) &&
+      plPlayerController.dataStatus.loaded &&
+      !plPlayerController.onlyPlayAudio.value &&
+      plPlayerController.currentPlaybackSnapshot.capabilities.hasVideo !=
+          false &&
+      !plPlayerController.videoFramePresented.value;
+
   Widget get _videoWidget {
     return Container(
       clipBehavior: .none,
       width: maxWidth,
       height: maxHeight,
       color: widget.fill,
-      child: Obx(
-        () {
-          final loaded = plPlayerController.dataStatus.loaded;
-          if (loaded && plPlayerController.isDesktopPip) {
-            final loadId = plPlayerController.currentPlaybackSnapshot.loadId;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!mounted ||
-                  loadId == null ||
-                  _videoOutputHandoff.image != null) {
-                return;
-              }
-              final size = _videoFrameKey.currentContext?.size;
-              final hasVideo =
-                  plPlayerController
-                      .currentPlaybackSnapshot
-                      .capabilities
-                      .hasVideo !=
-                  false;
-              if (!hasVideo || (size != null && !size.isEmpty)) {
-                unawaited(
-                  plPlayerController.notifyDesktopFramePresented(loadId),
-                );
-              }
-            });
-          }
-          return MouseInteractiveViewer(
-            scaleEnabled: !plPlayerController.controlsLock.value,
-            pointerSignalFallback: _onPointerSignal,
-            onPointerPanZoomUpdate: _onPointerPanZoomUpdate,
-            onPointerPanZoomEnd: _onPointerPanZoomEnd,
-            onPointerDown: _onPointerDown,
-            onPointerUp: _onPointerUp,
-            onPointerCancel: _onPointerCancel,
-            onPanStart: _onPanStart,
-            onPanUpdate: _onPanUpdate,
-            onPanEnd: _onPanEnd,
-            onScaleUpdate: _onScaleUpdate,
-            scaleGestureRecognizer: _scaleGestureRecognizer,
-            panEnabled: false,
-            minScale: plPlayerController.enableShrinkVideoSize ? 0.75 : 1,
-            maxScale: 2.0,
-            boundaryMargin: plPlayerController.enableShrinkVideoSize
-                ? const .all(double.infinity)
-                : .zero,
-            panAxis: .aligned,
-            transformationController: _transformationController,
-            childKey: _videoKey,
-            child: RepaintBoundary(
-              key: _videoKey,
-              child: Obx(
-                () {
-                  final videoFit = plPlayerController.videoFit.value;
-                  return Transform.flip(
-                    flipX: plPlayerController.flipX.value,
-                    flipY: plPlayerController.flipY.value,
-                    child: FittedBox(
-                      fit: videoFit.boxFit,
-                      alignment: widget.alignment,
-                      child: (Platform.isAndroid || Platform.isWindows)
-                          ? VideoOutputHandoffView(
-                              handoff: _videoOutputHandoff,
-                              frameKey: _videoFrameKey,
-                              child: SimpleVideo(
+      child: ListenableBuilder(
+        listenable: plPlayerController.videoFramePresented,
+        builder: (context, _) => Obx(
+          () {
+            final loaded = plPlayerController.dataStatus.loaded;
+            if (loaded && plPlayerController.isDesktopPip) {
+              final loadId = plPlayerController.currentPlaybackSnapshot.loadId;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted ||
+                    loadId == null ||
+                    _videoOutputHandoff.image != null) {
+                  return;
+                }
+                final size = _videoFrameKey.currentContext?.size;
+                final hasVideo =
+                    plPlayerController
+                        .currentPlaybackSnapshot
+                        .capabilities
+                        .hasVideo !=
+                    false;
+                if (!hasVideo || (size != null && !size.isEmpty)) {
+                  unawaited(
+                    plPlayerController.notifyDesktopFramePresented(loadId),
+                  );
+                }
+              });
+            }
+            return MouseInteractiveViewer(
+              scaleEnabled: !plPlayerController.controlsLock.value,
+              pointerSignalFallback: _onPointerSignal,
+              onPointerPanZoomUpdate: _onPointerPanZoomUpdate,
+              onPointerPanZoomEnd: _onPointerPanZoomEnd,
+              onPointerDown: _onPointerDown,
+              onPointerUp: _onPointerUp,
+              onPointerCancel: _onPointerCancel,
+              onPanStart: _onPanStart,
+              onPanUpdate: _onPanUpdate,
+              onPanEnd: _onPanEnd,
+              onScaleUpdate: _onScaleUpdate,
+              scaleGestureRecognizer: _scaleGestureRecognizer,
+              panEnabled: false,
+              minScale: plPlayerController.enableShrinkVideoSize ? 0.75 : 1,
+              maxScale: 2.0,
+              boundaryMargin: plPlayerController.enableShrinkVideoSize
+                  ? const .all(double.infinity)
+                  : .zero,
+              panAxis: .aligned,
+              transformationController: _transformationController,
+              childKey: _videoKey,
+              child: RepaintBoundary(
+                key: _videoKey,
+                child: Obx(
+                  () {
+                    final videoFit = plPlayerController.videoFit.value;
+                    return Transform.flip(
+                      flipX: plPlayerController.flipX.value,
+                      flipY: plPlayerController.flipY.value,
+                      child: FittedBox(
+                        fit: videoFit.boxFit,
+                        alignment: widget.alignment,
+                        child: (Platform.isAndroid || Platform.isWindows)
+                            ? VideoOutputHandoffView(
+                                handoff: _videoOutputHandoff,
+                                frameKey: _videoFrameKey,
+                                child: SimpleVideo(
+                                  controller:
+                                      plPlayerController.videoController!,
+                                  fill: widget.fill,
+                                  aspectRatio: videoFit.aspectRatio,
+                                ),
+                              )
+                            : SimpleVideo(
                                 controller: plPlayerController.videoController!,
                                 fill: widget.fill,
                                 aspectRatio: videoFit.aspectRatio,
                               ),
-                            )
-                          : SimpleVideo(
-                              controller: plPlayerController.videoController!,
-                              fill: widget.fill,
-                              aspectRatio: videoFit.aspectRatio,
-                            ),
-                    ),
-                  );
-                },
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
