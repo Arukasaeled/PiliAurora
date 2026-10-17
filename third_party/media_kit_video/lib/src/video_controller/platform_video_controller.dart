@@ -11,6 +11,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/src/video_output_size_policy.dart';
 import 'package:media_kit_video/src/video_controller/android_video_controller/android_video_controller.dart';
 import 'package:media_kit_video/src/video_controller/native_video_controller/native_video_controller.dart';
+import 'package:media_kit_video/src/video_controller/output_operation.dart';
 
 /// {@template platform_video_controller}
 ///
@@ -36,6 +37,13 @@ abstract class PlatformVideoController {
   /// [Rect] of the video output, received from the native implementation.
   final ValueNotifier<Rect?> rect = ValueNotifier<Rect?>(null);
 
+  final StreamController<VideoOutputProgress> _outputProgressController =
+      StreamController<VideoOutputProgress>.broadcast(sync: true);
+
+  /// Batches of frames that the platform texture consumer has acquired.
+  Stream<VideoOutputProgress> get outputProgress =>
+      _outputProgressController.stream;
+
   /// {@macro platform_video_controller}
   PlatformVideoController(this.player, this.configuration);
 
@@ -50,6 +58,54 @@ abstract class PlatformVideoController {
   /// 重建 Windows 视频渲染资源；调用者先将 mpv 的 vo 切到 null，完成后恢复。
   Future<void> resetRenderer() =>
       Future.error(UnsupportedError('Renderer reset is unavailable'));
+
+  Future<OutputLoadSelectionResult> prepareForLoad(
+    OutputOperationToken token,
+    OutputPreparationRequest request,
+  ) async => OutputLoadSelectionResult(
+    strategy: OutputLoadSelectionStrategy.unknown,
+    evidence: OutputLoadSelectionEvidence.unknown,
+    outputEpoch: token.outputEpoch,
+  );
+
+  Future<OutputPreparationResult> confirmFileLoaded(
+    OutputOperationToken token,
+    NativeVideoOutputParameters? parameters, {
+    required List<NativeVideoTrackMetadata>? videoTracks,
+    required String? allowedTrackId,
+  }) async => OutputPreparationResult(
+    strategy: OutputPreparationStrategy.unknown,
+    evidence: OutputPreparationEvidence.unknown,
+    outputEpoch: token.outputEpoch,
+  );
+
+  /// Stages the token that the next native on-load hook will use.
+  Future<void> beginOutputForLoad(OutputOperationToken token) async {}
+
+  /// Waits for this load's current output attachment receipt.
+  Future<OutputPreparationResult> waitForOutputAttach(
+    OutputOperationToken token,
+  ) async => OutputPreparationResult(
+    strategy: OutputPreparationStrategy.unknown,
+    evidence: OutputPreparationEvidence.unknown,
+    outputEpoch: token.outputEpoch,
+  );
+
+  Future<void> invalidateOutputGeneration(OutputOperationToken token) async {}
+
+  Future<void> releaseOutput() async {}
+
+  @protected
+  void emitOutputProgress(VideoOutputProgress progress) {
+    if (!_outputProgressController.isClosed) {
+      _outputProgressController.add(progress);
+    }
+  }
+
+  @protected
+  void closeOutputProgress() {
+    unawaited(_outputProgressController.close());
+  }
 
   /// A [Future] that completes when the first video frame has been rendered.
   Future<void> get waitUntilFirstFrameRendered =>
@@ -131,9 +187,9 @@ class VideoControllerConfiguration {
 
   /// Whether to attach `android.view.Surface` after video parameters are known.
   ///
-  /// Default:
-  /// * [vo] == gpu : `true`
-  /// * [vo] != gpu : `false`
+  /// The default Android path configures a verified single-track GPU Surface
+  /// during the preloaded hook. Setting this to `true` keeps attachment on the
+  /// post-load compatibility path.
   final bool? androidAttachSurfaceAfterVideoParameters;
 
   /// {@macro video_controller_configuration}

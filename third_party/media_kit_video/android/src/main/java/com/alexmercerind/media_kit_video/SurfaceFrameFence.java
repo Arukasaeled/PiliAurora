@@ -7,13 +7,16 @@ final class SurfaceFrameFence {
     final int height;
     final long generation;
     final long notBefore;
+    final OutputOperationToken token;
 
-    SurfaceFrameFence(String request, int width, int height, long generation, long notBefore) {
+    SurfaceFrameFence(String request, int width, int height, long generation, long notBefore,
+                      OutputOperationToken token) {
         this.request = request;
         this.width = width;
         this.height = height;
         this.generation = generation;
         this.notBefore = notBefore;
+        this.token = token;
     }
 
     boolean accepts(long consumedTimestamp, int width, int height, long generation) {

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'native_destroy.dart';
+
 /// Records the backend which actually owns each handle. Disposal never probes
 /// a different backend or races native destruction against asynchronous stop.
 class EventLoopLifecycle<T> {
@@ -27,6 +29,7 @@ class EventLoopLifecycle<T> {
       handle = await nativeCreate();
       stop = nativeDispose;
     } catch (error, stack) {
+      if (error is NativeHandleCleanupFailure) rethrow;
       onNativeFailure(error, stack);
       handle = await isolateCreate();
       stop = isolateDispose;

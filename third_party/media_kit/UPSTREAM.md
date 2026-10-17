@@ -15,3 +15,5 @@
 2026-10-09：增加基于原生事件的字符串属性观察；同步和异步控制请求向调用方传递失败并保留错误流，异常路径释放参数内存。播放器创建传播初始化失败并回收句柄，`osc` 在初始化前按选项设置。seek 排队执行时核对媒体身份。
 
 2026-10-10：Android 带独立音轨的媒体使用 `absolute+exact` 跳转，避免视频落到较早关键帧后等待请求位置的音轨；同文件播放保留关键帧跳转。识别当前媒体的 `audio-files-append` / `audio-files`，以及通过 `AudioTrack.uri` 选中的外部音轨。
+
+2026-10-16：以单一 native event reader 复制 start/file-loaded/end-file、track-list 变化与队列溢出事实；仅在读到 NONE 后发出批次 drain 确认。生命周期 hook 使用受限同步 API，追踪借用及 continue-once，带取消/截止时间竞争。播放器释放等待 hook、输出、reader 退出后在 worker isolate 执行 mpv destroy，并公开真实 released 回执；FILE_LOADED 同批次提供可空的轨道、音频和 seekability 快照。后续 video-out-params 变化复制为带当前文件身份的事件，供暂停加载等待实际输出几何。

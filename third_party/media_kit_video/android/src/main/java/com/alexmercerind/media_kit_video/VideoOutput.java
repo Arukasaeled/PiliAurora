@@ -18,7 +18,9 @@ import android.view.Surface;
 
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.Locale;
+import java.util.List;
 
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.view.TextureRegistry;
@@ -47,6 +49,10 @@ public class VideoOutput {
     private int suppressedDiagnosticErrors;
     private int bufferWidth;
     private int bufferHeight;
+    private final OutputOperationGate operationGate = new OutputOperationGate();
+    private final List<MethodChannel.Result> disposeResults = new ArrayList<>();
+    private boolean disposeComplete;
+    private String disposeError;
     private long lastConsumedTimestamp;
     private long configuredAtNs;
     private long consumedFrames;
@@ -56,6 +62,9 @@ public class VideoOutput {
     private final VideoFrameSamples frameSamples;
     private boolean frameReportPending;
     private final Runnable reportFrameSamples = this::reportFrameSamples;
+    private final VideoFrameSamples consumedFrameSamples = new VideoFrameSamples();
+    private boolean consumedFrameReportPending;
+    private final Runnable reportConsumedFrameProgress = this::reportConsumedFrameProgress;
     private void reportFrameSamples() {
         synchronized (lock) {
             frameReportPending = false;
@@ -71,8 +80,34 @@ public class VideoOutput {
 
     private void resetFrameSamples() {
         if (frameSamples != null) frameSamples.clear();
+        consumedFrameSamples.clear();
         mainHandler.removeCallbacks(reportFrameSamples);
+        mainHandler.removeCallbacks(reportConsumedFrameProgress);
         frameReportPending = false;
+        consumedFrameReportPending = false;
+    }
+
+    private void reportConsumedFrameProgress() {
+        synchronized (lock) {
+            consumedFrameReportPending = false;
+            final OutputOperationToken token = operationGate.activeToken();
+            if (!isCurrentToken(token)) {
+                consumedFrameSamples.clear();
+                return;
+            }
+            final java.util.ArrayList<Long> samples = consumedFrameSamples.drain();
+            if (samples.isEmpty()) return;
+            final HashMap<String, Object> tokenData = new HashMap<>();
+            tokenData.put("runtimeId", token.runtimeId);
+            tokenData.put("loadId", token.loadId);
+            tokenData.put("outputEpoch", token.outputEpoch);
+            tokenData.put("configRevision", token.configRevision);
+            final HashMap<String, Object> data = new HashMap<>();
+            data.put("handle", handle);
+            data.put("token", tokenData);
+            data.put("consumedAtMonotonicUs", samples);
+            channelReference.invokeMethod("VideoOutput.ConsumedFrames", data);
+        }
     }
 
     private void onFrameRequested() {
@@ -159,8 +194,19 @@ public class VideoOutput {
                 } catch (RuntimeException e) {
                     return;
                 }
-                if (timestamp > configuredAtNs && timestamp != lastConsumedTimestamp) {
+                final boolean newTimestamp = timestamp > 0 && timestamp != lastConsumedTimestamp;
+                if (timestamp > configuredAtNs && newTimestamp) {
                     consumedFrames++;
+                }
+                final long consumedAtNs = System.nanoTime();
+                if (configuredAtNs > 0 && timestamp > configuredAtNs && newTimestamp &&
+                        SurfaceFrameFence.hasAutomaticEglClock(timestamp, consumedAtNs) &&
+                        isCurrentToken(operationGate.activeToken())) {
+                    consumedFrameSamples.add(System.nanoTime());
+                    if (!consumedFrameReportPending) {
+                        consumedFrameReportPending = true;
+                        mainHandler.postDelayed(reportConsumedFrameProgress, 250);
+                    }
                 }
                 lastConsumedTimestamp = timestamp;
                 if (!waitUntilFirstFrameRenderedNotify && timestamp > 0) {
@@ -177,7 +223,7 @@ public class VideoOutput {
                     });
                 }
                 final SurfaceFrameFence fence = frameFence;
-                if (fence != null && fence.accepts(
+                if (fence != null && isCurrentToken(fence.token) && fence.accepts(
                         timestamp, bufferWidth, bufferHeight, surfaceGeneration)) {
                     mainHandler.post(() -> {
                         synchronized (lock) {
@@ -191,42 +237,107 @@ public class VideoOutput {
         // VideoSurfaceTexture 转发引擎的 frame-available 回调；消费监听确认首帧与交接。
     }
 
-    public void dispose() {
+    public void dispose(MethodChannel.Result result) {
         synchronized (lock) {
+            if (disposeComplete) {
+                if (disposeError == null) result.success(null);
+                else result.error("surface-release-failed", disposeError, null);
+                return;
+            }
+            disposeResults.add(result);
+            if (disposed) return;
             disposed = true;
+            operationGate.revoke();
             resetFrameSamples();
             surfaceGeneration++;
             finishFrameWait(false);
         }
+        Throwable releaseFailure = null;
         try {
             surfaceTextureEntry.release();
         } catch (Throwable e) {
-            e.printStackTrace();
+            releaseFailure = e;
         }
         try {
-            surface.release();
+            if (surface != null) surface.release();
+            surface = null;
         } catch (Throwable e) {
-            e.printStackTrace();
+            if (releaseFailure == null) releaseFailure = e;
         }
-        try {
-            final Handler handler = new Handler(Looper.getMainLooper());
-            handler.postDelayed(() -> {
-                try {
-                    // Invoke DeleteGlobalRef after a voluntary delay to eliminate possibility of libmpv referencing it sometime in the near future.
-                    deleteGlobalObjectRef.invoke(null, wid);
-                    Log.i("media_kit", String.format(Locale.ENGLISH, "com.alexmercerind.mediakitandroidhelper.MediaKitAndroidHelper.deleteGlobalObjectRef: %d", wid));
-                } catch (Throwable e) {
-                    diagnostic("surface.native-error", e);
-                e.printStackTrace();
-                }
-            }, 5000);
-        } catch (Throwable e) {
-            e.printStackTrace();
+        final Throwable initialFailure = releaseFailure;
+        if (wid == 0) {
+            completeDispose(initialFailure);
+            return;
+        }
+        // Keep the Java global reference until the same conservative delay used
+        // by the previous implementation, and report completion only after JNI.
+        final boolean posted = mainHandler.postDelayed(() -> {
+            Throwable failure = initialFailure;
+            try {
+                deleteGlobalObjectRef.invoke(null, wid);
+                Log.i("media_kit", String.format(Locale.ENGLISH,
+                        "com.alexmercerind.mediakitandroidhelper.MediaKitAndroidHelper.deleteGlobalObjectRef: %d", wid));
+                wid = 0;
+            } catch (Throwable e) {
+                diagnostic("surface.native-error", e);
+                if (failure == null) failure = e;
+            }
+            completeDispose(failure);
+        }, 5000);
+        if (!posted) completeDispose(new IllegalStateException("Could not schedule Java Surface reference release"));
+    }
+
+    private void completeDispose(Throwable error) {
+        final List<MethodChannel.Result> waiters;
+        synchronized (lock) {
+            if (disposeComplete) return;
+            disposeComplete = true;
+            disposeError = error == null ? null : error.toString();
+            waiters = new ArrayList<>(disposeResults);
+            disposeResults.clear();
+        }
+        for (MethodChannel.Result waiter : waiters) {
+            if (error == null) waiter.success(null);
+            else waiter.error("surface-release-failed", disposeError, null);
         }
     }
 
-    public long createSurface() {
+    public boolean beginOutputOperation(OutputOperationToken token) {
         synchronized (lock) {
+            if (disposed || !operationGate.begin(token)) return false;
+            configuredAtNs = System.nanoTime();
+            consumedFrameSamples.clear();
+            surfaceGeneration++;
+            finishFrameWait(false);
+            return true;
+        }
+    }
+
+    public boolean invalidateOutputGeneration(OutputOperationToken token) {
+        synchronized (lock) {
+            if (!operationGate.invalidate(token)) return false;
+            consumedFrameSamples.clear();
+            mainHandler.removeCallbacks(reportConsumedFrameProgress);
+            consumedFrameReportPending = false;
+            surfaceGeneration++;
+            finishFrameWait(false);
+            return true;
+        }
+    }
+
+    public boolean isDisposed() {
+        synchronized (lock) {
+            return disposed;
+        }
+    }
+
+    private boolean isCurrentToken(OutputOperationToken token) {
+        return !disposed && operationGate.isCurrent(token);
+    }
+
+    public long createSurface(OutputOperationToken token) {
+        synchronized (lock) {
+            if (!isCurrentToken(token)) throw new IllegalStateException("Stale output generation");
             surfaceGeneration++;
             lastConsumedTimestamp = 0;
             resetFrameSamples();
@@ -260,9 +371,9 @@ public class VideoOutput {
         }
     }
 
-    public void setSurfaceTextureSize(int width, int height) {
+    public void setSurfaceTextureSize(OutputOperationToken token, int width, int height) {
         synchronized (lock) {
-            if (disposed || width <= 0 || height <= 0) {
+            if (!isCurrentToken(token) || width <= 0 || height <= 0) {
                 throw new IllegalStateException("Invalid or disposed video surface");
             }
             finishFrameWait(false);
@@ -277,9 +388,9 @@ public class VideoOutput {
         }
     }
 
-    public boolean canWaitForSurfaceFrame() {
+    public boolean canWaitForSurfaceFrame(OutputOperationToken token) {
         synchronized (lock) {
-            return !disposed && SurfaceFrameFence.hasAutomaticEglClock(
+            return isCurrentToken(token) && SurfaceFrameFence.hasAutomaticEglClock(
                     lastConsumedTimestamp, System.nanoTime());
         }
     }
@@ -296,10 +407,10 @@ public class VideoOutput {
         }
     }
 
-    public void waitForSurfaceFrame(String request, int width, int height,
+    public void waitForSurfaceFrame(OutputOperationToken token, String request, int width, int height,
                                     MethodChannel.Result result) {
         synchronized (lock) {
-            if (disposed || bufferWidth != width || bufferHeight != height) {
+            if (!isCurrentToken(token) || bufferWidth != width || bufferHeight != height) {
                 result.error("surface-invalidated", "Video surface changed before frame wait", null);
                 return;
             }
@@ -307,14 +418,17 @@ public class VideoOutput {
             // Dart calls this only after synchronous mpv EXTERNAL_RESIZE has
             // returned. Queued pre-configure EGL frames have older timestamps.
             frameFence = new SurfaceFrameFence(
-                    request, width, height, surfaceGeneration, System.nanoTime());
+                    request, width, height, surfaceGeneration, System.nanoTime(), token);
             frameResult = result;
         }
     }
 
-    public void cancelSurfaceFrameWait(String request) {
+    public void cancelSurfaceFrameWait(OutputOperationToken token, String request) {
         synchronized (lock) {
-            if (frameFence != null && frameFence.request.equals(request)) finishFrameWait(false);
+            if (isCurrentToken(token) && frameFence != null &&
+                    frameFence.token.sameAs(token) && frameFence.request.equals(request)) {
+                finishFrameWait(false);
+            }
         }
     }
 

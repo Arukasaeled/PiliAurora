@@ -3,7 +3,8 @@ package com.alexmercerind.media_kit_video;
 /** Host-JVM regression for the frame receipt predicate (not GPU pixels). */
 public final class SurfaceFrameFenceProbe {
     public static void main(String[] args) {
-        final SurfaceFrameFence fence = new SurfaceFrameFence("7", 1156, 650, 2, 10_000);
+        final OutputOperationToken token = new OutputOperationToken(4, 2, 8, 1);
+        final SurfaceFrameFence fence = new SurfaceFrameFence("7", 1156, 650, 2, 10_000, token);
         check(!fence.accepts(9_999, 1156, 650, 2), "queued old frame");
         check(!fence.accepts(10_000, 1156, 650, 2), "boundary frame");
         check(!fence.accepts(10_001, 1920, 1080, 2), "other dimensions");

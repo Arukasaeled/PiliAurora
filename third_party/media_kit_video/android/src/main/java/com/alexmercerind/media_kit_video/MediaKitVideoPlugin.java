@@ -12,6 +12,7 @@ import android.app.Activity;
 import androidx.annotation.NonNull;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
@@ -104,11 +105,15 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                 case "VideoOutputManager.Create": {
                     final String handle = call.argument("handle");
                     if (handle != null) {
-                        final VideoOutput videoOutput = videoOutputManager.create(Long.parseLong(handle),
-                                Boolean.TRUE.equals(call.argument("reportTimings")));
-                        final HashMap<String, Long> data = new HashMap<>();
-                        data.put("id", videoOutput.id);
-                        result.success(data);
+                        try {
+                            final VideoOutput videoOutput = videoOutputManager.create(Long.parseLong(handle),
+                                    Boolean.TRUE.equals(call.argument("reportTimings")));
+                            final HashMap<String, Long> data = new HashMap<>();
+                            data.put("id", videoOutput.id);
+                            result.success(data);
+                        } catch (RuntimeException e) {
+                            result.error("video-output-unavailable", e.getMessage(), null);
+                        }
                     } else {
                         result.success(null);
                     }
@@ -117,13 +122,30 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                 case "VideoOutputManager.CreateSurface": {
                     final String handle = call.argument("handle");
                     if (handle != null) {
-                        final long wid = videoOutputManager.createSurface(Long.parseLong(handle));
-                        final HashMap<String, Long> data = new HashMap<>();
-                        data.put("wid", wid);
-                        result.success(data);
+                        try {
+                            final long wid = videoOutputManager.createSurface(
+                                    Long.parseLong(handle), outputToken(call));
+                            final HashMap<String, Long> data = new HashMap<>();
+                            data.put("wid", wid);
+                            result.success(data);
+                        } catch (RuntimeException e) {
+                            result.error("surface-create-failed", e.getMessage(), null);
+                        }
                     } else {
                         result.success(null);
                     }
+                    break;
+                }
+                case "VideoOutputManager.BeginOutputOperation": {
+                    final String handle = call.argument("handle");
+                    result.success(handle != null && videoOutputManager.beginOutputOperation(
+                            Long.parseLong(handle), outputToken(call)));
+                    break;
+                }
+                case "VideoOutputManager.InvalidateOutputGeneration": {
+                    final String handle = call.argument("handle");
+                    result.success(handle != null && videoOutputManager.invalidateOutputGeneration(
+                            Long.parseLong(handle), outputToken(call)));
                     break;
                 }
                 case "VideoOutputManager.SetSurfaceTextureSize": {
@@ -133,6 +155,7 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                     try {
                         videoOutputManager.setSurfaceTextureSize(
                                 Long.parseLong(Objects.requireNonNull(handle)),
+                                outputToken(call),
                                 Integer.parseInt(Objects.requireNonNull(width)),
                                 Integer.parseInt(Objects.requireNonNull(height))
                         );
@@ -144,7 +167,8 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                 }
                 case "VideoOutputManager.CanWaitForSurfaceFrame": {
                     final String handle = call.argument("handle");
-                    result.success(handle != null && videoOutputManager.canWaitForSurfaceFrame(Long.parseLong(handle)));
+                    result.success(handle != null && videoOutputManager.canWaitForSurfaceFrame(
+                            Long.parseLong(handle), outputToken(call)));
                     break;
                 }
                 case "VideoOutputManager.FrameState": {
@@ -159,6 +183,7 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                     final String height = call.argument("height");
                     videoOutputManager.waitForSurfaceFrame(
                             Long.parseLong(Objects.requireNonNull(handle)),
+                            outputToken(call),
                             Objects.requireNonNull(request),
                             Integer.parseInt(Objects.requireNonNull(width)),
                             Integer.parseInt(Objects.requireNonNull(height)), result);
@@ -168,7 +193,8 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                     final String handle = call.argument("handle");
                     final String request = call.argument("request");
                     if (handle != null && request != null) {
-                        videoOutputManager.cancelSurfaceFrameWait(Long.parseLong(handle), request);
+                        videoOutputManager.cancelSurfaceFrameWait(
+                                Long.parseLong(handle), outputToken(call), request);
                     }
                     result.success(null);
                     break;
@@ -176,9 +202,10 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                 case "VideoOutputManager.Dispose": {
                     final String handle = call.argument("handle");
                     if (handle != null) {
-                        videoOutputManager.dispose(Long.parseLong(handle));
+                        videoOutputManager.dispose(Long.parseLong(handle), result);
+                    } else {
+                        result.success(null);
                     }
-                    result.success(null);
                     break;
                 }
                 case "Utils.IsEmulator": {
@@ -196,5 +223,9 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
     @Override
     public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
         channel.setMethodCallHandler(null);
+    }
+
+    private static OutputOperationToken outputToken(MethodCall call) {
+        return OutputOperationToken.from((Map<?, ?>) call.arguments);
     }
 }

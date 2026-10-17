@@ -18,7 +18,10 @@ import 'package:media_kit/src/player/platform_player.dart';
 
 import 'package:media_kit/src/player/native/core/initializer.dart';
 import 'package:media_kit/src/player/native/core/native_library.dart';
+import 'package:media_kit/src/player/native/core/native_destroy.dart';
 import 'package:media_kit/src/player/native/player/seek_command.dart';
+import 'package:media_kit/src/player/native/player/native_event.dart';
+import 'package:media_kit/src/player/native/player/native_hook.dart';
 
 import 'package:media_kit/src/player/native/utils/android_helper.dart';
 
@@ -38,6 +41,38 @@ void nativeEnsureInitialized({String? libmpv}) {
   NativeLibrary.ensureInitialized(libmpv: libmpv);
 }
 
+/// Player creation failed while native cleanup could not be confirmed.
+/// Runtime owners must retain their player slot until [released] completes;
+/// this future intentionally stays pending when native ownership is uncertain.
+final class NativePlayerCreationFailure implements Exception {
+  const NativePlayerCreationFailure({
+    required this.cause,
+    required this.cleanupError,
+    required this.released,
+  });
+
+  final Object cause;
+  final Object cleanupError;
+  final Future<void> released;
+
+  bool get cleanupConfirmed => false;
+
+  @override
+  String toString() =>
+      'NativePlayer creation failed and cleanup is unconfirmed: $cause; '
+      '$cleanupError';
+}
+
+final class _NativeTrackListSnapshot {
+  const _NativeTrackListSnapshot({
+    required this.videoTracks,
+    required this.hasAudio,
+  });
+
+  final List<NativeVideoTrackMetadata> videoTracks;
+  final bool? hasAudio;
+}
+
 /// {@template native_player}
 ///
 /// NativePlayer
@@ -52,6 +87,29 @@ class NativePlayer extends PlatformPlayer {
     _future = _create();
   }
 
+  /// Native lifecycle facts copied by the single mpv event reader.
+  Stream<NativePlayerEvent> get nativeEvents => _nativeEventsController.stream;
+
+  /// Completes only after the event reader has exited and mpv has been
+  /// destroyed. A timeout reported by a caller does not cancel this cleanup.
+  Future<void> get released => _released.future;
+
+  /// Registers the runtime's bounded lifecycle-hook handler.
+  NativeHookRegistration registerLifecycleHookHandler(
+    NativeLifecycleHookHandler handler,
+  ) {
+    if (_isDisposing || disposed) {
+      throw StateError('Cannot register hooks on a closing native player');
+    }
+    final entry = _LifecycleHookHandlerEntry(handler);
+    _hookHandlers.add(entry);
+    return NativeHookRegistration(() async {
+      _hookHandlers.remove(entry);
+      entry.revoke();
+      await entry.waitForIdle();
+    });
+  }
+
   static Future<NativePlayer> create({
     PlayerConfiguration configuration = const PlayerConfiguration(),
   }) async {
@@ -59,20 +117,46 @@ class NativePlayer extends PlatformPlayer {
     try {
       await player._future;
       await player.waitForPlayerInitialization;
-    } catch (_) {
+    } catch (error, stack) {
+      player._isDisposing = true;
       player.disposed = true;
-      if (player.ctx != nullptr) {
-        await Initializer.dispose(player.ctx);
-        mpv.mpv_terminate_destroy(player.ctx);
+      if (error is NativeHandleCleanupFailure) {
+        throw NativePlayerCreationFailure(
+          cause: error.cause,
+          cleanupError: error.cleanupError,
+          released: player.released,
+        );
       }
-      rethrow;
+      if (player.ctx != nullptr) {
+        final handle = player.ctx;
+        try {
+          player._flushPendingHooks();
+          await player._hookWork;
+          await player._waitForHookOperations();
+          await Initializer.dispose(handle);
+          await terminateMpvOnWorker(handle.address, NativeLibrary.path);
+          player.ctx = nullptr;
+          unawaited(player._nativeEventsController.close());
+          if (!player._released.isCompleted) player._released.complete();
+        } catch (cleanupError) {
+          player._disposeFailed = true;
+          throw NativePlayerCreationFailure(
+            cause: error,
+            cleanupError: cleanupError,
+            released: player.released,
+          );
+        }
+      } else if (!player._released.isCompleted) {
+        player._released.complete();
+      }
+      Error.throwWithStackTrace(error, stack);
     }
     return player;
   }
 
   @pragma("vm:prefer-inline")
   void throwIfDisposed() {
-    if (disposed) {
+    if (disposed || _disposeFailed) {
       throw AssertionError('[Player] has been disposed');
     }
   }
@@ -80,35 +164,80 @@ class NativePlayer extends PlatformPlayer {
   /// Disposes the [Player] instance & releases the resources.
   @override
   Future<void> dispose() async {
+    if (_isDisposing) {
+      await _released.future;
+      return;
+    }
     throwIfDisposed();
 
     _isDisposing = true;
+    // on_unload remains registered while stop waits for its native hook reply.
+    final Future<void> stopOperation = stop(synchronized: false);
     try {
-      await stop(synchronized: false).timeout(const Duration(seconds: 2));
-    } catch (e, s) {
-      Zone.current.handleUncaughtError(e, s);
+      await stopOperation.timeout(const Duration(seconds: 5));
+    } catch (error) {
+      // stop may still be running. Keep mpv and Java output alive; releasing
+      // either before the stop/hook reply is confirmed would permit stale use.
+      _disposeFailed = true;
+      throw StateError('Native player stop was not confirmed: $error');
     }
 
-    disposed = true;
+    await _hookWork;
+    for (final entry in List<_LifecycleHookHandlerEntry>.of(_hookHandlers)) {
+      entry.revoke();
+    }
+    for (final entry in List<_LifecycleHookHandlerEntry>.of(_hookHandlers)) {
+      await entry.waitForIdle();
+    }
+    await _waitForHookOperations();
 
+    disposed = true;
     for (final observer in _propertyObservers.values) {
       unawaited(observer.close());
     }
     _propertyObservers.clear();
 
-    await super.dispose();
+    final outputReleases = List<Future<void> Function()>.of(release);
+    release.clear();
+    for (final outputRelease in outputReleases) {
+      await outputRelease();
+    }
 
+    // Stream close can wait for application listeners to cancel. It is not a
+    // native-output release acknowledgement and must not hold the release gate.
+    unawaited(
+      super.dispose().catchError((Object error, StackTrace stack) {
+        Zone.current.handleUncaughtError(error, stack);
+      }),
+    );
+
+    // Native output release is confirmed before joining the reader or destroying
+    // mpv, so a timed-out release leaves the whole handle isolated.
     await Initializer.dispose(ctx);
+    _flushPendingHooks();
+    await _hookWork;
+    await _waitForHookOperations();
 
-    Timer(const Duration(seconds: 5), () {
-      mpv.mpv_terminate_destroy(ctx);
-      for (var i in _requests.values) {
-        if (!i.isCompleted) {
-          i.completeError(AssertionError('[Player] has been disposed'));
-        }
+    for (final timer in _requestTimeouts.values) {
+      timer.cancel();
+    }
+    _requestTimeouts.clear();
+    for (final request in _requests.values) {
+      if (!request.isCompleted) {
+        request.completeError(AssertionError('[Player] has been disposed'));
       }
-      _requests.clear();
-    });
+    }
+    _requests.clear();
+    try {
+      await terminateMpvOnWorker(ctx.address, NativeLibrary.path);
+    } catch (_) {
+      // The native handle remains isolated if the worker cannot confirm destroy.
+      _disposeFailed = true;
+      rethrow;
+    }
+    ctx = nullptr;
+    await _nativeEventsController.close();
+    if (!_released.isCompleted) _released.complete();
   }
 
   /// Opens a [Media] or [Playlist] into the [Player].
@@ -599,12 +728,14 @@ class NativePlayer extends PlatformPlayer {
       throwIfDisposed();
       if (media == null || !identical(media, current.firstOrNull)) return;
 
-      await command(nativeSeekCommand(
-        duration,
-        keyframe: Platform.isAndroid,
-        externalAudio: state.track.audio.uri,
-        mediaExtras: media.extras,
-      ));
+      await command(
+        nativeSeekCommand(
+          duration,
+          keyframe: Platform.isAndroid,
+          externalAudio: state.track.audio.uri,
+          mediaExtras: media.extras,
+        ),
+      );
       if (!identical(media, current.firstOrNull)) return;
 
       // It is self explanatory that PlayerState.completed & PlayerStream.completed must enter the false state if seek is called. Typically after EOF.
@@ -1026,8 +1157,13 @@ class NativePlayer extends PlatformPlayer {
     return "";
   }
 
-  Future<void> _handler(Pointer<generated.mpv_event> event) async {
+  void _handler(Pointer<generated.mpv_event> event) {
     final eventId = event.ref.event_id;
+    _copyNativeLifecycleEvent(event);
+    if (eventId == generated.mpv_event_id.MPV_EVENT_HOOK) {
+      _copyNativeHook(event);
+      return;
+    }
     if (eventId == generated.mpv_event_id.MPV_EVENT_PROPERTY_CHANGE &&
         event.ref.reply_userdata != 0) {
       final observer = _propertyObservers[event.ref.reply_userdata];
@@ -1047,13 +1183,14 @@ class NativePlayer extends PlatformPlayer {
         final prop = event.ref.data.cast<generated.mpv_event_property>();
         if (prop.ref.format == generated.mpv_format.MPV_FORMAT_FLAG &&
             prop.ref.name.toDartString() == 'idle-active') {
-          await _future;
-          if (!completer.isCompleted) completer.complete();
+          _future?.then((_) {
+            if (!completer.isCompleted) completer.complete();
+          }, onError: (Object _, StackTrace _) {});
         }
       case generated.mpv_event_id.MPV_EVENT_SET_PROPERTY_REPLY:
       case generated.mpv_event_id.MPV_EVENT_COMMAND_REPLY:
         final data = event.ref.reply_userdata;
-        final completer = _requests.remove(data);
+        final completer = _takeRequest(data);
         if (completer == null) {
           final text = 'Received MPV_EVENT_REPLY with unregistered ID $data';
           if (!logController.isClosed) {
@@ -1591,70 +1728,643 @@ class NativePlayer extends PlatformPlayer {
           }
           // --------------------------------------------------
         }
-      case generated.mpv_event_id.MPV_EVENT_HOOK:
-        final prop = event.ref.data.cast<generated.mpv_event_hook>();
-        switch (prop.ref.name.toDartString()) {
-          case 'on_load':
-            // --------------------------------------------------
-            for (final hook in onLoadHooks) {
-              try {
-                await hook();
-              } catch (error, stackTrace) {
-                Zone.current.handleUncaughtError(error, stackTrace);
-              }
-            }
-            // --------------------------------------------------
-            // Handle HTTP headers specified in the [Media].
-            // try {
-            //   final name = 'path'.toNativeUtf8();
-            //   final uri = mpv.mpv_get_property_string(ctx, name);
-            //   // Get the headers for current [Media] by looking up [uri] in the [HashMap].
-            //   final headers = Media(uri.toDartString()).httpHeaders;
-            //   if (headers != null) {
-            //     setHeader(headers, mpv, ctx);
-            //   }
-            //   mpv.mpv_free(uri.cast());
-            //   calloc.free(name);
-            // } catch (exception, stacktrace) {
-            //   print(exception);
-            //   print(stacktrace);
-            // }
-            // Handle start & end position specified in the [Media].
-            // --------------------------------------------------
-            mpv.mpv_hook_continue(ctx, prop.ref.id);
-
-          case 'on_unload':
-            // --------------------------------------------------
-            for (final hook in onUnloadHooks) {
-              try {
-                await hook();
-              } catch (error, stackTrace) {
-                Zone.current.handleUncaughtError(error, stackTrace);
-              }
-            }
-            // --------------------------------------------------
-            // Set http-header-fields as [generated.mpv_format.MPV_FORMAT_NONE] [generated.mpv_node].
-            // try {
-            //   final property = 'http-header-fields'.toNativeUtf8();
-            //   final value = calloc<generated.mpv_node>();
-            //   value.ref.format = generated.mpv_format.MPV_FORMAT_NONE;
-            //   mpv.mpv_set_property(
-            //     ctx,
-            //     property,
-            //     generated.mpv_format.MPV_FORMAT_NODE,
-            //     value.cast(),
-            //   );
-            //   calloc.free(property);
-            //   calloc.free(value);
-            // } catch (exception, stacktrace) {
-            //   print(exception);
-            //   print(stacktrace);
-            // }
-            // Set start & end position as [generated.mpv_format.MPV_FORMAT_NONE] [generated.mpv_node].
-            // --------------------------------------------------
-            mpv.mpv_hook_continue(ctx, prop.ref.id);
-        }
     }
+  }
+
+  void _copyNativeLifecycleEvent(Pointer<generated.mpv_event> event) {
+    final eventId = event.ref.event_id;
+    if (eventId == generated.mpv_event_id.MPV_EVENT_START_FILE) {
+      final playlistEntryId = _hasPlaylistEntryIds && event.ref.data != nullptr
+          ? event.ref.data
+                .cast<generated.mpv_event_start_file>()
+                .ref
+                .playlist_entry_id
+          : null;
+      _activePlaylistEntryId = playlistEntryId;
+      _emitNativeEvent(NativeStartFile(playlistEntryId: playlistEntryId));
+    } else if (eventId == generated.mpv_event_id.MPV_EVENT_FILE_LOADED) {
+      // FILE_LOADED has no identity payload. Bind it only to an observed start-file.
+      final playlistEntryId = _activePlaylistEntryId;
+      NativeVideoOutputParameters? videoOutputParameters;
+      List<NativeVideoTrackMetadata>? videoTracks;
+      bool? hasAudio;
+      bool? seekable;
+      bool? partiallySeekable;
+      if (playlistEntryId != null) {
+        try {
+          videoOutputParameters = _readVideoOutputParameters();
+        } catch (_) {
+          // Keep this event unknown when libmpv cannot provide a copied map.
+        }
+        try {
+          final snapshot = _readNativeTrackList();
+          videoTracks = snapshot.videoTracks;
+          hasAudio = snapshot.hasAudio;
+        } catch (_) {
+          // A failed or malformed list is distinct from a confirmed empty list.
+        }
+        seekable = _readOptionalFlagProperty('seekable');
+        partiallySeekable = _readOptionalFlagProperty('partially-seekable');
+      }
+      _emitNativeEvent(
+        NativeFileLoaded(
+          playlistEntryId: playlistEntryId,
+          videoOutputParameters: videoOutputParameters,
+          videoTracks: videoTracks,
+          hasAudio: hasAudio,
+          seekable: seekable,
+          partiallySeekable: partiallySeekable,
+        ),
+      );
+    } else if (eventId == generated.mpv_event_id.MPV_EVENT_END_FILE) {
+      final data = event.ref.data;
+      final endFile = data == nullptr
+          ? null
+          : data.cast<generated.mpv_event_end_file>().ref;
+      final playlistEntryId = _hasPlaylistEntryIds
+          ? endFile?.playlist_entry_id
+          : null;
+      final reason = switch (endFile?.reason) {
+        generated.mpv_end_file_reason.MPV_END_FILE_REASON_EOF =>
+          NativeEndFileReason.eof,
+        generated.mpv_end_file_reason.MPV_END_FILE_REASON_STOP =>
+          NativeEndFileReason.stop,
+        generated.mpv_end_file_reason.MPV_END_FILE_REASON_QUIT =>
+          NativeEndFileReason.quit,
+        generated.mpv_end_file_reason.MPV_END_FILE_REASON_ERROR =>
+          NativeEndFileReason.error,
+        generated.mpv_end_file_reason.MPV_END_FILE_REASON_REDIRECT =>
+          NativeEndFileReason.redirect,
+        _ => NativeEndFileReason.unknown,
+      };
+      _emitNativeEvent(
+        NativeEndFile(
+          playlistEntryId: playlistEntryId,
+          reason: reason,
+          error: _hasEndFileError ? endFile?.error ?? 0 : 0,
+        ),
+      );
+      if (playlistEntryId == null ||
+          playlistEntryId == _activePlaylistEntryId) {
+        _activePlaylistEntryId = null;
+      }
+    } else if (eventId == generated.mpv_event_id.MPV_EVENT_PROPERTY_CHANGE) {
+      final data = event.ref.data;
+      if (data == nullptr) return;
+      final property = data.cast<generated.mpv_event_property>().ref;
+      if (property.name == nullptr || event.ref.reply_userdata != 0) return;
+      final propertyName = property.name.toDartString();
+      if (propertyName == 'video-out-params') {
+        final playlistEntryId = _activePlaylistEntryId;
+        NativeVideoOutputParameters? parameters;
+        if (playlistEntryId != null) {
+          try {
+            parameters = _readVideoOutputParameters();
+          } catch (_) {
+            // Property changes can precede libmpv's first complete geometry.
+          }
+        }
+        _emitNativeEvent(
+          NativeVideoOutputParametersChanged(
+            playlistEntryId: playlistEntryId,
+            videoOutputParameters: parameters,
+          ),
+        );
+        return;
+      }
+      if (propertyName != 'track-list') return;
+      final playlistEntryId = _activePlaylistEntryId;
+      _NativeTrackListSnapshot? snapshot;
+      if (playlistEntryId != null &&
+          property.format == generated.mpv_format.MPV_FORMAT_NODE &&
+          property.data != nullptr) {
+        try {
+          snapshot = _parseNativeTrackList(
+            property.data.cast<generated.mpv_node>(),
+          );
+        } catch (_) {
+          // Malformed events remain unknown; they never mean no selected audio.
+        }
+      }
+      _emitNativeEvent(
+        NativeTracksChanged(
+          playlistEntryId: playlistEntryId,
+          videoTracks: snapshot?.videoTracks,
+          hasAudio: snapshot?.hasAudio,
+        ),
+      );
+    } else if (eventId == generated.mpv_event_id.MPV_EVENT_QUEUE_OVERFLOW) {
+      _activePlaylistEntryId = null;
+      _emitNativeEvent(const NativeEventQueueOverflow());
+    }
+  }
+
+  void _copyNativeHook(Pointer<generated.mpv_event> event) {
+    if (event.ref.data == nullptr) {
+      _reportHookError(
+        StateError('MPV_EVENT_HOOK has no payload'),
+        StackTrace.current,
+      );
+      return;
+    }
+    final value = event.ref.data.cast<generated.mpv_event_hook>().ref;
+    final hookName = value.name == nullptr ? '' : value.name.toDartString();
+    final hook = _PendingNativeHook(
+      hookId: value.id,
+      nativeHookName: hookName,
+      name: switch (hookName) {
+        'on_load' => NativeHookName.onLoad,
+        'on_preloaded' => NativeHookName.onPreloaded,
+        'on_unload' => NativeHookName.onUnload,
+        _ => NativeHookName.unknown,
+      },
+      playlistEntryId: _activePlaylistEntryId,
+    );
+    _activeNativeHooks[hook.hookId] = hook;
+    _undrainedHooks.add(hook);
+  }
+
+  void _onNativeEventBatchDrained(int batchId) {
+    _emitNativeEvent(NativeEventBatchDrained(batchId: batchId));
+    _flushPendingHooks();
+  }
+
+  void _flushPendingHooks() {
+    if (_undrainedHooks.isEmpty) return;
+    final hooks = List<_PendingNativeHook>.of(_undrainedHooks);
+    _undrainedHooks.clear();
+    for (final hook in hooks) {
+      _hookWork = _hookWork.then((_) async {
+        try {
+          await _runNativeHook(hook);
+        } catch (error, stack) {
+          _reportHookError(error, stack);
+          _continueNativeHook(hook);
+        }
+      });
+    }
+  }
+
+  Future<void> _runNativeHook(_PendingNativeHook hook) async {
+    final deadline = Stopwatch()..start();
+    try {
+      switch (hook.name) {
+        case NativeHookName.onLoad:
+          if (!await _runLegacyHooks(onLoadHooks, hook, deadline)) return;
+        case NativeHookName.onPreloaded:
+          if (!await _runLegacyHooks(onPreloadedHooks, hook, deadline)) return;
+        case NativeHookName.onUnload:
+          if (!await _runLegacyHooks(onUnloadHooks, hook, deadline)) return;
+        case NativeHookName.unknown:
+          break;
+      }
+      final request = NativeHookRequest(
+        hookId: hook.hookId,
+        name: hook.name,
+        nativeHookName: hook.nativeHookName,
+        playlistEntryId: hook.playlistEntryId,
+        teardown: hook.name == NativeHookName.onUnload,
+      );
+      for (final entry in List<_LifecycleHookHandlerEntry>.of(_hookHandlers)) {
+        if (!entry.active || !_isNativeHookValid(hook, entry)) continue;
+        final api = _NativeHookApi(this, hook, entry);
+        final operation = _trackHookOperation(
+          Future<void>.sync(() => entry.invoke(request, api)),
+        );
+        final outcome = await _raceHookOperation(
+          operation,
+          deadline,
+          cancellation: entry.revoked,
+        );
+        switch (outcome.kind) {
+          case _HookRaceKind.completed:
+            break;
+          case _HookRaceKind.cancelled:
+            // Revoking a participant invalidates its API immediately. Its
+            // still-running future retains a borrow until it really completes.
+            break;
+          case _HookRaceKind.deadline:
+            hook.invalidated = true;
+            _reportHookError(
+              TimeoutException('Native lifecycle hook exceeded 5 seconds'),
+              StackTrace.current,
+            );
+            return;
+          case _HookRaceKind.failed:
+            _reportHookError(outcome.error!, outcome.stack!);
+            break;
+        }
+      }
+    } finally {
+      _continueNativeHook(hook);
+    }
+  }
+
+  Future<bool> _runLegacyHooks(
+    List<FutureOr<void> Function()> hooks,
+    _PendingNativeHook hook,
+    Stopwatch deadline,
+  ) async {
+    for (final legacy in List<FutureOr<void> Function()>.of(hooks)) {
+      final operation = _trackHookOperation(Future<void>.sync(legacy));
+      final outcome = await _raceHookOperation(operation, deadline);
+      switch (outcome.kind) {
+        case _HookRaceKind.completed:
+          break;
+        case _HookRaceKind.cancelled:
+          break;
+        case _HookRaceKind.failed:
+          _reportHookError(outcome.error!, outcome.stack!);
+          break;
+        case _HookRaceKind.deadline:
+          hook.invalidated = true;
+          _reportHookError(
+            TimeoutException('Native lifecycle hook exceeded 5 seconds'),
+            StackTrace.current,
+          );
+          return false;
+      }
+    }
+    return true;
+  }
+
+  Future<_HookRace> _raceHookOperation(
+    Future<void> operation,
+    Stopwatch deadline, {
+    Future<void>? cancellation,
+  }) async {
+    final remaining = const Duration(seconds: 5) - deadline.elapsed;
+    if (remaining <= Duration.zero) {
+      return const _HookRace(_HookRaceKind.deadline);
+    }
+    final result = Completer<_HookRace>();
+    void complete(_HookRace outcome) {
+      if (!result.isCompleted) result.complete(outcome);
+    }
+
+    final timer = Timer(
+      remaining,
+      () => complete(const _HookRace(_HookRaceKind.deadline)),
+    );
+    operation.then<void>(
+      (_) => complete(const _HookRace(_HookRaceKind.completed)),
+      onError: (Object error, StackTrace stack) =>
+          complete(_HookRace(_HookRaceKind.failed, error, stack)),
+    );
+    cancellation?.then<void>(
+      (_) => complete(const _HookRace(_HookRaceKind.cancelled)),
+    );
+    final outcome = await result.future;
+    timer.cancel();
+    return outcome;
+  }
+
+  Future<void> _trackHookOperation(Future<void> operation) {
+    _hookOperations.add(operation);
+    operation.then<void>(
+      (_) {
+        _hookOperations.remove(operation);
+      },
+      onError: (Object _, StackTrace _) {
+        _hookOperations.remove(operation);
+      },
+    );
+    return operation;
+  }
+
+  Future<void> _waitForHookOperations() async {
+    while (_hookOperations.isNotEmpty) {
+      try {
+        await Future.wait(_hookOperations.toList(), eagerError: false);
+      } catch (_) {
+        // The operation's failure was already surfaced to the hook owner.
+      }
+    }
+  }
+
+  void _continueNativeHook(_PendingNativeHook hook) {
+    if (hook.continued) return;
+    hook.continued = true;
+    _activeNativeHooks.remove(hook.hookId);
+    if (ctx == nullptr) return;
+    final status = mpv.mpv_hook_continue(ctx, hook.hookId);
+    if (status < 0) _error(status);
+  }
+
+  bool _isNativeHookValid(
+    _PendingNativeHook hook, [
+    _LifecycleHookHandlerEntry? entry,
+  ]) =>
+      (!_isDisposing || hook.name == NativeHookName.onUnload) &&
+      !disposed &&
+      !hook.invalidated &&
+      (entry?.active ?? true) &&
+      !hook.continued &&
+      identical(_activeNativeHooks[hook.hookId], hook);
+
+  List<NativeVideoTrackMetadata> _readVideoTracks([_PendingNativeHook? hook]) =>
+      _readNativeTrackList(hook).videoTracks;
+
+  _NativeTrackListSnapshot _readNativeTrackList([_PendingNativeHook? hook]) {
+    if (hook != null && !_isNativeHookValid(hook)) {
+      throw StateError('Native hook is no longer active');
+    }
+    final name = 'track-list'.toNativeUtf8();
+    final value = calloc<generated.mpv_node>();
+    var hasContents = false;
+    try {
+      final status = mpv.mpv_get_property(
+        ctx,
+        name,
+        generated.mpv_format.MPV_FORMAT_NODE,
+        value.cast(),
+      );
+      if (status < 0) {
+        throw NativeVideoTrackListUnavailable(
+          'mpv_get_property(track-list) failed ($status)',
+        );
+      }
+      hasContents = true;
+      return _parseNativeTrackList(value);
+    } finally {
+      if (hasContents) mpv.mpv_free_node_contents(value);
+      calloc
+        ..free(value)
+        ..free(name);
+    }
+  }
+
+  _NativeTrackListSnapshot _parseNativeTrackList(
+    Pointer<generated.mpv_node> value,
+  ) {
+    if (value.ref.format != generated.mpv_format.MPV_FORMAT_NODE_ARRAY) {
+      throw NativeVideoTrackListUnavailable(
+        'track-list has format ${value.ref.format}, expected NODE_ARRAY',
+      );
+    }
+    final tracks = value.ref.u.list.ref;
+    final result = <NativeVideoTrackMetadata>[];
+    var selectedAudioFound = false;
+    var audioSelectionUnknown = false;
+    for (var i = 0; i < tracks.num; i++) {
+      final node = tracks.values[i];
+      if (node.format != generated.mpv_format.MPV_FORMAT_NODE_MAP) {
+        throw NativeVideoTrackListUnavailable(
+          'track-list entry $i is not NODE_MAP',
+        );
+      }
+      final map = node.u.list.ref;
+      String? id;
+      String? type;
+      int? width;
+      int? height;
+      double? fps;
+      double? par;
+      int? rotate;
+      var rotationFieldSeen = false;
+      var cropFieldCount = 0;
+      bool? selected;
+      for (var j = 0; j < map.num; j++) {
+        if (map.keys[j] == nullptr) {
+          throw NativeVideoTrackListUnavailable(
+            'track-list entry $i has a null key',
+          );
+        }
+        final key = map.keys[j].toDartString();
+        final field = map.values[j];
+        switch (key) {
+          case 'id':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              id = field.u.int64.toString();
+            }
+          case 'type':
+            if (field.format == generated.mpv_format.MPV_FORMAT_STRING &&
+                field.u.string != nullptr) {
+              type = field.u.string.toDartString();
+            }
+          case 'demux-w':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              width = field.u.int64;
+            }
+          case 'demux-h':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              height = field.u.int64;
+            }
+          case 'demux-fps':
+            if (field.format == generated.mpv_format.MPV_FORMAT_DOUBLE) {
+              fps = field.u.double_;
+            } else {
+              throw NativeVideoTrackListUnavailable(
+                'track-list entry $i has malformed demux-fps',
+              );
+            }
+          case 'demux-par':
+            if (field.format == generated.mpv_format.MPV_FORMAT_DOUBLE) {
+              par = field.u.double_;
+            } else {
+              throw NativeVideoTrackListUnavailable(
+                'track-list entry $i has malformed demux-par',
+              );
+            }
+          case 'demux-rotation':
+            rotationFieldSeen = true;
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              rotate = field.u.int64;
+            } else {
+              throw NativeVideoTrackListUnavailable(
+                'track-list entry $i has malformed demux-rotation',
+              );
+            }
+          case 'demux-crop-x':
+          case 'demux-crop-y':
+          case 'demux-crop-w':
+          case 'demux-crop-h':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              cropFieldCount++;
+            } else {
+              throw NativeVideoTrackListUnavailable(
+                'track-list entry $i has malformed $key',
+              );
+            }
+          case 'selected':
+            if (field.format == generated.mpv_format.MPV_FORMAT_FLAG) {
+              selected = field.u.flag != 0;
+            }
+        }
+      }
+      if (type == null || type.isEmpty) {
+        throw NativeVideoTrackListUnavailable(
+          'track-list entry $i has no readable type',
+        );
+      }
+      if (type == 'audio') {
+        if (selected == true) {
+          selectedAudioFound = true;
+        } else if (selected == null) {
+          audioSelectionUnknown = true;
+        }
+      }
+      if (type == 'video') {
+        result.add(
+          NativeVideoTrackMetadata(
+            id: id ?? '',
+            type: type,
+            demuxWidth: width,
+            demuxHeight: height,
+            demuxFps: fps,
+            demuxPar: par,
+            // In the pinned media_kit mpv source, demux-rotation is
+            // unavailable when p.rotate <= 0. The bundled decoder's
+            // non-positive case means no track rotation; unsupported or
+            // malformed values still stay unknown.
+            demuxRotate: rotationFieldSeen ? rotate : 0,
+            // command.c only publishes all four crop fields when has_crop
+            // (positive crop width and height) is true. A complete absence
+            // therefore proves no crop for this pinned source revision.
+            demuxCropKnownNone: cropFieldCount == 0
+                ? true
+                : cropFieldCount == 4
+                ? false
+                : null,
+            selected: selected,
+          ),
+        );
+      }
+    }
+    return _NativeTrackListSnapshot(
+      videoTracks: List<NativeVideoTrackMetadata>.unmodifiable(result),
+      hasAudio: selectedAudioFound
+          ? true
+          : audioSelectionUnknown
+          ? null
+          : false,
+    );
+  }
+
+  bool? _readOptionalFlagProperty(String property) {
+    final name = property.toNativeUtf8();
+    final value = calloc<Int32>();
+    try {
+      final status = mpv.mpv_get_property(
+        ctx,
+        name,
+        generated.mpv_format.MPV_FORMAT_FLAG,
+        value.cast(),
+      );
+      return status < 0 ? null : value.value != 0;
+    } catch (_) {
+      return null;
+    } finally {
+      calloc
+        ..free(value)
+        ..free(name);
+    }
+  }
+
+  NativeVideoOutputParameters _readVideoOutputParameters() {
+    final name = 'video-out-params'.toNativeUtf8();
+    final value = calloc<generated.mpv_node>();
+    var hasContents = false;
+    try {
+      final status = mpv.mpv_get_property(
+        ctx,
+        name,
+        generated.mpv_format.MPV_FORMAT_NODE,
+        value.cast(),
+      );
+      if (status < 0) {
+        throw NativeVideoOutputParametersUnavailable(
+          'mpv_get_property(video-out-params) failed ($status)',
+        );
+      }
+      hasContents = true;
+      if (value.ref.format != generated.mpv_format.MPV_FORMAT_NODE_MAP) {
+        throw NativeVideoOutputParametersUnavailable(
+          'video-out-params has format ${value.ref.format}, expected NODE_MAP',
+        );
+      }
+      final map = value.ref.u.list.ref;
+      int? width;
+      int? height;
+      int? displayWidth;
+      int? displayHeight;
+      double? pixelAspectRatio;
+      int? rotation;
+      for (var i = 0; i < map.num; i++) {
+        if (map.keys[i] == nullptr) {
+          throw const NativeVideoOutputParametersUnavailable(
+            'video-out-params has a null key',
+          );
+        }
+        final key = map.keys[i].toDartString();
+        final field = map.values[i];
+        switch (key) {
+          case 'w':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              width = field.u.int64;
+            }
+          case 'h':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              height = field.u.int64;
+            }
+          case 'dw':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              displayWidth = field.u.int64;
+            }
+          case 'dh':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              displayHeight = field.u.int64;
+            }
+          case 'par':
+            if (field.format == generated.mpv_format.MPV_FORMAT_DOUBLE) {
+              pixelAspectRatio = field.u.double_;
+            } else if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              pixelAspectRatio = field.u.int64.toDouble();
+            }
+          case 'rotate':
+            if (field.format == generated.mpv_format.MPV_FORMAT_INT64) {
+              rotation = field.u.int64;
+            }
+        }
+      }
+      return NativeVideoOutputParameters(
+        width: width,
+        height: height,
+        displayWidth: displayWidth,
+        displayHeight: displayHeight,
+        pixelAspectRatio: pixelAspectRatio,
+        rotation: rotation,
+      );
+    } finally {
+      if (hasContents) mpv.mpv_free_node_contents(value);
+      calloc
+        ..free(value)
+        ..free(name);
+    }
+  }
+
+  void _setNativeHookOption(
+    _PendingNativeHook hook,
+    String name,
+    String value,
+  ) {
+    if (!_isNativeHookValid(hook)) {
+      throw StateError('Native hook is no longer active');
+    }
+    if (!const {'android-surface-size', 'vid', 'vo', 'wid'}.contains(name)) {
+      throw ArgumentError.value(name, 'name', 'Option is not hook-safe');
+    }
+    setOption(name, value);
+  }
+
+  void _emitNativeEvent(NativePlayerEvent event) {
+    if (!_nativeEventsController.isClosed) _nativeEventsController.add(event);
+  }
+
+  void _reportHookError(Object error, StackTrace stack) {
+    if (!errorController.isClosed) errorController.add(error.toString());
+    final zone = Zone.current;
+    scheduleMicrotask(() => zone.handleUncaughtError(error, stack));
   }
 
   Future<void> _create() async {
@@ -1669,7 +2379,12 @@ class NativePlayer extends PlatformPlayer {
       ...?configuration.options,
     };
 
-    ctx = await Initializer.create(mpv, _handler, options: options);
+    ctx = await Initializer.create(
+      mpv,
+      _handler,
+      options: options,
+      onBatchDrained: _onNativeEventBatchDrained,
+    );
 
     // ALL:
     //
@@ -1779,11 +2494,21 @@ class NativePlayer extends PlatformPlayer {
 
     // Add libmpv hooks for supporting custom HTTP headers in [Media].
     final load = 'on_load'.toNativeUtf8();
+    final preloaded = 'on_preloaded'.toNativeUtf8();
     final unload = 'on_unload'.toNativeUtf8();
-    mpv.mpv_hook_add(ctx, 0, load, 0);
-    mpv.mpv_hook_add(ctx, 0, unload, 0);
-    calloc.free(load);
-    calloc.free(unload);
+    try {
+      _checkRequest(mpv.mpv_hook_add(ctx, 0, load, 0), 'register on_load hook');
+      _supportsPreloadedHook = mpv.mpv_hook_add(ctx, 0, preloaded, 0) >= 0;
+      _checkRequest(
+        mpv.mpv_hook_add(ctx, 0, unload, 0),
+        'register on_unload hook',
+      );
+    } finally {
+      calloc
+        ..free(load)
+        ..free(preloaded)
+        ..free(unload);
+    }
 
     configuration.ready?.call();
   }
@@ -1806,10 +2531,29 @@ class NativePlayer extends PlatformPlayer {
   int _asyncRequestNumber = 1;
   final Map<int, Completer<int>> _requests = {};
 
+  void _registerRequest(int id, Completer<int> completer) {
+    _requests[id] = completer;
+    _requestTimeouts[id] = Timer(const Duration(seconds: 5), () {
+      _requestTimeouts.remove(id);
+      if (identical(_requests.remove(id), completer) &&
+          !completer.isCompleted) {
+        completer.completeError(
+          TimeoutException('Native request $id did not complete in 5 seconds'),
+        );
+      }
+    });
+  }
+
+  Completer<int>? _takeRequest(int id) {
+    _requestTimeouts.remove(id)?.cancel();
+    return _requests.remove(id);
+  }
+
   /// Asynchronous property setting
   Future<void> _setProperty(String name, int format, Pointer<Void> data) {
     final requestNumber = _asyncRequestNumber++;
-    final completer = _requests[requestNumber] = Completer<int>();
+    final completer = Completer<int>();
+    _registerRequest(requestNumber, completer);
     final namePtr = name.toNativeUtf8();
     final immediate = mpv.mpv_set_property_async(
       ctx,
@@ -1821,7 +2565,7 @@ class NativePlayer extends PlatformPlayer {
     calloc.free(namePtr);
     if (immediate < 0) {
       // Sending failed
-      _requests.remove(requestNumber);
+      _takeRequest(requestNumber);
       completer.complete(immediate);
     }
     return completer.future.then((code) => _checkRequest(code, 'set $name'));
@@ -1892,13 +2636,14 @@ class NativePlayer extends PlatformPlayer {
       arr[i] = pointers[i];
     }
     final requestNumber = _asyncRequestNumber++;
-    final completer = _requests[requestNumber] = Completer<int>();
+    final completer = Completer<int>();
+    _registerRequest(requestNumber, completer);
     final immediate = mpv.mpv_command_async(ctx, requestNumber, arr);
     calloc.free(arr);
     pointers.forEach(calloc.free);
     if (immediate < 0) {
       // Sending failed
-      _requests.remove(requestNumber);
+      _takeRequest(requestNumber);
       completer.complete(immediate);
     }
     return completer.future.then(_checkRequest);
@@ -1910,8 +2655,26 @@ class NativePlayer extends PlatformPlayer {
   // (major << 16) | minor
   static final apiVersion = mpv.mpv_client_api_version();
 
+  bool get supportsPreloadedHook => _supportsPreloadedHook;
+
+  bool get _hasPlaylistEntryIds => apiVersion >= 0x1006c;
+  bool get _hasEndFileError => apiVersion >= 0x10009;
+
   /// [Pointer] to [generated.mpv_handle] of this instance.
   Pointer<generated.mpv_handle> ctx = nullptr;
+
+  final StreamController<NativePlayerEvent> _nativeEventsController =
+      StreamController<NativePlayerEvent>.broadcast(sync: true);
+  final Completer<void> _released = Completer<void>();
+  final List<_LifecycleHookHandlerEntry> _hookHandlers = [];
+  final List<_PendingNativeHook> _undrainedHooks = [];
+  final Map<int, _PendingNativeHook> _activeNativeHooks = {};
+  Future<void> _hookWork = Future<void>.value();
+  final Set<Future<void>> _hookOperations = {};
+  final Map<int, Timer> _requestTimeouts = {};
+  int? _activePlaylistEntryId;
+  bool _supportsPreloadedHook = false;
+  bool _disposeFailed = false;
 
   /// The [Future] to wait for [_create] completion.
   /// This is used to prevent signaling [completer] (from [PlatformPlayer]) before [_create] completes in any hypothetical situation (because `idle-active` may fire before it).
@@ -1948,6 +2711,10 @@ class NativePlayer extends PlatformPlayer {
 
   /// The methods which must execute synchronously before playback of a source can begin.
   final List<FutureOr<void> Function()> onLoadHooks = [];
+
+  /// The methods which must run after demux metadata is available and before
+  /// the decoder is created. Runtime clients should prefer the typed handler.
+  final List<FutureOr<void> Function()> onPreloadedHooks = [];
 
   /// The methods which must execute synchronously before playback of a source can end.
   final List<FutureOr<void> Function()> onUnloadHooks = [];
@@ -2166,3 +2933,85 @@ class NativePlayer extends PlatformPlayer {
 }
 
 // --------------------------------------------------
+
+final class _PendingNativeHook {
+  _PendingNativeHook({
+    required this.hookId,
+    required this.nativeHookName,
+    required this.name,
+    required this.playlistEntryId,
+  });
+
+  final int hookId;
+  final String nativeHookName;
+  final NativeHookName name;
+  final int? playlistEntryId;
+  bool continued = false;
+  bool invalidated = false;
+}
+
+enum _HookRaceKind { completed, cancelled, deadline, failed }
+
+final class _HookRace {
+  const _HookRace(this.kind, [this.error, this.stack]);
+
+  final _HookRaceKind kind;
+  final Object? error;
+  final StackTrace? stack;
+}
+
+final class _LifecycleHookHandlerEntry {
+  _LifecycleHookHandlerEntry(this.handler);
+
+  final NativeLifecycleHookHandler handler;
+  int _activeCalls = 0;
+  bool _revoked = false;
+  Completer<void>? _idle;
+  final Completer<void> _revocation = Completer<void>();
+
+  bool get active => !_revoked;
+  Future<void> get revoked => _revocation.future;
+
+  Future<void> invoke(NativeHookRequest request, NativeHookApi api) async {
+    if (_revoked) return;
+    _activeCalls++;
+    try {
+      await handler(request, api);
+    } finally {
+      _activeCalls--;
+      if (_revoked && _activeCalls == 0 && !(_idle?.isCompleted ?? true)) {
+        _idle!.complete();
+      }
+    }
+  }
+
+  void revoke() {
+    _revoked = true;
+    if (!_revocation.isCompleted) _revocation.complete();
+    if (_activeCalls == 0 && !(_idle?.isCompleted ?? true)) _idle!.complete();
+  }
+
+  Future<void> waitForIdle() {
+    if (_activeCalls == 0) return Future<void>.value();
+    return (_idle ??= Completer<void>()).future;
+  }
+}
+
+final class _NativeHookApi implements NativeHookApi {
+  _NativeHookApi(this._player, this._hook, this._entry);
+
+  final NativePlayer _player;
+  final _PendingNativeHook _hook;
+  final _LifecycleHookHandlerEntry _entry;
+
+  @override
+  bool get isValid => _player._isNativeHookValid(_hook, _entry);
+
+  @override
+  List<NativeVideoTrackMetadata> readVideoTracks() =>
+      _player._readVideoTracks(_hook);
+
+  @override
+  void setOption(String name, String value) =>
+      _player._setNativeHookOption(_hook, name, value);
+}

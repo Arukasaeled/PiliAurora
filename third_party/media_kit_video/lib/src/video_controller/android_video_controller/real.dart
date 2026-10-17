@@ -12,11 +12,9 @@ import 'package:synchronized/synchronized.dart';
 import 'package:media_kit_video/src/video_controller/android_video_controller/surface_size.dart';
 import 'package:media_kit_video/src/video_controller/android_video_controller/fixed_surface_size.dart';
 import 'package:media_kit_video/src/video_output_size_policy.dart';
+import 'package:media_kit_video/src/video_controller/output_operation.dart';
 
 import 'package:media_kit/media_kit.dart';
-
-// ignore_for_file: implementation_imports
-import 'package:media_kit/ffi/ffi.dart';
 
 import 'package:media_kit_video/src/video_controller/platform_video_controller.dart';
 
@@ -41,7 +39,7 @@ class AndroidVideoController extends PlatformVideoController {
   // ----------------------------------------------
 
   bool get androidAttachSurfaceAfterVideoParameters =>
-      configuration.androidAttachSurfaceAfterVideoParameters ?? vo == 'gpu';
+      configuration.androidAttachSurfaceAfterVideoParameters ?? false;
 
   /// --vo
   String get vo => configuration.vo ?? 'gpu';
@@ -67,7 +65,6 @@ class AndroidVideoController extends PlatformVideoController {
 
   // ----------------------------------------------
 
-  String? _current;
   late final _fixedSize = AndroidFixedSurfaceSize(
     limitWidth: configuration.androidOutputLimitWidth,
     limitHeight: configuration.androidOutputLimitHeight,
@@ -76,6 +73,100 @@ class AndroidVideoController extends PlatformVideoController {
   ({int width, int height})? _appliedSize;
   bool _attached = false;
   int _mediaGeneration = 0;
+  int _fallbackOutputEpoch = 0;
+  OutputOperationToken? _operationToken;
+  OutputOperationToken? _pendingOperationToken;
+  OutputOperationToken? _highWaterToken;
+  OutputLoadSelectionResult? _loadSelection;
+  NativeVideoTrackMetadata? _selectedTrackMetadata;
+  OutputOperationToken? _preloadedPreparedToken;
+  ({int width, int height, double pixelAspectRatio, int rotation})?
+  _preloadedPreparedGeometry;
+  bool _runtimeManagedLoads = false;
+  final Map<OutputOperationToken, Completer<OutputPreparationResult>>
+  _outputAttachWaiters = {};
+  OutputPreparationResult? _lastOutputAttachResult;
+  OutputOperationToken? _lastOutputAttachToken;
+  Future<void>? _disposeFuture;
+
+  OutputPreparationResult _outputResult(
+    OutputOperationToken token,
+    OutputPreparationStrategy strategy,
+    OutputPreparationEvidence evidence, {
+    VideoOutputGeometry? geometry,
+  }) => OutputPreparationResult(
+    strategy: strategy,
+    evidence: evidence,
+    outputEpoch: token.outputEpoch,
+    geometry: geometry,
+  );
+
+  OutputLoadSelectionResult _selectionResult(
+    OutputOperationToken token,
+    OutputLoadSelectionStrategy strategy,
+    OutputLoadSelectionEvidence evidence, {
+    String? trackId,
+  }) => OutputLoadSelectionResult(
+    strategy: strategy,
+    evidence: evidence,
+    outputEpoch: token.outputEpoch,
+    trackId: trackId,
+  );
+
+  bool _canReplace(OutputOperationToken next, OutputOperationToken current) {
+    if (next.runtimeId != current.runtimeId) {
+      return next.runtimeId > current.runtimeId;
+    }
+    if (next.loadId != current.loadId) return next.loadId > current.loadId;
+    if (next.outputEpoch != current.outputEpoch) {
+      return next.outputEpoch > current.outputEpoch;
+    }
+    return next.configRevision > current.configRevision;
+  }
+
+  void _ensureOutputAttachWaiter(OutputOperationToken token) {
+    _outputAttachWaiters.putIfAbsent(
+      token,
+      () => Completer<OutputPreparationResult>(),
+    );
+  }
+
+  void _completeOutputAttach(
+    OutputOperationToken token,
+    OutputPreparationResult result,
+  ) {
+    if (token != _operationToken) return;
+    if (_lastOutputAttachToken == token &&
+        _lastOutputAttachResult?.strategy ==
+            OutputPreparationStrategy.prepared &&
+        result.strategy == OutputPreparationStrategy.legacyAttached) {
+      return;
+    }
+    _lastOutputAttachToken = token;
+    _lastOutputAttachResult = result;
+    final waiter = _outputAttachWaiters[token];
+    if (waiter != null && !waiter.isCompleted) waiter.complete(result);
+  }
+
+  void _completeOutputAttachUnknown(
+    OutputOperationToken token,
+    OutputPreparationEvidence evidence,
+  ) {
+    if (token == _operationToken || token == _lastOutputAttachToken) {
+      _lastOutputAttachToken = token;
+      _lastOutputAttachResult = _outputResult(
+        token,
+        OutputPreparationStrategy.unknown,
+        evidence,
+      );
+    }
+    final waiter = _outputAttachWaiters[token];
+    if (waiter != null && !waiter.isCompleted) {
+      waiter.complete(
+        _outputResult(token, OutputPreparationStrategy.unknown, evidence),
+      );
+    }
+  }
 
   void _diagnostic(String event, [Map<String, Object?> details = const {}]) {
     try {
@@ -103,38 +194,42 @@ class AndroidVideoController extends PlatformVideoController {
     player.onLoadHooks.add(() {
       return _lock.synchronized(() async {
         _mediaGeneration++;
+        final stagedToken = _pendingOperationToken;
+        _pendingOperationToken = null;
+        if (stagedToken == null && _runtimeManagedLoads) {
+          throw StateError(
+            'Runtime did not stage an output token for this load',
+          );
+        }
+        final token =
+            stagedToken ??
+            OutputOperationToken(
+              runtimeId: 0,
+              loadId: _mediaGeneration,
+              outputEpoch: ++_fallbackOutputEpoch,
+              configRevision: 0,
+            );
+        _operationToken = token;
+        _loadSelection = null;
+        _selectedTrackMetadata = null;
+        _preloadedPreparedToken = null;
+        _preloadedPreparedGeometry = null;
+        _ensureOutputAttachWaiter(token);
+        _lastOutputAttachToken = null;
+        _lastOutputAttachResult = null;
         _fixedSize.reset();
         _appliedSize = null;
         _attached = false;
         configuration.onAndroidFrameTimings?.call(const []);
         _diagnostic('surface.load');
-        final mpv = NativePlayer.mpv;
-        final ctx = player.ctx;
 
-        // Skip surface re-creation if same resource.
-        final name = 'path'.toNativeUtf8();
-        final path = mpv.mpv_get_property_string(ctx, name);
-        final current = path.toDartString();
-        calloc.free(name.cast());
-        mpv.mpv_free(path.cast());
-
-        if (_current != current) {
-          _current = current;
-          // It is important to use a new android.view.Surface each time a new video-output is created because: https://stackoverflow.com/a/21564236
-          // Not doing so will cause MediaCodec usage inside libavcodec to incorrectly fail with error (because this android.view.Surface would be used twice):
-          // "native_window_api_connect returned an error: Invalid argument (-22)" & next less-efficient hwdec will be used redundantly.
-
-          // Create a new android.view.Surface & obtain object reference to it.
-          // NOTE: Previous android.view.Surface & object reference is internally released/destroyed by the method.
-          final data = await _channel.invokeMethod(
-            'VideoOutputManager.CreateSurface',
-            {'handle': ctx.address.toString()},
-          );
-          debugPrint(data.toString());
-          // Save the android.view.Surface object reference for usage inside player.stream.videoParams.listen.
-          _wid = data['wid'];
-          _diagnostic('surface.created');
+        // Give every file identity a fresh Android Surface, even when the URI
+        // repeats; MediaCodec can retain a previous Surface for the same path.
+        _wid = await createAndroidSurface(player, token);
+        if (_wid == null || _wid == 0) {
+          throw StateError('Could not create Android video Surface');
         }
+        _diagnostic('surface.created');
 
         // By default, android.view.Surface has a size of 1x1. If we assign --wid here, libmpv will internally start rendering & the first frame will be drawn as a solid color: https://github.com/media-kit/media-kit/issues/339
         // The solution is to assign --wid after android.graphics.SurfaceTexture.setDefaultBufferSize has been called & --android-surface-size has been updated (see inside player.stream.videoParams.listen).
@@ -142,9 +237,10 @@ class AndroidVideoController extends PlatformVideoController {
         // Assign --wid here if --vo is not "gpu" or "null" i.e. custom vo/hwdec was passed through [VideoControllerConfiguration].
         try {
           // ----------------------------------------------
-          if (!androidAttachSurfaceAfterVideoParameters) {
+          if (vo != 'gpu' && !androidAttachSurfaceAfterVideoParameters) {
             player.setOption('wid', _wid.toString());
             player.setOption('vo', vo);
+            _attached = true;
           }
           // ----------------------------------------------
         } catch (exception, stacktrace) {
@@ -158,7 +254,7 @@ class AndroidVideoController extends PlatformVideoController {
       });
     });
     player.onUnloadHooks.add(() {
-      return _lock.synchronizedSync(() {
+      return _lock.synchronized(() async {
         _attached = false;
         _appliedSize = null;
         _diagnostic('surface.unload');
@@ -180,16 +276,36 @@ class AndroidVideoController extends PlatformVideoController {
           debugPrint(exception.toString());
           debugPrint(stacktrace.toString());
         }
+        final token = _operationToken;
+        if (token != null) {
+          _operationToken = null;
+          _loadSelection = null;
+          _selectedTrackMetadata = null;
+          _preloadedPreparedToken = null;
+          _preloadedPreparedGeometry = null;
+          _completeOutputAttachUnknown(
+            token,
+            OutputPreparationEvidence.outputMutationUnconfirmed,
+          );
+          await invalidateAndroidOutputGeneration(player, token);
+        }
       });
     });
 
     _subscription = player.stream.videoParams.listen((event) async {
+      // Runtime-managed loads use the identity-bound video-out-params snapshot
+      // carried by NativeFileLoaded. A bare property notification has no file
+      // identity and must not be relabeled with the newest output token.
+      if (_runtimeManagedLoads) return;
       // 排队前绑定媒体与代数，避免切源后使用旧参数确定固定尺寸。
       final media = player.current.firstOrNull;
       final generation = _mediaGeneration;
+      final token = _operationToken;
       await _lock.synchronized(() async {
         if (player.disposed ||
             media == null ||
+            token == null ||
+            token != _operationToken ||
             generation != _mediaGeneration ||
             !identical(player.current.firstOrNull, media)) {
           return;
@@ -221,6 +337,8 @@ class AndroidVideoController extends PlatformVideoController {
                 width: size.width,
                 height: size.height,
                 wid: _wid,
+                token: token,
+                isCurrent: () => token == _operationToken,
               );
               _diagnostic('surface.configure.end', {
                 'accepted': accepted,
@@ -230,6 +348,10 @@ class AndroidVideoController extends PlatformVideoController {
               _appliedSize = size;
               _attached = true;
             }
+          } else if (!_attached) {
+            player.setOption('wid', _wid.toString());
+            player.setOption('vo', vo);
+            _attached = true;
           }
           // ----------------------------------------------
         } catch (exception, stacktrace) {
@@ -241,6 +363,17 @@ class AndroidVideoController extends PlatformVideoController {
           debugPrint(stacktrace.toString());
           return;
         }
+        if (_attached) {
+          _completeOutputAttach(
+            token,
+            _outputResult(
+              token,
+              OutputPreparationStrategy.legacyAttached,
+              OutputPreparationEvidence.legacyVideoParameters,
+              geometry: VideoOutputGeometry(width: width, height: height),
+            ),
+          );
+        }
         rect.value = Rect.fromLTRB(
           0.0,
           0.0,
@@ -250,6 +383,557 @@ class AndroidVideoController extends PlatformVideoController {
       });
     });
   }
+
+  @override
+  Future<OutputLoadSelectionResult> prepareForLoad(
+    OutputOperationToken token,
+    OutputPreparationRequest request,
+  ) async {
+    OutputLoadSelectionResult result(
+      OutputLoadSelectionStrategy strategy,
+      OutputLoadSelectionEvidence evidence, {
+      String? trackId,
+    }) => OutputLoadSelectionResult(
+      strategy: strategy,
+      evidence: evidence,
+      outputEpoch: token.outputEpoch,
+      trackId: trackId,
+    );
+
+    OutputLoadSelectionResult unknown(OutputLoadSelectionEvidence evidence) {
+      final value = result(OutputLoadSelectionStrategy.unknown, evidence);
+      if (token == _operationToken) _loadSelection = value;
+      return value;
+    }
+
+    if (!player.supportsPreloadedHook) {
+      return unknown(OutputLoadSelectionEvidence.preloadedHookUnavailable);
+    }
+    if (!request.nativeApi.isValid || token != _operationToken) {
+      return unknown(OutputLoadSelectionEvidence.outputMutationUnconfirmed);
+    }
+
+    final List<NativeVideoTrackMetadata> tracks;
+    try {
+      tracks = request.nativeApi.readVideoTracks();
+    } catch (_) {
+      return unknown(OutputLoadSelectionEvidence.unknown);
+    }
+    if (!request.nativeApi.isValid || token != _operationToken) {
+      return unknown(OutputLoadSelectionEvidence.outputMutationUnconfirmed);
+    }
+    if (tracks.isEmpty) {
+      final noVideo = result(
+        OutputLoadSelectionStrategy.noVideo,
+        OutputLoadSelectionEvidence.nativeTrackListNoVideo,
+      );
+      _loadSelection = noVideo;
+      _selectedTrackMetadata = null;
+      _preloadedPreparedToken = null;
+      _preloadedPreparedGeometry = null;
+      return noVideo;
+    }
+    final allowedTrackId = request.allowedTrackId;
+    if (allowedTrackId == null || allowedTrackId.isEmpty) {
+      return unknown(OutputLoadSelectionEvidence.trackSelectionUnconfirmed);
+    }
+    if (tracks.length != 1) {
+      final selectedTracks = tracks
+          .where(
+            (track) => track.selected == true && track.id == allowedTrackId,
+          )
+          .toList(growable: false);
+      final selectedTrack = selectedTracks.length == 1
+          ? selectedTracks.single
+          : null;
+      _loadSelection = result(
+        OutputLoadSelectionStrategy.unknown,
+        OutputLoadSelectionEvidence.multipleVideoTracks,
+        trackId: selectedTrack?.id,
+      );
+      _selectedTrackMetadata = selectedTrack;
+      return _loadSelection!;
+    }
+    if (tracks.single.id != allowedTrackId) {
+      return unknown(OutputLoadSelectionEvidence.trackSelectionUnconfirmed);
+    }
+    if (tracks.single.selected != true) {
+      try {
+        request.nativeApi.setOption('vid', allowedTrackId);
+      } catch (_) {
+        return unknown(OutputLoadSelectionEvidence.trackSelectionUnconfirmed);
+      }
+      if (!request.nativeApi.isValid) {
+        return unknown(OutputLoadSelectionEvidence.outputMutationUnconfirmed);
+      }
+    }
+    final List<NativeVideoTrackMetadata> selectedTracks;
+    try {
+      selectedTracks = request.nativeApi.readVideoTracks();
+    } catch (_) {
+      return unknown(OutputLoadSelectionEvidence.unknown);
+    }
+    if (selectedTracks.length != 1 ||
+        selectedTracks.single.id != allowedTrackId ||
+        selectedTracks.single.selected != true) {
+      return unknown(OutputLoadSelectionEvidence.trackSelectionUnconfirmed);
+    }
+    final track = selectedTracks.single;
+    final width = track.demuxWidth;
+    final height = track.demuxHeight;
+    final selected = result(
+      OutputLoadSelectionStrategy.selectedVideo,
+      OutputLoadSelectionEvidence.nativeTrackListSingleVideo,
+      trackId: allowedTrackId,
+    );
+    _loadSelection = selected;
+    _selectedTrackMetadata = track;
+    _preloadedPreparedToken = null;
+    _preloadedPreparedGeometry = null;
+
+    // Verified single-track files configure the Surface before libmpv resumes
+    // decoding. Unknown crop/PAR/rotation remains on the post-load compatibility
+    // path and is never promoted to the prepared evidence tag.
+    if (vo != 'gpu' || androidAttachSurfaceAfterVideoParameters) {
+      return selected;
+    }
+    if (!request.cropKnownNone && track.demuxCropKnownNone != true) {
+      return result(
+        OutputLoadSelectionStrategy.selectedVideo,
+        OutputLoadSelectionEvidence.cropUnconfirmed,
+        trackId: allowedTrackId,
+      );
+    }
+    final sourceWidth = request.sourceWidth;
+    final sourceHeight = request.sourceHeight;
+    final pixelAspectRatio = track.demuxPar ?? request.pixelAspectRatio;
+    final rotation = track.demuxRotate ?? request.rotation;
+    if (width == null ||
+        height == null ||
+        width <= 0 ||
+        height <= 0 ||
+        (sourceWidth != null && sourceWidth != width) ||
+        (sourceHeight != null && sourceHeight != height) ||
+        pixelAspectRatio != 1.0 ||
+        rotation != 0 ||
+        (track.demuxPar != null &&
+            request.pixelAspectRatio != null &&
+            track.demuxPar != request.pixelAspectRatio) ||
+        (track.demuxRotate != null &&
+            request.rotation != null &&
+            track.demuxRotate != request.rotation)) {
+      return result(
+        OutputLoadSelectionStrategy.selectedVideo,
+        OutputLoadSelectionEvidence.invalidDemuxGeometry,
+        trackId: allowedTrackId,
+      );
+    }
+    if (!request.nativeApi.isValid || token != _operationToken) {
+      return result(
+        OutputLoadSelectionStrategy.unknown,
+        OutputLoadSelectionEvidence.outputMutationUnconfirmed,
+      );
+    }
+    try {
+      if (_wid == null || _wid == 0) {
+        _wid = await createAndroidSurface(player, token);
+      }
+      if (_wid == null || _wid == 0 || !request.nativeApi.isValid) {
+        return result(
+          OutputLoadSelectionStrategy.unknown,
+          OutputLoadSelectionEvidence.outputMutationUnconfirmed,
+        );
+      }
+      final fixed = _fixedSize.resolve(width, height);
+      final size = _fixedSize.resolvedLimit == null
+          ? (width: width, height: height)
+          : fixed;
+      final accepted = await setAndroidSurfaceSize(
+        player: player,
+        width: size.width,
+        height: size.height,
+        token: token,
+        wid: _wid,
+        isCurrent: () => request.nativeApi.isValid && token == _operationToken,
+        setOption: request.nativeApi.setOption,
+      );
+      if (!accepted || !request.nativeApi.isValid || token != _operationToken) {
+        return result(
+          OutputLoadSelectionStrategy.unknown,
+          OutputLoadSelectionEvidence.outputMutationUnconfirmed,
+        );
+      }
+      _appliedSize = size;
+      _attached = true;
+      _preloadedPreparedToken = token;
+      _preloadedPreparedGeometry = (
+        width: width,
+        height: height,
+        pixelAspectRatio: pixelAspectRatio!,
+        rotation: rotation!,
+      );
+      _diagnostic('surface.prepared', {
+        'demuxWidth': width,
+        'demuxHeight': height,
+        'outputWidth': size.width,
+        'outputHeight': size.height,
+        'outputEpoch': token.outputEpoch,
+      });
+      return result(
+        OutputLoadSelectionStrategy.selectedVideo,
+        OutputLoadSelectionEvidence.preloadedSurfaceConfigured,
+        trackId: allowedTrackId,
+      );
+    } catch (error, stack) {
+      _diagnostic('surface.prepare-error', {
+        'error': error.toString(),
+        'stack': stack.toString(),
+      });
+      return result(
+        OutputLoadSelectionStrategy.unknown,
+        OutputLoadSelectionEvidence.outputMutationUnconfirmed,
+      );
+    }
+  }
+
+  @override
+  Future<OutputPreparationResult> confirmFileLoaded(
+    OutputOperationToken token,
+    NativeVideoOutputParameters? parameters, {
+    required List<NativeVideoTrackMetadata>? videoTracks,
+    required String? allowedTrackId,
+  }) async {
+    OutputPreparationResult unknown(OutputPreparationEvidence evidence) =>
+        _outputResult(token, OutputPreparationStrategy.unknown, evidence);
+
+    if (token != _operationToken || videoTracks == null) {
+      return unknown(OutputPreparationEvidence.loadedFileGeometry);
+    }
+    if (videoTracks.isEmpty) {
+      final noVideo = _outputResult(
+        token,
+        OutputPreparationStrategy.noVideo,
+        OutputPreparationEvidence.nativeTrackListNoVideo,
+      );
+      _completeOutputAttach(token, noVideo);
+      return noVideo;
+    }
+    if (parameters == null) {
+      return unknown(OutputPreparationEvidence.loadedFileGeometry);
+    }
+    final selectedTrackId = _selectedTrackMetadata?.id;
+    final selection = _loadSelection;
+    final activeTracks = videoTracks
+        .where((track) => track.selected == true)
+        .toList(growable: false);
+    if (activeTracks.length != 1) {
+      return unknown(
+        videoTracks.length > 1
+            ? OutputPreparationEvidence.multipleVideoTracks
+            : OutputPreparationEvidence.trackSelectionUnconfirmed,
+      );
+    }
+    final loadedTrack = activeTracks.single;
+    final expectedTrackId = selectedTrackId ?? allowedTrackId;
+    if (expectedTrackId == null ||
+        expectedTrackId.isEmpty ||
+        loadedTrack.id != expectedTrackId ||
+        (allowedTrackId != null && loadedTrack.id != allowedTrackId)) {
+      return unknown(OutputPreparationEvidence.trackSelectionUnconfirmed);
+    }
+    final selectionCanUseLegacy =
+        selection?.strategy == OutputLoadSelectionStrategy.unknown &&
+        selection?.evidence ==
+            OutputLoadSelectionEvidence.multipleVideoTracks &&
+        selection?.trackId == loadedTrack.id;
+    final lateLegacySelection =
+        selection == null ||
+        selection.evidence ==
+            OutputLoadSelectionEvidence.preloadedHookUnavailable ||
+        selection.evidence == OutputLoadSelectionEvidence.unknown ||
+        selection.evidence ==
+            OutputLoadSelectionEvidence.trackSelectionUnconfirmed;
+    if (selection != null && selection.outputEpoch != token.outputEpoch) {
+      return unknown(OutputPreparationEvidence.trackSelectionUnconfirmed);
+    }
+    if (selection != null &&
+        selection.strategy != OutputLoadSelectionStrategy.selectedVideo &&
+        !selectionCanUseLegacy &&
+        !lateLegacySelection) {
+      return unknown(
+        selection.evidence == OutputLoadSelectionEvidence.multipleVideoTracks
+            ? OutputPreparationEvidence.multipleVideoTracks
+            : OutputPreparationEvidence.trackSelectionUnconfirmed,
+      );
+    }
+    if (selectedTrackId != null && selectedTrackId != loadedTrack.id) {
+      return unknown(OutputPreparationEvidence.trackSelectionUnconfirmed);
+    }
+    final preparedTrack = _selectedTrackMetadata;
+    if (preparedTrack != null &&
+        (preparedTrack.id != loadedTrack.id ||
+            preparedTrack.demuxWidth != null &&
+                preparedTrack.demuxWidth != loadedTrack.demuxWidth ||
+            preparedTrack.demuxHeight != null &&
+                preparedTrack.demuxHeight != loadedTrack.demuxHeight ||
+            preparedTrack.demuxPar != null &&
+                preparedTrack.demuxPar != loadedTrack.demuxPar ||
+            preparedTrack.demuxRotate != null &&
+                preparedTrack.demuxRotate != loadedTrack.demuxRotate ||
+            preparedTrack.demuxCropKnownNone != null &&
+                preparedTrack.demuxCropKnownNone !=
+                    loadedTrack.demuxCropKnownNone)) {
+      return unknown(OutputPreparationEvidence.loadedFileGeometry);
+    }
+    if (loadedTrack.demuxWidth != null &&
+            loadedTrack.demuxWidth != parameters.width ||
+        loadedTrack.demuxHeight != null &&
+            loadedTrack.demuxHeight != parameters.height) {
+      return unknown(OutputPreparationEvidence.loadedFileGeometry);
+    }
+    _selectedTrackMetadata = loadedTrack;
+    if (lateLegacySelection) {
+      _loadSelection = _selectionResult(
+        token,
+        OutputLoadSelectionStrategy.unknown,
+        OutputLoadSelectionEvidence.preloadedHookUnavailable,
+        trackId: loadedTrack.id,
+      );
+    }
+    final width = parameters.displayWidth;
+    final height = parameters.displayHeight;
+    final rawWidth = parameters.width;
+    final rawHeight = parameters.height;
+    final par = parameters.pixelAspectRatio;
+    final rotation = parameters.rotation;
+    if (width == null ||
+        height == null ||
+        width <= 0 ||
+        height <= 0 ||
+        rawWidth == null ||
+        rawHeight == null ||
+        rawWidth <= 0 ||
+        rawHeight <= 0 ||
+        par == null ||
+        !par.isFinite ||
+        par <= 0 ||
+        rotation == null) {
+      return unknown(OutputPreparationEvidence.invalidDemuxGeometry);
+    }
+    final normalizedRotation = rotation % 360;
+    if (normalizedRotation != 0 &&
+        normalizedRotation != 90 &&
+        normalizedRotation != 180 &&
+        normalizedRotation != 270) {
+      return unknown(OutputPreparationEvidence.invalidDemuxGeometry);
+    }
+    final displaySize = normalizedRotation == 90 || normalizedRotation == 270
+        ? (width: height, height: width)
+        : (width: width, height: height);
+
+    final preparedGeometry = _preloadedPreparedGeometry;
+    if (_preloadedPreparedToken == token &&
+        _attached &&
+        preparedGeometry != null) {
+      final track = _selectedTrackMetadata!;
+      if (_requestGeometryMatches(track, preparedGeometry, parameters)) {
+        final geometry = _appliedSize ?? displaySize;
+        final prepared = _outputResult(
+          token,
+          OutputPreparationStrategy.prepared,
+          OutputPreparationEvidence.preloadedSurfaceConfiguration,
+          geometry: VideoOutputGeometry(
+            width: geometry.width,
+            height: geometry.height,
+          ),
+        );
+        _completeOutputAttach(token, prepared);
+        rect.value = Rect.fromLTWH(
+          0,
+          0,
+          displaySize.width.toDouble(),
+          displaySize.height.toDouble(),
+        );
+        return prepared;
+      }
+    }
+
+    try {
+      if (vo == 'gpu') {
+        if (_wid == null || _wid == 0) {
+          _wid = await createAndroidSurface(player, token);
+        }
+        if (_wid == null || _wid == 0) {
+          return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
+        }
+        final fixed = _fixedSize.resolve(displaySize.width, displaySize.height);
+        final size = _fixedSize.resolvedLimit == null ? displaySize : fixed;
+        final accepted = await setAndroidSurfaceSize(
+          player: player,
+          width: size.width,
+          height: size.height,
+          token: token,
+          wid: _wid,
+          isCurrent: () => token == _operationToken,
+        );
+        if (!accepted || token != _operationToken) {
+          return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
+        }
+        _appliedSize = size;
+        _attached = true;
+      } else if (!_attached) {
+        if (_wid == null || _wid == 0) {
+          return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
+        }
+        player.setOption('wid', _wid.toString());
+        player.setOption('vo', vo);
+        _attached = true;
+      } else if (_wid == null) {
+        return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
+      }
+      final result = _outputResult(
+        token,
+        OutputPreparationStrategy.legacyAttached,
+        OutputPreparationEvidence.loadedFileGeometry,
+        geometry: VideoOutputGeometry(
+          width: _appliedSize?.width ?? displaySize.width,
+          height: _appliedSize?.height ?? displaySize.height,
+        ),
+      );
+      rect.value = Rect.fromLTWH(
+        0,
+        0,
+        displaySize.width.toDouble(),
+        displaySize.height.toDouble(),
+      );
+      _completeOutputAttach(token, result);
+      return result;
+    } catch (error, stack) {
+      _diagnostic('surface.confirm-error', {
+        'error': error.toString(),
+        'stack': stack.toString(),
+      });
+      return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
+    }
+  }
+
+  bool _requestGeometryMatches(
+    NativeVideoTrackMetadata track,
+    ({int width, int height, double pixelAspectRatio, int rotation})
+    preparedGeometry,
+    NativeVideoOutputParameters parameters,
+  ) =>
+      track.demuxWidth == preparedGeometry.width &&
+      track.demuxHeight == preparedGeometry.height &&
+      (track.demuxPar == null ||
+          track.demuxPar == preparedGeometry.pixelAspectRatio) &&
+      (track.demuxRotate == null ||
+          track.demuxRotate == preparedGeometry.rotation) &&
+      parameters.width == preparedGeometry.width &&
+      parameters.height == preparedGeometry.height &&
+      parameters.pixelAspectRatio == preparedGeometry.pixelAspectRatio &&
+      parameters.rotation == preparedGeometry.rotation &&
+      parameters.displayWidth == preparedGeometry.width &&
+      parameters.displayHeight == preparedGeometry.height;
+
+  @override
+  Future<void> invalidateOutputGeneration(OutputOperationToken token) async {
+    if (token == _pendingOperationToken) _pendingOperationToken = null;
+    if (token == _operationToken) {
+      _operationToken = null;
+      _mediaGeneration++;
+      _attached = false;
+      _appliedSize = null;
+      _loadSelection = null;
+      _selectedTrackMetadata = null;
+      _preloadedPreparedToken = null;
+      _preloadedPreparedGeometry = null;
+    }
+    _completeOutputAttachUnknown(
+      token,
+      OutputPreparationEvidence.outputMutationUnconfirmed,
+    );
+    await invalidateAndroidOutputGeneration(player, token);
+  }
+
+  @override
+  Future<void> beginOutputForLoad(OutputOperationToken token) async {
+    if (token.runtimeId == 0) {
+      throw ArgumentError.value(token.runtimeId, 'runtimeId');
+    }
+    if (_disposeFuture != null) {
+      throw StateError('Video output is being released');
+    }
+    final highWater = _highWaterToken;
+    if (highWater != null &&
+        token != highWater &&
+        !_canReplace(token, highWater)) {
+      throw StateError('A stale Android output generation cannot be activated');
+    }
+    if (highWater == token &&
+        _operationToken != token &&
+        _pendingOperationToken != token) {
+      throw StateError('A revoked Android output generation cannot be reused');
+    }
+    final previousPendingToken = _pendingOperationToken;
+    if (previousPendingToken != null && previousPendingToken != token) {
+      _completeOutputAttachUnknown(
+        previousPendingToken,
+        OutputPreparationEvidence.outputMutationUnconfirmed,
+      );
+    }
+    for (final entry in _outputAttachWaiters.entries.toList()) {
+      if (entry.key == token) continue;
+      if (!entry.value.isCompleted) {
+        entry.value.complete(
+          _outputResult(
+            entry.key,
+            OutputPreparationStrategy.unknown,
+            OutputPreparationEvidence.outputMutationUnconfirmed,
+          ),
+        );
+      }
+      _outputAttachWaiters.remove(entry.key);
+    }
+    _runtimeManagedLoads = true;
+    _highWaterToken = token;
+    _pendingOperationToken = token;
+    _ensureOutputAttachWaiter(token);
+    _lastOutputAttachToken = null;
+    _lastOutputAttachResult = null;
+    if (!await beginAndroidOutputOperation(player, token) ||
+        _pendingOperationToken != token) {
+      _completeOutputAttachUnknown(
+        token,
+        OutputPreparationEvidence.outputMutationUnconfirmed,
+      );
+      throw StateError('Android output rejected the load generation');
+    }
+  }
+
+  @override
+  Future<OutputPreparationResult> waitForOutputAttach(
+    OutputOperationToken token,
+  ) {
+    if (_lastOutputAttachToken == token && _lastOutputAttachResult != null) {
+      return Future.value(_lastOutputAttachResult);
+    }
+    if (_disposeFuture != null) {
+      return Future.value(
+        _outputResult(
+          token,
+          OutputPreparationStrategy.unknown,
+          OutputPreparationEvidence.unknown,
+        ),
+      );
+    }
+    return _outputAttachWaiters
+        .putIfAbsent(token, () => Completer<OutputPreparationResult>())
+        .future;
+  }
+
+  @override
+  Future<void> releaseOutput() => _dispose();
 
   /// {@macro android_video_controller}
   static Future<PlatformVideoController> create(
@@ -323,16 +1007,45 @@ class AndroidVideoController extends PlatformVideoController {
   }
 
   /// Disposes the instance. Releases allocated resources back to the system.
-  Future<void> _dispose() async {
+  Future<void> _dispose() => _disposeFuture ??= _release();
+
+  Future<void> _release() async {
     _diagnostic('surface.dispose');
+    _mediaGeneration++;
+    final token = _operationToken;
+    final pendingToken = _pendingOperationToken;
+    _operationToken = null;
+    _pendingOperationToken = null;
+    _loadSelection = null;
+    _selectedTrackMetadata = null;
+    _preloadedPreparedToken = null;
+    _preloadedPreparedGeometry = null;
+    _attached = false;
+    if (token != null) {
+      _completeOutputAttachUnknown(
+        token,
+        OutputPreparationEvidence.outputMutationUnconfirmed,
+      );
+    }
+    if (pendingToken != null && pendingToken != token) {
+      _completeOutputAttachUnknown(
+        pendingToken,
+        OutputPreparationEvidence.outputMutationUnconfirmed,
+      );
+    }
+    closeOutputProgress();
+    if (token != null) {
+      await invalidateAndroidOutputGeneration(player, token);
+    }
+    await cancelAndroidSurfaceFrameWait(player);
     // Dispose the [StreamSubscription]s.
     await _subscription?.cancel();
     // Release the native resources.
     final handle = player.handle;
-    _controllers.remove(handle);
     await _channel.invokeMethod('VideoOutputManager.Dispose', {
       'handle': handle.toString(),
     });
+    _controllers.remove(handle);
   }
 
   /// Pointer address to the global object reference of `android.view.Surface` i.e. `(intptr_t)(*android.view.Surface)`.
@@ -358,6 +1071,33 @@ class AndroidVideoController extends PlatformVideoController {
             debugPrint(call.arguments.toString());
           }
           switch (call.method) {
+            case 'VideoOutput.ConsumedFrames':
+              {
+                final arguments = Map<Object?, Object?>.from(
+                  call.arguments as Map,
+                );
+                final handle = int.parse(arguments['handle'].toString());
+                final controller = _controllers[handle];
+                final tokenData = Map<Object?, Object?>.from(
+                  arguments['token'] as Map,
+                );
+                final token = OutputOperationToken.fromPlatformArguments(
+                  tokenData,
+                );
+                if (controller != null &&
+                    controller._disposeFuture == null &&
+                    controller._operationToken == token) {
+                  controller.emitOutputProgress(
+                    VideoOutputProgress(
+                      token: token,
+                      consumedAtMonotonicUs: List<int>.from(
+                        arguments['consumedAtMonotonicUs'] as List,
+                      ),
+                    ),
+                  );
+                }
+                break;
+              }
             case 'VideoOutput.FrameTimings':
               {
                 final int handle = call.arguments['handle'];
