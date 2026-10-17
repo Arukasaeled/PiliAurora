@@ -44,14 +44,29 @@ typedef _StatusConfig = (
 );
 
 class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
-  static final List<MediaItem> _item = [];
+  final List<MediaItem> _item = [];
   bool _enableBackgroundPlay = Pref.enableBackgroundPlay;
   PlaybackKeepAliveLease? _playbackLease;
 
   bool get enableBackgroundPlay => _enableBackgroundPlay;
   set enableBackgroundPlay(bool value) {
+    if (_enableBackgroundPlay == value) return;
     _enableBackgroundPlay = value;
-    if (!value) _releasePlaybackLease();
+    if (!value) {
+      _clearPublishedState();
+    } else if (_item.isNotEmpty) {
+      setMediaItem(_item.last);
+      final config = _currentConfig;
+      if (config != null) {
+        onUpdateState(
+          config.$1,
+          config.$2,
+          config.$3,
+          position: _currentPosition,
+          speed: config.$4,
+        );
+      }
+    }
   }
 
   void _retainPlaybackLease() {
@@ -107,6 +122,8 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
 
   Duration? _lastPos;
   _StatusConfig? _lastConfig;
+  _StatusConfig? _currentConfig;
+  Duration _currentPosition = Duration.zero;
   void onUpdateState(
     PlayerStatus status,
     bool isBuffering,
@@ -115,13 +132,11 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
     required double speed,
     String? debugLabel,
   }) {
-    if (!enableBackgroundPlay || _item.isEmpty) {
-      return;
-    }
-
     if (onPlay != null && debugLabel == 'onVideoPaused') return;
-
     final newConfig = (status, isBuffering, isLive, speed);
+    _currentConfig = newConfig;
+    _currentPosition = position;
+    if (!enableBackgroundPlay || _item.isEmpty) return;
     if (_lastConfig == newConfig) {
       if (_lastPos != null) {
         final pos = position.inSeconds;
@@ -142,7 +157,7 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
         playing = true;
         processingState = isBuffering ? .buffering : .ready;
       case .paused:
-        playing = isBuffering;
+        playing = false;
         processingState = isBuffering ? .buffering : .ready;
     }
     _updateState(
@@ -214,7 +229,6 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
     String? artist,
     String? cover,
   }) {
-    if (!enableBackgroundPlay) return;
     // if (kDebugMode) {
     //   debugPrint('当前调用栈为：');
     //   debugPrint(StackTrace.current);
@@ -296,13 +310,13 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
       default:
         return;
     }
+    _item.removeWhere((item) => item.id.endsWith(herotag));
     _item.add(mediaItem);
     setMediaItem(mediaItem);
   }
 
   void onVideoDetailDispose(String herotag) {
-    if (!enableBackgroundPlay) return;
-
+    final wasCurrent = _item.lastOrNull?.id.endsWith(herotag) == true;
     if (_item.isNotEmpty) {
       _item.removeWhere((item) => item.id.endsWith(herotag));
     }
@@ -310,6 +324,11 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
       clear();
       return;
     }
+    if (!wasCurrent) return;
+    _currentConfig = null;
+    _lastConfig = null;
+    _lastPos = null;
+    if (!enableBackgroundPlay) return;
     setMediaItem(_item.last);
     playbackState.add(
       playbackState.value.copyWith(processingState: .ready, playing: false),
@@ -318,19 +337,21 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
 
   void clearIfNeeded() {
     if (!enableBackgroundPlay) {
-      _releasePlaybackLease();
+      _clearPublishedState();
       return;
     }
     if (_item.isEmpty) clear();
   }
 
   void clear() {
-    if (!enableBackgroundPlay) {
-      _releasePlaybackLease();
-      return;
-    }
-    mediaItem.add(null);
     _item.clear();
+    _currentConfig = null;
+    _currentPosition = Duration.zero;
+    _clearPublishedState();
+  }
+
+  void _clearPublishedState() {
+    if (!mediaItem.isClosed) mediaItem.add(null);
     _lastPos = null;
     _lastConfig = null;
     /**
