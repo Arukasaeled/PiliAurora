@@ -7,7 +7,6 @@ import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
-import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/danmaku_utils.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
@@ -160,9 +159,11 @@ class PlDanmakuController {
   @pragma('vm:notify-debugger-on-exception')
   Future<void> _initFileDm() async {
     try {
+      final fileSource = _plPlayerController.currentFileSource;
+      if (fileSource == null) return;
       final file = File(
         path.join(
-          (_plPlayerController.dataSource as FileSource).dir,
+          fileSource.dir,
           PathUtils.danmakuName,
         ),
       );

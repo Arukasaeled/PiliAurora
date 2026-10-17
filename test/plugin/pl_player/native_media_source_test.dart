@@ -11,7 +11,7 @@ void main() {
     String? audio = 'https://example.com/audio.m4s',
   }) => NetworkSource(videoSource: video, audioSource: audio);
 
-  test('候选数量不同时能够找到可用的音视频组合', () {
+  test('候选数量不同时快照能够遍历所有音视频组合', () {
     final source = NetworkSource(
       videoSource: 'video-bad',
       audioSource: 'audio-bad-1',
@@ -19,15 +19,18 @@ void main() {
       audioCandidates: const ['audio-bad-2', 'audio-good'],
     );
     final attempted = <(String, String?)>[];
+    var snapshot = PlaybackSourceSnapshot.fromDataSource(source);
     do {
-      attempted.add((source.currentVideoSource, source.currentAudioSource));
-    } while (source.advanceCandidate());
+      attempted.add((snapshot.currentVideoSource, snapshot.currentAudioSource));
+      final next = snapshot.advanceCandidate();
+      if (next == null) break;
+      snapshot = next;
+    } while (true);
 
     expect(attempted, contains(('video-good', 'audio-good')));
     expect(attempted, contains(('video-bad', 'audio-good')));
     expect(attempted.toSet().length, 6);
     expect(attempted.length, 6);
-    expect(source.advanceCandidate(), isFalse);
   });
 
   group('nativeMediaSource', () {
@@ -93,13 +96,14 @@ void main() {
         videoCandidates: const [primaryVideo, backupVideo],
         audioCandidates: const [primaryAudio, backupAudio],
       );
-      expect(source.advanceCandidate(), isTrue);
       final snapshot = PlaybackSourceSnapshot.fromDataSource(source);
-      expect(source.advanceCandidate(), isTrue);
+      final next = snapshot.advanceCandidate()!;
+      expect(next.currentAudioSource, backupAudio);
+      expect(snapshot.currentVideoSource, primaryVideo);
 
       final media = nativeMediaSourceFromSnapshot(source: snapshot);
       expect(media.uri, primaryVideo);
-      expect(media.extras!['audio-files-append'], contains(backupAudio));
+      expect(media.extras!['audio-files-append'], contains(primaryAudio));
     });
 
     test('快照源重建媒体时清除旧的外部音轨选项', () {

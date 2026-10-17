@@ -176,9 +176,6 @@ class PlPlayerController
 
   late final tryLook = !Accounts.get(AccountType.video).isLogin && Pref.p1080;
 
-  /// 兼容仍需读取文件元数据的旧调用方；执行和候选选择只读当前计划快照。
-  DataSource get dataSource => currentPlaybackPlan!.source.toDataSource();
-
   Timer? _timer;
   StreamSubscription? _subForSeek;
   Completer<void>? _seekCompletion;
@@ -1151,6 +1148,7 @@ class PlPlayerController
 
   // offline
   bool get isFileSource => _currentPlan?.source.isNetwork == false;
+  FileSource? get currentFileSource => _currentPlan?.source.fileSource;
 
   String? shadersDirPath;
   Future<String> get copyShadersToExternalDirectory async {
@@ -1573,7 +1571,7 @@ class PlPlayerController
           );
         },
         recoverSoftware: () async {
-          if (isLive || dataSource is FileSource) return false;
+          if (isLive || isFileSource) return false;
           final reload = refreshPlayer();
           if (reload == null) return false;
           Diagnostics.instance.playerLog(

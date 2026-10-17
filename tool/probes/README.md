@@ -160,16 +160,6 @@ uv run --locked python tool/probes/windows/windows_video_sampling_probe.py --vid
 
 追加 `--control-dumb-mode=auto` 可对照修复前的自动简化渲染模式。退出码 0 表示 16 个采样帧均无绿色边带且实际使用指定硬解器；检测到条带、帧不足或硬解回退会退出 1。输入需有至少 20 帧，画面底部应有正常内容，避免原片自身纯绿色边带造成误判。探针只打开本地视频，不访问网络或账号，覆盖 mpv／ANGLE 的像素输出；Flutter 合成、控件、全屏切换和长期性能在应用内实测。
 
-## 播放器断流恢复回归探针
-
-`playback_network_recovery_probe.py` 回放脱敏的 Windows curl 终止错误、Android HTTPS 提前结束和 MP4 截断错误，提取生产日志分发、播放器监听和重连方法，检查断流恢复、缓冲检查升级、错误合并、冷却窗口和媒体切换。暂停意图与候选切换由 `test/plugin/pl_player/playback/` 覆盖；`native_media_source_test.dart` 验证媒体来源与独立音轨构造。
-
-```powershell
-uv run --locked python tool/probes/playback/playback_network_recovery_probe.py
-```
-
-通过 FVM 运行 Flutter 测试，生成文件写入 `build/playback-network-diagnosis/` 下的临时目录，运行结束后自动清理。原生播放器由状态桩替代，真实网络传输、GPU、MediaCodec 和长时间播放需要实机验证。
-
 ## Windows 直播首帧探针
 
 `playback/windows_live_startup.dart` 使用实际 Flutter、ANGLE 与 libmpv，按直播的

@@ -17,12 +17,8 @@ Media nativeMediaSource({
   Duration? start,
   Map<String, String> extras = const {},
 }) {
-  final video = source is NetworkSource
-      ? source.currentVideoSource
-      : source.videoSource;
-  final audio = source is NetworkSource
-      ? source.currentAudioSource
-      : source.audioSource;
+  final video = source.videoSource;
+  final audio = source.audioSource;
   // 外部音轨选项由当前媒体源生成，重建时清除上一份媒体的地址。
   final mediaExtras = Map<String, String>.of(extras)
     ..remove('audio-files-append');

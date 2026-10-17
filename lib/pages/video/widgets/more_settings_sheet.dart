@@ -14,7 +14,6 @@ import 'package:pili_aurora/models/common/video/video_decode_type.dart';
 import 'package:pili_aurora/pages/common/common_intro_controller.dart';
 import 'package:pili_aurora/pages/main/controller.dart';
 import 'package:pili_aurora/pages/video/controller.dart';
-import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/super_resolution_policy.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/player_info_dialog.dart';
@@ -538,9 +537,9 @@ class _VideoMoreSettingsSheetState extends State<VideoMoreSettingsSheet> {
                   // 始终保留滚动条宽度，展开高级设置时控件列保持原位。
                   padding: const EdgeInsets.only(right: 8),
                   child: Obx(() {
+                    final fileSource = player.currentFileSource;
                     final audioAvailable = controller.isFileSource
-                        ? player.dataSource is FileSource &&
-                              !(player.dataSource as FileSource).isMp4
+                        ? fileSource != null && !fileSource.isMp4
                         : controller.audioUrl?.isNotEmpty == true;
                     return ListView(
                       controller: _scrollController,

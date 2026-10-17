@@ -94,19 +94,12 @@ class PlaybackSourceSnapshot {
     Map<String, String> headers = const {},
   }) {
     if (source is NetworkSource) {
-      final videoIndex = source.videoCandidates.indexOf(
-        source.currentVideoSource,
-      );
-      final currentAudioSource = source.currentAudioSource;
-      final audioIndex = currentAudioSource == null
-          ? 0
-          : source.audioCandidates.indexOf(currentAudioSource);
       return PlaybackSourceSnapshot._(
         videoCandidates: List.unmodifiable(source.videoCandidates),
         audioCandidates: List.unmodifiable(source.audioCandidates),
-        videoIndex: videoIndex < 0 ? 0 : videoIndex,
-        audioIndex: audioIndex < 0 ? 0 : audioIndex,
-        candidateIndex: source.candidateIndex,
+        videoIndex: 0,
+        audioIndex: 0,
+        candidateIndex: 0,
         isNetwork: true,
         headers: headers,
       );
@@ -141,17 +134,7 @@ class PlaybackSourceSnapshot {
   String? get currentAudioSource =>
       audioCandidates.isEmpty ? null : audioCandidates[audioIndex];
 
-  /// 仅供旧调用适配。运行时应直接使用 snapshot 地址和索引，不能靠
-  /// DataSource 往返保留候选位置。
-  DataSource toDataSource() {
-    if (_fileSource case final file?) return file;
-    return NetworkSource(
-      videoSource: currentVideoSource,
-      audioSource: currentAudioSource,
-      videoCandidates: videoCandidates,
-      audioCandidates: audioCandidates,
-    );
-  }
+  FileSource? get fileSource => _fileSource;
 
   PlaybackSourceSnapshot? advanceCandidate({bool audioOnly = false}) {
     var nextVideo = videoIndex;
