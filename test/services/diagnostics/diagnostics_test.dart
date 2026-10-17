@@ -282,6 +282,91 @@ void main() {
     },
   );
 
+  test('paused buffer is byte bounded and prioritizes errors', () async {
+    await diagnostics.pauseWrites();
+    final chunk = 'x' * 65000;
+    for (var i = 0; i < 40; i++) {
+      diagnostics.playerLog(
+        DiagnosticLogLevel.info,
+        'mpv',
+        chunk,
+        details: {'a': chunk, 'b': chunk, 'c': chunk, 'd': chunk},
+      );
+    }
+    diagnostics.playerLog(DiagnosticLogLevel.error, 'mpv', 'critical failure');
+    final status = diagnostics.storageStatus['pausedBuffer'] as Map;
+    expect(
+      status['pendingBytes'],
+      lessThanOrEqualTo(Diagnostics.maxDeferredBytes),
+    );
+    expect(status['pendingRecords'], lessThan(40));
+    expect(diagnostics.droppedRecords, greaterThan(0));
+    diagnostics.resumeWrites();
+    await diagnostics.flush();
+    expect(
+      await File('${directory.path}/player.jsonl').readAsString(),
+      contains('critical failure'),
+    );
+  });
+
+  test('full paused queue evicts debug records for errors', () async {
+    await diagnostics.configure(level: DiagnosticLogLevel.debug);
+    await diagnostics.pauseWrites();
+    final first = diagnostics.log(
+      DiagnosticLogLevel.debug,
+      'app',
+      'old debug',
+    )!;
+    for (var i = 1; i < 400; i++) {
+      diagnostics.log(DiagnosticLogLevel.debug, 'app', 'debug $i');
+    }
+    final error = diagnostics.log(
+      DiagnosticLogLevel.error,
+      'app',
+      'keep error',
+    )!;
+    expect(await first.accepted, isFalse);
+    expect(diagnostics.droppedRecords, 1);
+    diagnostics.resumeWrites();
+    expect(await error.accepted, isTrue);
+    await diagnostics.flush();
+    final text = await File('${directory.path}/runtime.jsonl').readAsString();
+    expect(text, contains('keep error'));
+    expect(text, isNot(contains('old debug')));
+  });
+
+  test(
+    'uncoordinated child files are preserved and marked in export',
+    () async {
+      final childDirectory = Directory('${directory.path}/window-9');
+      await childDirectory.create();
+      final file = File('${childDirectory.path}/runtime.jsonl');
+      await file.writeAsString('offline record');
+      diagnostics.pauseChildren = () async {
+        diagnostics.skippedChildWindows.add(9);
+      };
+      final archive = await diagnostics.exportArchive();
+      try {
+        final zip = ZipDecoder().decodeBytes(await archive.readAsBytes());
+        expect(
+          zip.files.map((file) => file.name),
+          isNot(contains('window-9-runtime.jsonl')),
+        );
+        final manifest = jsonDecode(
+          utf8.decode(
+            zip.files.firstWhere((file) => file.name == 'manifest.json').content
+                as List<int>,
+          ),
+        ) as Map;
+        expect((manifest['storage'] as Map)['skippedChildWindows'], [9]);
+        await diagnostics.clear();
+        expect(await file.readAsString(), 'offline record');
+      } finally {
+        await archive.parent.delete(recursive: true);
+      }
+    },
+  );
+
   test('levels change immediately and recent logs stay bounded', () async {
     diagnostics.log(DiagnosticLogLevel.debug, 'test', 'hidden');
     expect(diagnostics.recentLogs, isEmpty);

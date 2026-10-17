@@ -89,6 +89,52 @@ void main() {
     },
   );
 
+  for (final tracing in [false, true]) {
+    test('expected HTTP failures use debug with tracing=$tracing', () async {
+      await diagnostics.configure(tracing: tracing);
+      final dio = Dio()..httpClientAdapter = _FailureAdapter();
+      dio.interceptors.add(DiagnosticHttpInterceptor(diagnostics: diagnostics));
+      const expected = [
+        'https://api.bilibili.com/x/click-interface/web/heartbeat',
+        'https://api.bilibili.com/x/player/online/total',
+        'https://account.bilibili.com/site/getCoin',
+      ];
+      try {
+        for (final url in expected) {
+          await expectLater(
+            dio.get<Object?>(url),
+            throwsA(isA<DioException>()),
+          );
+        }
+        expect(diagnostics.recentLogs, isEmpty);
+        await expectLater(
+          dio.get<Object?>('https://example.test/x/player/online/total'),
+          throwsA(isA<DioException>()),
+        );
+        expect(diagnostics.recentLogs.single['level'], 'error');
+        await diagnostics.configure(level: DiagnosticLogLevel.debug);
+        for (final url in expected) {
+          await expectLater(
+            dio.get<Object?>(url),
+            throwsA(isA<DioException>()),
+          );
+        }
+        expect(
+          diagnostics.recentLogs.where((r) => r['level'] == 'debug'),
+          hasLength(3),
+        );
+        if (tracing) {
+          diagnostics.capture();
+          final stats =
+              (diagnostics.latest!['operations'] as Map)['http'] as Map;
+          expect(stats['errors'], 7);
+        }
+      } finally {
+        dio.close(force: true);
+      }
+    });
+  }
+
   test('HTTP retries do not leave an active operation behind', () async {
     await diagnostics.configure(tracing: true);
     final interceptor = DiagnosticHttpInterceptor(diagnostics: diagnostics);
@@ -132,4 +178,20 @@ class _TestHttpAdapter implements HttpClientAdapter {
 
   @override
   void close({bool force = false}) {}
+}
+
+class _FailureAdapter extends _TestHttpAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) {
+    return Future<ResponseBody>.error(
+      DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionTimeout,
+      ),
+    );
+  }
 }

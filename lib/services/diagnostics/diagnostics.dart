@@ -31,11 +31,33 @@ enum DiagnosticLogLevel {
 }
 
 class DiagnosticLogResult {
-  const DiagnosticLogResult({required this.record, required this.queued});
+  const DiagnosticLogResult({
+    required this.record,
+    required this.queued,
+    this.deferred,
+  });
+  final Future<bool>? deferred;
+  Future<bool> get accepted => deferred ?? Future.value(queued);
   final Map<String, Object?> record;
 
   /// 已进入持久化队列；写盘结果需在 flush 后检查存储状态。
   final bool queued;
+}
+
+class _DeferredRecord {
+  _DeferredRecord(
+    this.store,
+    this.bytes,
+    this.forward,
+    this.priority,
+    this.trace,
+  );
+  final DiagnosticRecordStore? store;
+  final Uint8List bytes;
+  final bool forward;
+  final int priority;
+  final bool trace;
+  final accepted = Completer<bool>();
 }
 
 class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
@@ -61,10 +83,11 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   bool _writesPaused = false;
   Completer<void>? _writesResumed;
   Timer? _pauseTimeout;
-  final _deferred =
-      Queue<(DiagnosticRecordStore?, Map<String, Object?>, bool)>();
+  final _deferred = <_DeferredRecord>[];
+  int _deferredBytes = 0;
   int _deferredDrops = 0;
-  final _deferredTrace = Queue<Map<String, Object?>>();
+  static const maxDeferredBytes = 8 << 20;
+  final skippedChildWindows = <int>{};
   VoidCallback? onSettingsChanged;
   Directory? _directory;
   bool _childProcess = false;
@@ -119,6 +142,13 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   DiagnosticLogLevel get playerLevel => _playerLevel;
   Map<String, Object?> get storageStatus => {
     'forwardingFailures': forwardingFailures,
+    'skippedChildWindows': skippedChildWindows.toList(),
+    'pausedBuffer': {
+      'pendingRecords': _deferred.length,
+      'pendingBytes': _deferredBytes,
+      'maxPendingBytes': maxDeferredBytes,
+      'dropped': _deferredDrops,
+    },
     'runtime': _logs?.status,
     'player': _playerLogs?.status,
     'performance': _trace?.status,
@@ -345,22 +375,21 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
         ),
       if (_tracing) 'session': _session,
     };
-    final accepted = _persist(store, record, forward: true);
-    return DiagnosticLogResult(record: record, queued: accepted);
+    return _persist(store, record, forward: true);
   }
 
-  bool _persist(
+  DiagnosticLogResult _persist(
     DiagnosticRecordStore? store,
     Map<String, Object?> record, {
     bool forward = false,
   }) {
     if (_writesPaused) {
-      if (_deferred.length + _deferredTrace.length >= 400) {
-        _deferredDrops++;
-        return false;
-      }
-      _deferred.add((store, record, forward));
-      return false;
+      final pending = _enqueue(store, record, forward: forward);
+      return DiagnosticLogResult(
+        record: record,
+        queued: false,
+        deferred: pending?.accepted.future,
+      );
     }
     _remember(record);
     final accepted = store?.add(record) ?? false;
@@ -372,7 +401,45 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _notifySoon();
-    return accepted;
+    return DiagnosticLogResult(record: record, queued: accepted);
+  }
+
+  _DeferredRecord? _enqueue(
+    DiagnosticRecordStore? store,
+    Map<String, Object?> record, {
+    bool forward = false,
+    bool trace = false,
+  }) {
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(record)));
+    final priority = trace
+        ? 0
+        : DiagnosticLogLevel.parse(record['level'] as String?).index;
+    if (bytes.length > maxDeferredBytes) {
+      _deferredDrops++;
+      return null;
+    }
+    while (_deferred.length >= 400 ||
+        _deferredBytes + bytes.length > maxDeferredBytes) {
+      _DeferredRecord? victim;
+      for (final entry in _deferred) {
+        if (entry.priority < priority &&
+            (victim == null || entry.priority < victim.priority)) {
+          victim = entry;
+        }
+      }
+      if (victim == null) {
+        _deferredDrops++;
+        return null;
+      }
+      _deferred.remove(victim);
+      _deferredBytes -= victim.bytes.length;
+      victim.accepted.complete(false);
+      _deferredDrops++;
+    }
+    final entry = _DeferredRecord(store, bytes, forward, priority, trace);
+    _deferred.add(entry);
+    _deferredBytes += bytes.length;
+    return entry;
   }
 
   Future<void> pauseWrites() async {
@@ -387,12 +454,17 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   void resumeWrites() {
     _pauseTimeout?.cancel();
     _writesPaused = false;
-    while (_deferred.isNotEmpty) {
-      final (store, record, forward) = _deferred.removeFirst();
-      _persist(store, record, forward: forward);
-    }
-    while (_deferredTrace.isNotEmpty) {
-      _trace?.add(_deferredTrace.removeFirst());
+    final pending = List<_DeferredRecord>.of(_deferred);
+    _deferred.clear();
+    _deferredBytes = 0;
+    for (final entry in pending) {
+      final record = Map<String, Object?>.from(
+        jsonDecode(utf8.decode(entry.bytes)) as Map,
+      );
+      final accepted = entry.trace
+          ? (_trace?.add(record) ?? false)
+          : _persist(entry.store, record, forward: entry.forward).queued;
+      entry.accepted.complete(accepted);
     }
     _writesResumed?.complete();
     _writesResumed = null;
@@ -486,11 +558,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
 
   void _writeTrace(Map<String, Object?> record) {
     if (_writesPaused) {
-      if (_deferred.length + _deferredTrace.length >= 400) {
-        _deferredDrops++;
-      } else {
-        _deferredTrace.add(record);
-      }
+      _enqueue(_trace, record, trace: true);
       return;
     }
     _trace?.add(record);
@@ -631,6 +699,10 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
           ).hasMatch(entry.uri.pathSegments.where((s) => s.isNotEmpty).last)) {
         continue;
       }
+      final windowId = int.parse(
+        entry.uri.pathSegments.where((s) => s.isNotEmpty).last.substring(7),
+      );
+      if (skippedChildWindows.contains(windowId)) continue;
       await for (final file in entry.list(followLinks: false)) {
         if (file is File &&
             RegExp(
@@ -717,8 +789,11 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _clear() async {
+    for (final entry in _deferred) {
+      entry.accepted.complete(false);
+    }
     _deferred.clear();
-    _deferredTrace.clear();
+    _deferredBytes = 0;
     await _logs?.clear();
     await _playerLogs?.clear();
     await _trace?.clear();
@@ -850,6 +925,7 @@ class TraceOperation {
 
   void finish({
     Object? error,
+    DiagnosticLogLevel errorLevel = DiagnosticLogLevel.error,
     StackTrace? stack,
     Map<String, Object?>? details,
   }) {
@@ -863,7 +939,7 @@ class TraceOperation {
     if (milliseconds > _stats.maxMs) _stats.maxMs = milliseconds;
     if (error != null) _stats.errors++;
     _owner.log(
-      error == null ? DiagnosticLogLevel.debug : DiagnosticLogLevel.error,
+      error == null ? DiagnosticLogLevel.debug : errorLevel,
       _category,
       _action,
       stack: stack,

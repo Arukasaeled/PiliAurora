@@ -78,6 +78,39 @@ void main() {
     },
   );
 
+  test('paused report waits for its eventual persistence result', () async {
+    await diagnostics.initialize(directory: directory);
+    await diagnostics.pauseWrites();
+    final handler = DiagnosticReportHandler(diagnostics: diagnostics);
+    final report = Report(
+      'paused error',
+      'stack',
+      DateTime(2026),
+      const {},
+      const {},
+      const {},
+      null,
+    );
+    var complete = false;
+    final result = handler.handle(report).then((value) {
+      complete = true;
+      return value;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(complete, isFalse);
+    diagnostics.resumeWrites();
+    expect(await result, isTrue);
+    expect(
+      await File('${directory.path}/runtime.jsonl').readAsString(),
+      contains('paused error'),
+    );
+    await diagnostics.pauseWrites();
+    final cleared = handler.handle(report);
+    await diagnostics.clearPausedRecords();
+    diagnostics.resumeWrites();
+    expect(await cleared, isFalse);
+  });
+
   test('legacy reports remain readable, exportable and clearable', () async {
     final legacy = File('${directory.path}/.pili_logs.json');
     final report = Report(

@@ -81,6 +81,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
     File? file;
     try {
       file = await service.exportArchive();
+      final skippedWindows = service.skippedChildWindows.length;
       if (!mounted) return;
       if (PlatformUtils.isDesktop) {
         final destination = await FilePicker.saveFile(
@@ -92,10 +93,20 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
         );
         if (destination != null) {
           await file.copy(destination.toFilePath());
-          if (mounted) _message(context, '诊断包已导出');
+          if (mounted) {
+            _message(
+              context,
+              skippedWindows == 0
+                  ? '诊断包已导出'
+                  : '诊断包已导出，未包含 $skippedWindows 个未连接窗口',
+            );
+          }
         }
       } else {
         await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
+        if (mounted && skippedWindows > 0) {
+          _message(context, '诊断包未包含 $skippedWindows 个未连接窗口');
+        }
       }
     } catch (_) {
       if (mounted) _message(context, '导出失败，请检查存储空间和目标目录');
@@ -131,6 +142,12 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
     if (confirmed == true) {
       try {
         await service.clear();
+        if (mounted && service.skippedChildWindows.isNotEmpty) {
+          _message(
+            context,
+            '已清除可协调的日志，保留 ${service.skippedChildWindows.length} 个未连接窗口的本地记录',
+          );
+        }
       } catch (_) {
         if (mounted) _message(context, '清除失败');
       }

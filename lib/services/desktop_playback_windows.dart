@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
+import 'package:pili_aurora/services/diagnostics/window_coordinator.dart';
 import 'package:pili_aurora/services/desktop_playback_layout.dart';
 import 'package:pili_aurora/services/desktop_playback_request.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -26,7 +27,6 @@ class _PlaybackWindow {
   final ready = Completer<void>();
   WebSocket? socket;
   Process? process;
-  final diagnosticRequests = <int, Completer<void>>{};
 }
 
 /// 每个播放进程拥有独立播放器；主进程负责排列、声音切换和保存几何信息。
@@ -53,14 +53,23 @@ class DesktopPlaybackWindows with WindowListener {
   bool _closing = false;
   Map<String, dynamic>? _diagnosticSettings;
   int _flushSequence = 0;
-  int _controlSequence = 0;
-  List<_PlaybackWindow> _pausedWindows = [];
+  late final _diagnosticCoordinator = DiagnosticWindowCoordinator(
+    sockets: () => {
+      for (final window in _windows.values) window.id: window.socket,
+    },
+    onSkipped: (ids) {
+      Diagnostics.instance.skippedChildWindows
+        ..clear()
+        ..addAll(ids);
+    },
+  );
   Completer<void>? _diagnosticsResumed;
   final _flushRequests = <int, Completer<void>>{};
 
   Future<HttpServer> _ensureServer() => _server ??= () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
+      await _diagnosticsResumed?.future;
       final token = request.headers.value(HttpHeaders.authorizationHeader);
       final matches = _windows.values.where(
         (window) => window.token == token && window.socket == null,
@@ -105,12 +114,7 @@ class DesktopPlaybackWindows with WindowListener {
   void _onWindowMessage(_PlaybackWindow window, Map<String, dynamic> message) {
     switch (message['type']) {
       case 'diagnosticControlResult':
-        final request = window.diagnosticRequests.remove(message['id']);
-        if (message['success'] == true) {
-          request?.complete();
-        } else {
-          request?.completeError(StateError('子窗口诊断协调失败'));
-        }
+        _diagnosticCoordinator.receive(window.id, message);
       case 'diagnostic':
         Diagnostics.instance.receiveRecord(
           Map<String, Object?>.from(message['record'] as Map),
@@ -370,47 +374,16 @@ class DesktopPlaybackWindows with WindowListener {
     }
   }
 
-  Future<void> _controlDiagnosticWindow(
-    _PlaybackWindow window,
-    String action,
-  ) async {
-    final socket = window.socket;
-    if (socket?.readyState != WebSocket.open) throw StateError('子窗口诊断连接已关闭');
-    final id = ++_controlSequence;
-    final request = window.diagnosticRequests[id] = Completer<void>();
-    try {
-      socket!.add(
-        jsonEncode({'type': 'diagnosticControl', 'id': id, 'action': action}),
-      );
-      await request.future.timeout(const Duration(seconds: 3));
-    } finally {
-      window.diagnosticRequests.remove(id);
-    }
-  }
-
   Future<void> pauseWindowDiagnostics() async {
     _diagnosticsResumed = Completer<void>();
-    _pausedWindows = _windows.values.toList();
-    await Future.wait(
-      _pausedWindows.map((window) => _controlDiagnosticWindow(window, 'pause')),
-    );
+    await _diagnosticCoordinator.pause();
   }
 
-  Future<void> clearWindowDiagnostics() async {
-    await Future.wait(
-      _pausedWindows.map((window) => _controlDiagnosticWindow(window, 'clear')),
-    );
-  }
+  Future<void> clearWindowDiagnostics() => _diagnosticCoordinator.clear();
 
   Future<void> resumeWindowDiagnostics() async {
-    final windows = _pausedWindows;
-    _pausedWindows = [];
     try {
-      await Future.wait(
-        windows
-            .where((window) => window.socket?.readyState == WebSocket.open)
-            .map((window) => _controlDiagnosticWindow(window, 'resume')),
-      );
+      await _diagnosticCoordinator.resume();
     } finally {
       _diagnosticsResumed?.complete();
       _diagnosticsResumed = null;

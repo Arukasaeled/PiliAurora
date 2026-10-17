@@ -36,7 +36,7 @@ class DiagnosticReportHandler extends ReportHandler {
         'build': report.customParameters,
       },
     );
-    if (record?.queued != true) return false;
+    if (record == null || !await record.accepted) return false;
     await diagnostics.flush();
     return diagnostics.storageError == null;
   }
