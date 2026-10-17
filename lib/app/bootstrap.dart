@@ -1,4 +1,3 @@
-import 'dart:async' show unawaited;
 import 'dart:io';
 
 import 'package:pili_aurora/app/app.dart';
@@ -20,6 +19,7 @@ import 'package:pili_aurora/utils/cache_manager.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
 import 'package:pili_aurora/utils/font_utils.dart';
 import 'package:pili_aurora/services/diagnostics/report_handler.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
 import 'package:pili_aurora/utils/request_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -34,23 +34,50 @@ import 'package:media_kit/media_kit.dart';
 
 /// 初始化本地资源和平台服务，配置异常捕获后挂载应用根 Widget。
 Future<void> bootstrapApplication([List<String> arguments = const []]) async {
+  try {
+    await _bootstrapApplication(arguments);
+  } catch (error, stackTrace) {
+    logger.e('应用启动失败', error: error, stackTrace: stackTrace);
+    await Diagnostics.instance.flush();
+    rethrow;
+  }
+}
+
+Future<void> _bootstrapApplication(List<String> arguments) async {
   ScaledWidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
   await initializeSupportPath();
   final windows = DesktopPlaybackWindows.instance;
   final playerWindow =
       Platform.isWindows &&
       arguments.firstOrNull == DesktopPlaybackWindows.argument;
+  await LoggerUtils.prepare(
+    windowId: playerWindow
+        ? int.parse(Platform.environment['PILIAURORA_WINDOW_ID']!)
+        : null,
+  );
+  if (!playerWindow) {
+    Diagnostics.instance
+      ..onSettingsChanged = windows.syncDiagnosticSettings
+      ..pauseChildren = windows.pauseWindowDiagnostics
+      ..clearChildren = windows.clearWindowDiagnostics
+      ..resumeChildren = windows.resumeWindowDiagnostics;
+  }
   final initialization = playerWindow ? await windows.connectPlayer() : null;
+  if (playerWindow) {
+    Diagnostics.instance.forwardRecord = windows.sendDiagnosticRecord;
+    Diagnostics.instance.forwardFlush = windows.flushDiagnostics;
+  }
+  MediaKit.ensureInitialized();
   try {
     await GStorage.init(memorySnapshot: initialization?.storage);
-  } catch (e) {
+  } catch (e, stack) {
+    logger.e('GStorage init error', error: e, stackTrace: stack);
+    await Diagnostics.instance.flush();
     if (playerWindow) {
       windows.playerFailed();
       exit(1);
     }
     await Utils.copyText(e.toString(), needToast: false);
-    logger.e('GStorage init error', error: e);
     exit(0);
   }
   if (playerWindow) {
@@ -66,7 +93,8 @@ Future<void> bootstrapApplication([List<String> arguments = const []]) async {
     });
   }
   ScaledWidgetsFlutterBinding.instance.scaleFactor = Pref.uiScale;
-  if (!playerWindow) await LoggerUtils.initialize();
+  await LoggerUtils.initialize();
+  if (playerWindow) await windows.applyDiagnosticSettings();
   await Future.wait([
     initializeDownloadPath(),
     initializeTemporaryPath(),
@@ -125,28 +153,14 @@ Future<void> bootstrapApplication([List<String> arguments = const []]) async {
 
       if (shutdown?.outcome == PlaybackShutdownOutcome.cleanupIncomplete) {
         logger.w('播放器在关闭时未能于预算内完成清理', error: shutdown?.failure);
-        unawaited(
-          controller!.playbackReleased.then<void>(
-            (_) async {
-              try {
-                await cleanupWindowResources();
-              } catch (error, stackTrace) {
-                logger.e(
-                  '播放器释放后的窗口资源清理失败',
-                  error: error,
-                  stackTrace: stackTrace,
-                );
-              }
-            },
-            onError: (Object error, StackTrace stackTrace) {
-              logger.e(
-                '播放器资源未确认释放，跳过依赖资源清理',
-                error: error,
-                stackTrace: stackTrace,
-              );
-            },
-          ),
-        );
+        try {
+          await controller!.playbackReleased.timeout(
+            const Duration(seconds: 3),
+          );
+          await cleanupWindowResources();
+        } catch (error, stackTrace) {
+          logger.e('播放器延迟清理未完成，窗口结束清理等待', error: error, stackTrace: stackTrace);
+        }
         return;
       }
       if (controller != null) await controller.playbackReleased;

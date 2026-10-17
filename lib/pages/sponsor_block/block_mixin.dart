@@ -178,8 +178,12 @@ mixin BlockMixin on GetxController {
         if (_blockListener == null && (autoPlay || preInitPlayer)) {
           initSkip();
         }
-      } catch (e) {
-        logger.d('failed to parse sponsorblock: $e');
+      } catch (e, stackTrace) {
+        logger.w(
+          'failed to parse sponsorblock: $e',
+          error: e,
+          stackTrace: stackTrace,
+        );
       }
     }
   }
@@ -250,8 +254,8 @@ mixin BlockMixin on GetxController {
       } else {
         _showBlockToast('已跳至${item.segmentType.shortTitle}');
       }
-    } catch (e) {
-      logger.d('failed to skip: $e');
+    } catch (e, stackTrace) {
+      logger.w('failed to skip: $e', error: e, stackTrace: stackTrace);
       if (isSkip) {
         _showBlockToast('${item.segmentType.shortTitle}片段跳过失败');
       } else {

@@ -10,7 +10,7 @@ class DiagnosticReportHandler extends ReportHandler {
 
   @override
   Future<bool> handle(Report report) async {
-    diagnostics.log(
+    final record = diagnostics.log(
       DiagnosticLogLevel.error,
       'exception',
       report.error,
@@ -18,11 +18,25 @@ class DiagnosticReportHandler extends ReportHandler {
           ? null
           : StackTrace.fromString(report.stackTrace.toString()),
       details: {
-        'device': report.deviceParameters,
+        'device': {
+          for (final entry in report.deviceParameters.entries)
+            if (const {
+              'platform',
+              'version',
+              'model',
+              'manufacturer',
+              'brand',
+              'isPhysicalDevice',
+              'systemName',
+              'systemVersion',
+            }.contains(entry.key))
+              entry.key: entry.value,
+        },
         'application': report.applicationParameters,
         'build': report.customParameters,
       },
     );
+    if (record == null || !await record.accepted) return false;
     await diagnostics.flush();
     return diagnostics.storageError == null;
   }

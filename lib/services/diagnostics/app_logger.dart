@@ -1,9 +1,16 @@
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
-import 'package:pili_aurora/services/diagnostics/redact.dart';
 
 /// 应用只使用四个日志等级；过滤、存储和脱敏由 Diagnostics 统一负责。
 class AppLogger {
-  const AppLogger({required this.diagnostics, this.console});
+  const AppLogger({
+    required this.diagnostics,
+    this.console,
+    this.category = 'app',
+  });
+
+  final String category;
+  AppLogger scoped(String category) =>
+      AppLogger(diagnostics: diagnostics, console: console, category: category);
 
   final Diagnostics diagnostics;
   final void Function(String)? console;
@@ -28,20 +35,20 @@ class AppLogger {
   ) {
     // 关闭的等级不格式化消息，也不构造控制台输出。
     if (!diagnostics.accepts(level)) return;
-    final safeMessage = DiagnosticRedactor.clean(message);
-    diagnostics.log(
+    final result = diagnostics.log(
       level,
-      'app',
-      safeMessage,
+      category,
+      message,
       details: error,
       stack: stackTrace,
     );
-    if (console case final output?) {
+    if (result != null && console != null) {
+      final record = result.record;
+      final output = console!;
       output(
-        '[${DateTime.now().toIso8601String()}] ${level.name}: '
-        '${DiagnosticRedactor.text(safeMessage)}'
-        '${error == null ? '' : '\n${DiagnosticRedactor.clean(error)}'}'
-        '${stackTrace == null ? '' : '\n${DiagnosticRedactor.text(stackTrace)}'}',
+        '[${record['time']}] ${level.name}: ${record['message']}'
+        '${record['details'] == null ? '' : '\n${record['details']}'}'
+        '${record['stack'] == null ? '' : '\n${record['stack']}'}',
       );
     }
   }

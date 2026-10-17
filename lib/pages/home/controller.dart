@@ -104,8 +104,8 @@ class HomeController extends GetxController
 
   @override
   Future<void> onRefresh() {
-    return controller.onRefresh().catchError((e) {
-      logger.d(e.toString());
+    return controller.onRefresh().catchError((Object e, StackTrace stackTrace) {
+      logger.w('刷新首页失败', error: e, stackTrace: stackTrace);
     });
   }
 

@@ -292,8 +292,8 @@ class PgcIntroController extends CommonIntroController {
       queryOnlineTotal();
       queryVideoIntro(episode as EpisodeItem);
       return true;
-    } catch (e) {
-      logger.d('pgc onChangeEpisode: $e');
+    } catch (e, stackTrace) {
+      logger.w('pgc onChangeEpisode: $e', error: e, stackTrace: stackTrace);
       return false;
     }
   }

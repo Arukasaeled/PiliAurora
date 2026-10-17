@@ -114,8 +114,8 @@ abstract final class Update {
           },
         );
       }
-    } catch (e) {
-      logger.d('failed to check update: $e');
+    } catch (e, stackTrace) {
+      logger.w('failed to check update: $e', error: e, stackTrace: stackTrace);
     }
   }
 
@@ -145,8 +145,8 @@ abstract final class Update {
       } else {
         download(Platform.operatingSystem);
       }
-    } catch (e) {
-      logger.d('download error: $e');
+    } catch (e, stackTrace) {
+      logger.w('download error: $e', error: e, stackTrace: stackTrace);
       PageUtils.launchURL('${Constants.sourceCodeUrl}/releases/latest');
     }
   }

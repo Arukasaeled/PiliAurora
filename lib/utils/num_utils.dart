@@ -18,14 +18,20 @@ abstract final class NumUtils {
   }
 
   static int parseNum(String numberStr) {
-    if (numberStr == '-') return 0;
+    if (numberStr.trim().isEmpty || numberStr.trim() == '-') return 0;
     try {
       final match = _numRegExp.firstMatch(numberStr)!;
       var number = double.parse(match.group(1)!);
       number *= _getUnit(match.group(2));
       return number.toInt();
-    } catch (e) {
-      logger.d('parse failed: "$numberStr" : $e');
+    } catch (e, stackTrace) {
+      logger
+          .scoped('parsing')
+          .w(
+            'parse failed: "$numberStr" : $e',
+            error: e,
+            stackTrace: stackTrace,
+          );
       return 0;
     }
   }

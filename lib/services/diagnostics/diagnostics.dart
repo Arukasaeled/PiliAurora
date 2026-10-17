@@ -30,7 +30,37 @@ enum DiagnosticLogLevel {
       values.where((level) => level.name == value).firstOrNull ?? warning;
 }
 
-class Diagnostics extends ChangeNotifier {
+class DiagnosticLogResult {
+  const DiagnosticLogResult({
+    required this.record,
+    required this.queued,
+    this.deferred,
+  });
+  final Future<bool>? deferred;
+  Future<bool> get accepted => deferred ?? Future.value(queued);
+  final Map<String, Object?> record;
+
+  /// 已进入持久化队列；写盘结果需在 flush 后检查存储状态。
+  final bool queued;
+}
+
+class _DeferredRecord {
+  _DeferredRecord(
+    this.store,
+    this.bytes,
+    this.forward,
+    this.priority,
+    this.trace,
+  );
+  final DiagnosticRecordStore? store;
+  final Uint8List bytes;
+  final bool forward;
+  final int priority;
+  final bool trace;
+  final accepted = Completer<bool>();
+}
+
+class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   Diagnostics({this.processReader});
 
   static final instance = Diagnostics();
@@ -41,8 +71,33 @@ class Diagnostics extends ChangeNotifier {
   final _sources = <String, Map<String, Object?> Function()>{};
   final _operations = <String, _OperationStats>{};
   final _gauges = <String, num>{};
-  final _recent = Queue<Map<String, Object?>>();
+  final _recent = <String, Queue<Map<String, Object?>>>{};
   final _frames = _FrameStats();
+  bool Function(Map<String, Object?>)? forwardRecord;
+  int forwardingFailures = 0;
+  Future<void> Function()? forwardFlush;
+  Future<void> Function()? pauseChildren;
+  Future<void> Function()? resumeChildren;
+  Future<void> Function()? clearChildren;
+  Future<void> _maintenanceTail = Future.value();
+  bool _writesPaused = false;
+  Completer<void>? _writesResumed;
+  Timer? _pauseTimeout;
+  final _deferred = <_DeferredRecord>[];
+  int _deferredBytes = 0;
+  int _deferredDrops = 0;
+  static const maxDeferredBytes = 8 << 20;
+  final skippedChildWindows = <int>{};
+  VoidCallback? onSettingsChanged;
+  Directory? _directory;
+  bool _childProcess = false;
+  int? _windowId;
+  Map<String, Object?> get settings => {
+    'level': _level.name,
+    'playerLevel': _playerLevel.name,
+    'tracing': _tracing,
+    'intervalMs': _intervalMs,
+  };
   final _elapsed = Stopwatch();
   DiagnosticRecordStore? _logs;
   DiagnosticRecordStore? _trace;
@@ -56,6 +111,7 @@ class Diagnostics extends ChangeNotifier {
   Timer? _timer;
   Timer? _notification;
   bool _tracing = false;
+  bool _observingLifecycle = false;
   DiagnosticLogLevel _level = DiagnosticLogLevel.warning;
   int _intervalMs = 1000;
   int _sequence = 0;
@@ -64,19 +120,54 @@ class Diagnostics extends ChangeNotifier {
   Map<String, Object?>? latest;
   Future<void> Function(Map<String, Object?>)? _saveSettings;
 
+  set saveSettings(Future<void> Function(Map<String, Object?>) callback) =>
+      _saveSettings = callback;
+
+  void observeLifecycle() {
+    if (_observingLifecycle) return;
+    WidgetsBinding.instance.addObserver(this);
+    _observingLifecycle = true;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(flush());
+    }
+  }
+
   bool get tracing => _tracing;
   DiagnosticLogLevel get level => _level;
   DiagnosticLogLevel get playerLevel => _playerLevel;
   Map<String, Object?> get storageStatus => {
+    'forwardingFailures': forwardingFailures,
+    'skippedChildWindows': skippedChildWindows.toList(),
+    'pausedBuffer': {
+      'pendingRecords': _deferred.length,
+      'pendingBytes': _deferredBytes,
+      'maxPendingBytes': maxDeferredBytes,
+      'dropped': _deferredDrops,
+    },
     'runtime': _logs?.status,
     'player': _playerLogs?.status,
     'performance': _trace?.status,
   };
   int get intervalMs => _intervalMs;
   String? get session => _session;
+  static int _compareRecords(Map<String, Object?> a, Map<String, Object?> b) {
+    final time = '${a['time']}'.compareTo('${b['time']}');
+    if (time != 0) return time;
+    final run = '${a['runId']}'.compareTo('${b['runId']}');
+    if (run != 0) return run;
+    return (a['sequence'] as int? ?? 0).compareTo(b['sequence'] as int? ?? 0);
+  }
+
   List<Map<String, Object?>> get recentLogs =>
-      _recent.toList().reversed.toList();
+      _recent.values.expand((queue) => queue).toList()
+        ..sort((a, b) => _compareRecords(b, a));
   int get droppedRecords =>
+      _deferredDrops +
       (_logs?.dropped ?? 0) +
       (_trace?.dropped ?? 0) +
       (_playerLogs?.dropped ?? 0);
@@ -86,30 +177,45 @@ class Diagnostics extends ChangeNotifier {
   Future<void> initialize({
     required Directory directory,
     File? legacyReports,
+    bool childProcess = false,
+    int? windowId,
     DiagnosticLogLevel level = DiagnosticLogLevel.warning,
     DiagnosticLogLevel playerLevel = DiagnosticLogLevel.info,
     bool tracing = false,
     int intervalMs = 1000,
     Future<void> Function(Map<String, Object?>)? saveSettings,
   }) async {
-    _logs = DiagnosticRecordStore(File('${directory.path}/runtime.jsonl'));
+    _directory = directory;
+    _childProcess = childProcess;
+    _windowId = windowId;
+    _logs = DiagnosticRecordStore(
+      File('${directory.path}/runtime.jsonl'),
+      maxBytes: childProcess ? 1 << 20 : 8 << 20,
+      retainedFiles: childProcess ? 2 : 4,
+    );
     _legacyReports = legacyReports == null
         ? null
         : DiagnosticRecordStore(legacyReports);
     _trace = DiagnosticRecordStore(
       File('${directory.path}/performance.jsonl'),
-      maxBytes: 16 << 20,
+      maxBytes: childProcess ? 4 << 20 : 16 << 20,
     );
     _playerLogs = DiagnosticRecordStore(
       File('${directory.path}/player.jsonl'),
-      maxBytes: 16 << 20,
-      retainedFiles: 8,
+      maxBytes: childProcess ? 4 << 20 : 16 << 20,
+      retainedFiles: childProcess ? 2 : 8,
     );
     _playerLevel = playerLevel;
     _saveSettings = saveSettings;
     _level = level;
     _intervalMs = intervals.contains(intervalMs) ? intervalMs : 1000;
+    final pending = _recent.values.expand((queue) => queue).toList();
+    _recent.clear();
     await _loadHistory();
+    for (final record in pending) {
+      _remember(record);
+      (record['channel'] == 'player' ? _playerLogs : _logs)?.add(record);
+    }
     if (tracing) _start();
   }
 
@@ -148,9 +254,8 @@ class Diagnostics extends ChangeNotifier {
               b['sequence'] as int? ?? 0,
             );
           });
-      _recent.addAll(records);
-      while (_recent.length > 200) {
-        _recent.removeFirst();
+      for (final record in records) {
+        _remember(record);
       }
     } catch (_) {
       /* 日志读取失败不影响应用启动。 */
@@ -177,6 +282,7 @@ class Diagnostics extends ChangeNotifier {
         (_) => capture(),
       );
     }
+    onSettingsChanged?.call();
     notifyListeners();
     await _saveSettings?.call({
       'level': _level.name,
@@ -189,15 +295,22 @@ class Diagnostics extends ChangeNotifier {
   bool accepts(DiagnosticLogLevel level) =>
       _level != DiagnosticLogLevel.off && level.index >= _level.index;
 
-  void log(
+  DiagnosticLogResult? log(
     DiagnosticLogLevel level,
     String category,
     Object? message, {
     Object? details,
     StackTrace? stack,
   }) {
-    if (!accepts(level)) return;
-    _writeLog(_logs, level, category, message, details: details, stack: stack);
+    if (!accepts(level)) return null;
+    return _writeLog(
+      _logs,
+      level,
+      category,
+      message,
+      details: details,
+      stack: stack,
+    );
   }
 
   bool acceptsPlayer(DiagnosticLogLevel level) =>
@@ -223,7 +336,7 @@ class Diagnostics extends ChangeNotifier {
     );
   }
 
-  void _writeLog(
+  DiagnosticLogResult _writeLog(
     DiagnosticRecordStore? store,
     DiagnosticLogLevel level,
     String category,
@@ -235,13 +348,18 @@ class Diagnostics extends ChangeNotifier {
     final record = <String, Object?>{
       'time': DateTime.now().toUtc().toIso8601String(),
       'runId': _runId,
+      'processId': pid,
+      if (_windowId != null) 'windowId': _windowId,
+      'route': _route,
       'sequence': ++_logSequence,
       'elapsedUs': _clock.elapsedMicroseconds,
       'channel': player ? 'player' : 'runtime',
       'level': level.name,
       'category': category,
       'message': DiagnosticRedactor.text(
-        message,
+        message is Map || message is Iterable
+            ? DiagnosticRedactor.clean(message)
+            : message,
         maxLength: player ? 65536 : 16384,
       ),
       if (details != null)
@@ -257,12 +375,141 @@ class Diagnostics extends ChangeNotifier {
         ),
       if (_tracing) 'session': _session,
     };
-    _recent.add(record);
-    while (_recent.length > 200) {
-      _recent.removeFirst();
+    return _persist(store, record, forward: true);
+  }
+
+  DiagnosticLogResult _persist(
+    DiagnosticRecordStore? store,
+    Map<String, Object?> record, {
+    bool forward = false,
+  }) {
+    if (_writesPaused) {
+      final pending = _enqueue(store, record, forward: forward);
+      return DiagnosticLogResult(
+        record: record,
+        queued: false,
+        deferred: pending?.accepted.future,
+      );
     }
-    store?.add(record);
+    _remember(record);
+    final accepted = store?.add(record) ?? false;
+    if (forward) {
+      try {
+        if (forwardRecord?.call(record) == false) forwardingFailures++;
+      } catch (_) {
+        forwardingFailures++;
+      }
+    }
     _notifySoon();
+    return DiagnosticLogResult(record: record, queued: accepted);
+  }
+
+  _DeferredRecord? _enqueue(
+    DiagnosticRecordStore? store,
+    Map<String, Object?> record, {
+    bool forward = false,
+    bool trace = false,
+  }) {
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(record)));
+    final priority = trace
+        ? 0
+        : DiagnosticLogLevel.parse(record['level'] as String?).index;
+    if (bytes.length > maxDeferredBytes) {
+      _deferredDrops++;
+      return null;
+    }
+    while (_deferred.length >= 400 ||
+        _deferredBytes + bytes.length > maxDeferredBytes) {
+      _DeferredRecord? victim;
+      for (final entry in _deferred) {
+        if (entry.priority < priority &&
+            (victim == null || entry.priority < victim.priority)) {
+          victim = entry;
+        }
+      }
+      if (victim == null) {
+        _deferredDrops++;
+        return null;
+      }
+      _deferred.remove(victim);
+      _deferredBytes -= victim.bytes.length;
+      victim.accepted.complete(false);
+      _deferredDrops++;
+    }
+    final entry = _DeferredRecord(store, bytes, forward, priority, trace);
+    _deferred.add(entry);
+    _deferredBytes += bytes.length;
+    return entry;
+  }
+
+  Future<void> pauseWrites() async {
+    _writesResumed ??= Completer<void>();
+    _writesPaused = true;
+    _pauseTimeout?.cancel();
+    // 主窗口异常退出时，子窗口会自行恢复日志保存。
+    _pauseTimeout = Timer(const Duration(seconds: 60), resumeWrites);
+    await flushLocal();
+  }
+
+  void resumeWrites() {
+    _pauseTimeout?.cancel();
+    _writesPaused = false;
+    final pending = List<_DeferredRecord>.of(_deferred);
+    _deferred.clear();
+    _deferredBytes = 0;
+    for (final entry in pending) {
+      final record = Map<String, Object?>.from(
+        jsonDecode(utf8.decode(entry.bytes)) as Map,
+      );
+      final accepted = entry.trace
+          ? (_trace?.add(record) ?? false)
+          : _persist(entry.store, record, forward: entry.forward).queued;
+      entry.accepted.complete(accepted);
+    }
+    _writesResumed?.complete();
+    _writesResumed = null;
+  }
+
+  Future<T> _maintain<T>(Future<T> Function() action) {
+    final result = _maintenanceTail.then((_) async {
+      try {
+        await pauseWrites();
+        await pauseChildren?.call();
+        return await action();
+      } finally {
+        try {
+          await resumeChildren?.call();
+        } finally {
+          resumeWrites();
+        }
+      }
+    });
+    _maintenanceTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
+  void _remember(Map<String, Object?> record) {
+    final channel = record['channel'] as String? ?? 'runtime';
+    final queue = _recent.putIfAbsent(channel, Queue.new)..add(record);
+    if (queue.length > 200) queue.removeFirst();
+  }
+
+  /// 子进程记录保留其时钟和页面上下文，由主进程统一轮转和导出。
+  void receiveRecord(Map<String, Object?> record, {required int windowId}) {
+    final player = record['channel'] == 'player';
+    final level = DiagnosticLogLevel.parse(record['level'] as String?);
+    if (player ? !acceptsPlayer(level) : !accepts(level)) return;
+    final safe = Map<String, Object?>.from(
+      DiagnosticRedactor.clean(
+        record,
+        maxCharacters: 524288,
+        maxStringLength: 65536,
+      ) as Map,
+    )..['windowId'] = windowId;
+    _persist(player ? _playerLogs : _logs, safe);
   }
 
   VoidCallback register(String name, Map<String, Object?> Function() reader) {
@@ -309,6 +556,14 @@ class Diagnostics extends ChangeNotifier {
     );
   }
 
+  void _writeTrace(Map<String, Object?> record) {
+    if (_writesPaused) {
+      _enqueue(_trace, record, trace: true);
+      return;
+    }
+    _trace?.add(record);
+  }
+
   void _start() {
     _processMetrics.reset();
     unawaited(_gpuMetrics.start());
@@ -323,7 +578,7 @@ class Diagnostics extends ChangeNotifier {
       ..start();
     _frames.take();
     SchedulerBinding.instance.addTimingsCallback(_onFrames);
-    _trace?.add({
+    _writeTrace({
       'type': 'session',
       'session': _session,
       'platform': Platform.operatingSystem,
@@ -345,7 +600,7 @@ class Diagnostics extends ChangeNotifier {
   }
 
   void capture() {
-    if (!_tracing) return;
+    if (!_tracing || _writesPaused) return;
     final cache = PaintingBinding.instance.imageCache;
     final sources = <String, Object?>{};
     for (final entry in _sources.entries.toList()) {
@@ -363,6 +618,9 @@ class Diagnostics extends ChangeNotifier {
     }
     latest = {
       'type': 'sample',
+      'runId': _runId,
+      'processId': pid,
+      if (_windowId != null) 'windowId': _windowId,
       'session': _session,
       'sequence': ++_sequence,
       'time': DateTime.now().toUtc().toIso8601String(),
@@ -401,7 +659,7 @@ class Diagnostics extends ChangeNotifier {
     if (Platform.isWindows) {
       latest!['gpu'] = DiagnosticRedactor.clean(_gpuMetrics.sample());
     }
-    _trace?.add(latest!);
+    _writeTrace(latest!);
     _notifySoon();
   }
 
@@ -413,7 +671,7 @@ class Diagnostics extends ChangeNotifier {
     _timer = null;
     _elapsed.stop();
     SchedulerBinding.instance.removeTimingsCallback(_onFrames);
-    _trace?.add({
+    _writeTrace({
       'type': 'stop',
       'session': _session,
       'time': DateTime.now().toUtc().toIso8601String(),
@@ -427,24 +685,124 @@ class Diagnostics extends ChangeNotifier {
     });
   }
 
+  /// 子窗口独立落盘，导出时同时收集断连期间的现场和性能采样。
+  Future<List<File>> _childFiles() async {
+    final directory = _directory;
+    if (_childProcess || directory == null || !directory.existsSync()) {
+      return [];
+    }
+    final files = <File>[];
+    await for (final entry in directory.list(followLinks: false)) {
+      if (entry is! Directory ||
+          !RegExp(
+            r'^window-\d+$',
+          ).hasMatch(entry.uri.pathSegments.where((s) => s.isNotEmpty).last)) {
+        continue;
+      }
+      final windowId = int.parse(
+        entry.uri.pathSegments.where((s) => s.isNotEmpty).last.substring(7),
+      );
+      if (skippedChildWindows.contains(windowId)) continue;
+      await for (final file in entry.list(followLinks: false)) {
+        if (file is File &&
+            RegExp(
+              r'^(?:(runtime|player|performance)\.jsonl(\.[0-9]+)?|status\.json)$',
+            ).hasMatch(file.uri.pathSegments.last)) {
+          files.add(file);
+        }
+      }
+    }
+    return files;
+  }
+
+  Future<List<Object?>> _childStatuses() async {
+    final statuses = <Object?>[];
+    for (final file in await _childFiles()) {
+      if (file.uri.pathSegments.last == 'status.json') {
+        statuses.add(
+          DiagnosticRedactor.clean(jsonDecode(await file.readAsString())),
+        );
+      }
+    }
+    return statuses;
+  }
+
+  Future<List<String>> _childSnapshots(Directory destination) async {
+    final paths = <String>[];
+    for (final file in await _childFiles()) {
+      final parts = file.uri.pathSegments;
+      final name = '${parts[parts.length - 2]}-${parts.last}';
+      try {
+        paths.add((await file.copy('${destination.path}/$name')).path);
+      } on FileSystemException {
+        if (file.existsSync()) rethrow;
+      }
+    }
+    return paths;
+  }
+
   Future<List<File>> files() async => [
+    ...await _childFiles(),
     ...?await _logs?.files(),
     ...?await _playerLogs?.files(),
     ...?await _trace?.files(),
     ...?await _legacyReports?.files(),
   ];
-  Future<void> flush() async {
+  Future<void> flushLocal() async {
     await _logs?.flush();
     await _playerLogs?.flush();
     await _trace?.flush();
+    if (_childProcess && _directory != null) {
+      await _directory!.create(recursive: true);
+      await File('${_directory!.path}/status.json').writeAsString(
+        jsonEncode(
+          DiagnosticRedactor.clean({
+            'time': DateTime.now().toUtc().toIso8601String(),
+            'runId': _runId,
+            'processId': pid,
+            'windowId': _windowId,
+            'storage': storageStatus,
+            'droppedRecords': droppedRecords,
+          }),
+        ),
+      );
+    }
+  }
+
+  Future<void> flush() async {
+    await _writesResumed?.future;
+    await flushLocal();
+    await forwardFlush?.call();
   }
 
   Future<void> clear() async {
-    if (_tracing) await configure(tracing: false);
+    await _maintain(() async {
+      if (_tracing) await configure(tracing: false);
+      await clearChildren?.call();
+      await _clear();
+    });
+  }
+
+  Future<void> clearPausedRecords() {
+    if (!_writesPaused) throw StateError('清除子窗口日志前须暂停写入');
+    return _clear();
+  }
+
+  Future<void> _clear() async {
+    for (final entry in _deferred) {
+      entry.accepted.complete(false);
+    }
+    _deferred.clear();
+    _deferredBytes = 0;
     await _logs?.clear();
     await _playerLogs?.clear();
     await _trace?.clear();
     await _legacyReports?.clear();
+    for (final file in await _childFiles()) {
+      if (file.existsSync()) await file.delete();
+    }
+    _deferredDrops = 0;
+    forwardingFailures = 0;
     _recent.clear();
     latest = null;
     notifyListeners();
@@ -456,29 +814,34 @@ class Diagnostics extends ChangeNotifier {
       'pili-diagnostics-',
     );
     try {
-      final paths = [
-        ...?await _logs?.snapshot(directory),
-        ...?await _playerLogs?.snapshot(directory),
-        ...?await _trace?.snapshot(directory),
-        ...await _legacySnapshots(directory),
-      ];
-      final manifest = File('${directory.path}/manifest.json');
-      await manifest.writeAsString(
-        jsonEncode({
-          'schema': 2,
-          'runId': _runId,
-          'storage': storageStatus,
-          'platform': Platform.operatingSystem,
-          'created': DateTime.now().toUtc().toIso8601String(),
-          'level': _level.name,
-          'playerLevel': _playerLevel.name,
-          'intervalMs': _intervalMs,
-          'droppedRecords': droppedRecords,
-          'app': DiagnosticRedactor.clean(_sources['app']?.call()),
-          'notes': '每条 sample 为一个采样周期。RSS/私有提交/缓存值不可相加；null 表示未提供。无 GPU、Dart 堆和各模块独占内存数据。',
-        }),
-      );
-      paths.add(manifest.path);
+      final paths = await _maintain(() async {
+        final paths = [
+          ...?await _logs?.snapshot(directory),
+          ...?await _playerLogs?.snapshot(directory),
+          ...?await _trace?.snapshot(directory),
+          ...await _legacySnapshots(directory),
+          ...await _childSnapshots(directory),
+        ];
+        final manifest = File('${directory.path}/manifest.json');
+        await manifest.writeAsString(
+          jsonEncode({
+            'schema': 2,
+            'runId': _runId,
+            'storage': storageStatus,
+            'children': await _childStatuses(),
+            'platform': Platform.operatingSystem,
+            'created': DateTime.now().toUtc().toIso8601String(),
+            'level': _level.name,
+            'playerLevel': _playerLevel.name,
+            'intervalMs': _intervalMs,
+            'droppedRecords': droppedRecords,
+            'app': DiagnosticRedactor.clean(_sources['app']?.call()),
+            'notes': '每条 sample 为一个采样周期。RSS/私有提交/缓存值不可相加；null 表示未提供。无 GPU、Dart 堆和各模块独占内存数据。',
+          }),
+        );
+        paths.add(manifest.path);
+        return paths;
+      });
       final output = '${directory.path}/diagnostics.zip';
       await compute(_zip, (paths, output));
       return File(output);
@@ -540,6 +903,8 @@ class Diagnostics extends ChangeNotifier {
   void dispose() {
     if (_tracing) _stop();
     _notification?.cancel();
+    _pauseTimeout?.cancel();
+    if (_observingLifecycle) WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 }
@@ -560,7 +925,12 @@ class TraceOperation {
   final _watch = Stopwatch()..start();
   bool _done = false;
 
-  void finish({Object? error, Map<String, Object?>? details}) {
+  void finish({
+    Object? error,
+    DiagnosticLogLevel errorLevel = DiagnosticLogLevel.error,
+    StackTrace? stack,
+    Map<String, Object?>? details,
+  }) {
     if (_done) return;
     _done = true;
     final milliseconds = _watch.elapsedMicroseconds / 1000;
@@ -571,9 +941,10 @@ class TraceOperation {
     if (milliseconds > _stats.maxMs) _stats.maxMs = milliseconds;
     if (error != null) _stats.errors++;
     _owner.log(
-      error == null ? DiagnosticLogLevel.debug : DiagnosticLogLevel.error,
+      error == null ? DiagnosticLogLevel.debug : errorLevel,
       _category,
       _action,
+      stack: stack,
       details: {
         ...?_details,
         ...?details,

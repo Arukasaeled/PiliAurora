@@ -268,8 +268,8 @@ mixin FavMixin on TripleMixin {
           }
         }
       }
-    } catch (e) {
-      logger.d(e.toString());
+    } catch (e, stackTrace) {
+      logger.w(e.toString(), error: e, stackTrace: stackTrace);
     }
     SmartDialog.showLoading(msg: '请求中');
     final result = await FavHttp.favVideo(

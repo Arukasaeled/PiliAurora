@@ -216,8 +216,8 @@ class PostPanel extends CommonSlidePage {
                       );
                       (context as Element).markNeedsBuild();
                     }
-                  } catch (e) {
-                    logger.d(e.toString());
+                  } catch (e, stackTrace) {
+                    logger.w(e.toString(), error: e, stackTrace: stackTrace);
                   }
                 }
               },
