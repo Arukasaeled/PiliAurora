@@ -18,7 +18,7 @@ class VideoOutputPaintBarrier {
 
   final SchedulerBinding _binding;
   late final int Function() _frameNumber;
-  final _waits = <Completer<bool>, TimingsCallback>{};
+  final _waits = <Completer<bool>, ({TimingsCallback callback, Timer timer})>{};
   bool _disposed = false;
 
   Future<bool> wait() {
@@ -32,7 +32,12 @@ class VideoOutputPaintBarrier {
       }
     }
 
-    _waits[result] = onTimings;
+    _waits[result] = (
+      callback: onTimings,
+      // release 帧统计可能批量延迟一秒；回执长期缺失时取消尚未提交的 resize，
+      // 让截图遮罩退出并继续显示原生纹理。
+      timer: Timer(const Duration(seconds: 3), () => _finish(result, false)),
+    );
     _binding.addTimingsCallback(onTimings);
     _binding.addPostFrameCallback((_) {
       if (!_waits.containsKey(result)) return;
@@ -49,9 +54,10 @@ class VideoOutputPaintBarrier {
   }
 
   void _finish(Completer<bool> result, bool painted) {
-    final callback = _waits.remove(result);
-    if (callback == null) return;
-    _binding.removeTimingsCallback(callback);
+    final wait = _waits.remove(result);
+    if (wait == null) return;
+    wait.timer.cancel();
+    _binding.removeTimingsCallback(wait.callback);
     result.complete(painted);
   }
 

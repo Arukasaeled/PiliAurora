@@ -14,6 +14,28 @@ ui.FrameTiming timing(int frameNumber) => ui.FrameTiming(
 );
 
 void main() {
+  testWidgets('回执缺失后取消等待，迟到帧不能授权下一次 resize', (tester) async {
+    var frameNumber = 40;
+    final barrier = VideoOutputPaintBarrier(frameNumber: () => frameNumber);
+    addTearDown(barrier.dispose);
+    final expired = barrier.wait();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    expect(await expired, isFalse);
+
+    frameNumber = 42;
+    bool? outcome;
+    final next = barrier.wait().then((value) => outcome = value);
+    await tester.pump();
+    tester.platformDispatcher.onReportTimings?.call([timing(40)]);
+    await tester.pump();
+    expect(outcome, isNull);
+    tester.platformDispatcher.onReportTimings?.call([timing(42)]);
+    await tester.pump();
+    await next;
+    expect(outcome, isTrue);
+  });
+
   testWidgets('UI frame completion cannot authorize native resize', (
     tester,
   ) async {
