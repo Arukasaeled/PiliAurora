@@ -491,16 +491,15 @@ class AndroidVideoController extends PlatformVideoController {
     _preloadedPreparedToken = null;
     _preloadedPreparedGeometry = null;
 
-    // Verified single-track files configure the Surface before libmpv resumes
-    // decoding. Unknown crop/PAR/rotation remains on the post-load compatibility
-    // path and is never promoted to the prepared evidence tag.
+    // 单视频轨先挂载 Surface，避免 vo=null 解码后再切 GPU 导致解码器重建。
+    // 裁剪、PAR 或旋转未知时，缓冲区尺寸先用 demux 几何，FILE_LOADED 再确认。
     if (vo != 'gpu' || androidAttachSurfaceAfterVideoParameters) {
       return selected;
     }
-    if (!request.cropKnownNone && track.demuxCropKnownNone != true) {
+    if (width == null || height == null || width <= 0 || height <= 0) {
       return result(
         OutputLoadSelectionStrategy.selectedVideo,
-        OutputLoadSelectionEvidence.cropUnconfirmed,
+        OutputLoadSelectionEvidence.invalidDemuxGeometry,
         trackId: allowedTrackId,
       );
     }
@@ -508,26 +507,20 @@ class AndroidVideoController extends PlatformVideoController {
     final sourceHeight = request.sourceHeight;
     final pixelAspectRatio = track.demuxPar ?? request.pixelAspectRatio;
     final rotation = track.demuxRotate ?? request.rotation;
-    if (width == null ||
-        height == null ||
-        width <= 0 ||
-        height <= 0 ||
-        (sourceWidth != null && sourceWidth != width) ||
-        (sourceHeight != null && sourceHeight != height) ||
-        pixelAspectRatio != 1.0 ||
-        rotation != 0 ||
-        (track.demuxPar != null &&
-            request.pixelAspectRatio != null &&
-            track.demuxPar != request.pixelAspectRatio) ||
-        (track.demuxRotate != null &&
-            request.rotation != null &&
-            track.demuxRotate != request.rotation)) {
-      return result(
-        OutputLoadSelectionStrategy.selectedVideo,
-        OutputLoadSelectionEvidence.invalidDemuxGeometry,
-        trackId: allowedTrackId,
-      );
-    }
+    final cropKnownNone =
+        request.cropKnownNone || track.demuxCropKnownNone == true;
+    final geometryConfirmed =
+        cropKnownNone &&
+        (sourceWidth == null || sourceWidth == width) &&
+        (sourceHeight == null || sourceHeight == height) &&
+        pixelAspectRatio == 1.0 &&
+        rotation == 0 &&
+        (track.demuxPar == null ||
+            request.pixelAspectRatio == null ||
+            track.demuxPar == request.pixelAspectRatio) &&
+        (track.demuxRotate == null ||
+            request.rotation == null ||
+            track.demuxRotate == request.rotation);
     if (!request.nativeApi.isValid || token != _operationToken) {
       return result(
         OutputLoadSelectionStrategy.unknown,
@@ -565,23 +558,32 @@ class AndroidVideoController extends PlatformVideoController {
       }
       _appliedSize = size;
       _attached = true;
-      _preloadedPreparedToken = token;
-      _preloadedPreparedGeometry = (
-        width: width,
-        height: height,
-        pixelAspectRatio: pixelAspectRatio!,
-        rotation: rotation!,
+      if (geometryConfirmed) {
+        _preloadedPreparedToken = token;
+        _preloadedPreparedGeometry = (
+          width: width,
+          height: height,
+          pixelAspectRatio: pixelAspectRatio!,
+          rotation: rotation!,
+        );
+      }
+      _diagnostic(
+        geometryConfirmed ? 'surface.prepared' : 'surface.provisional',
+        {
+          'demuxWidth': width,
+          'demuxHeight': height,
+          'outputWidth': size.width,
+          'outputHeight': size.height,
+          'outputEpoch': token.outputEpoch,
+        },
       );
-      _diagnostic('surface.prepared', {
-        'demuxWidth': width,
-        'demuxHeight': height,
-        'outputWidth': size.width,
-        'outputHeight': size.height,
-        'outputEpoch': token.outputEpoch,
-      });
       return result(
         OutputLoadSelectionStrategy.selectedVideo,
-        OutputLoadSelectionEvidence.preloadedSurfaceConfigured,
+        geometryConfirmed
+            ? OutputLoadSelectionEvidence.preloadedSurfaceConfigured
+            : cropKnownNone
+            ? OutputLoadSelectionEvidence.invalidDemuxGeometry
+            : OutputLoadSelectionEvidence.cropUnconfirmed,
         trackId: allowedTrackId,
       );
     } catch (error, stack) {
@@ -766,18 +768,22 @@ class AndroidVideoController extends PlatformVideoController {
         if (_wid == null || _wid == 0) {
           return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
         }
+        // 临时缓冲区的宽高比不作为最终输出几何；保持已经挂载的 VO。
+        if (_attached && _preloadedPreparedToken != token) _fixedSize.reset();
         final fixed = _fixedSize.resolve(displaySize.width, displaySize.height);
         final size = _fixedSize.resolvedLimit == null ? displaySize : fixed;
-        final accepted = await setAndroidSurfaceSize(
-          player: player,
-          width: size.width,
-          height: size.height,
-          token: token,
-          wid: _wid,
-          isCurrent: () => token == _operationToken,
-        );
-        if (!accepted || token != _operationToken) {
-          return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
+        if (!_attached || _appliedSize != size) {
+          final accepted = await setAndroidSurfaceSize(
+            player: player,
+            width: size.width,
+            height: size.height,
+            token: token,
+            wid: _attached ? null : _wid,
+            isCurrent: () => token == _operationToken,
+          );
+          if (!accepted || token != _operationToken) {
+            return unknown(OutputPreparationEvidence.outputMutationUnconfirmed);
+          }
         }
         _appliedSize = size;
         _attached = true;

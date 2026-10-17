@@ -37,3 +37,5 @@ Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频�
 2026-10-15：Android 视频纹理按 frame-available 通知调用原生 `updateTexImage`，弹幕或控件重复绘制时复用当前图像。原子标记在取图前消耗，保留并发到达的下一帧；取图失败与 GL 上下文重建允许重新获取。关闭相位采样时沿用相同取图策略。主机探针使用固定 Flutter 的实际 wrapper 检查取图次数、并发通知和生命周期。此修正消除重复原生取图，真机日志中约 9.4ms 的周期性 Raster 峰值仍需目标设备复测。
 
 2026-10-16：Android 输出操作使用单调高水位 token，永久撤销后拒绝旧代次 begin/wait，并在 Surface 写入临界区核对 runtime/load/output/config 代次。新增按 load 登记、preloaded 选择/准备、FILE_LOADED 几何确认与 attach 回执的两阶段协议。Windows 输出串行化 render 生命周期、合并 pending/dirty 更新并提供 token 绑定 attach 回执。消费进度携带输出操作 token；Android/Windows 的实际设备渲染与 paused-open 行为仍需目标环境验证。
+
+2026-10-17（piliaurora.6）：Android 单视频轨的 demux 宽高有效时，在 preloaded 阶段挂载 Surface。裁剪、PAR 或旋转未确认时先使用临时缓冲区，并继续由 FILE_LOADED 核对轨道和最终几何；同尺寸复用已挂载的输出，尺寸变化沿用 VO 更新缓冲区，避免直播从 null 输出切到 GPU 后重建解码器、触发不可 seek 错误和音画偏移。完整的 preloaded 几何证据仍须满足原有确认条件。主机回归覆盖实际控制器的挂载顺序、同尺寸复用与显示几何修正；MediaCodec、首帧延迟和音画同步仍需 Android 真机验收。
