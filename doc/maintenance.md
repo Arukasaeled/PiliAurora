@@ -54,7 +54,12 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 
 - `lib/services/diagnostics/`：播放器、HTTP、进程指标、历史读取、记录保存和脱敏。
 - `lib/services/logger.dart`：日志服务。
-- `lib/pages/setting/pages/logs.dart` 和 `lib/pages/log_table/`：设置中的日志界面。
+- `lib/pages/setting/pages/logs.dart`：日志等级与性能跟踪设置；`lib/pages/about/diagnostics_page.dart`：诊断记录查看与导出。
+- `lib/pages/log_table/`：服务端金币、经验和登录历史记录。
+
+应用日志和播放器日志各保留最近 200 条，落盘记录包含路由、进程 ID 和运行 ID。Windows 播放子窗口通过现有回环 WebSocket 把脱敏记录转发给主进程，统一写入、轮转和导出；窗口 ID 标识记录来源。关闭子窗口前请求主进程确认写入，等待上限为 3 秒。连接中断或进程强制终止时，尚未传输的记录仍可能丢失。
+
+主进程在读取设置前准备诊断存储，启动异常写入后刷新；正常退出和移动端进入后台也刷新待写队列。日志等级设为“关闭”时，该通道的未捕获异常也停止保存。Catcher 设备信息采用允许列表，设备唯一标识和指纹不进入新报告。Windows 多窗口转发、退出时序和 Android 后台行为仍需目标设备验证。
 - [构建与测试](build-and-test.md)：本地验证方式和平台限制。
 
 ## 问题报告

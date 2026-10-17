@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/services/desktop_playback_layout.dart';
 import 'package:pili_aurora/services/desktop_playback_request.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -49,6 +50,8 @@ class DesktopPlaybackWindows with WindowListener {
   double? initialVolume;
   Directory? cacheDirectory;
   bool _closing = false;
+  int _flushSequence = 0;
+  final _flushRequests = <int, Completer<void>>{};
 
   Future<HttpServer> _ensureServer() => _server ??= () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -96,6 +99,22 @@ class DesktopPlaybackWindows with WindowListener {
 
   void _onWindowMessage(_PlaybackWindow window, Map<String, dynamic> message) {
     switch (message['type']) {
+      case 'diagnostic':
+        Diagnostics.instance.receiveRecord(
+          Map<String, Object?>.from(message['record'] as Map),
+          windowId: window.id,
+        );
+      case 'diagnosticFlush':
+        unawaited(
+          Diagnostics.instance.flush().then((_) {
+            window.socket?.add(
+              jsonEncode({
+                'type': 'diagnosticFlushed',
+                'id': message['id'],
+              }),
+            );
+          }),
+        );
       case 'ready':
         if (!window.ready.isCompleted) window.ready.complete();
       case 'bounds':
@@ -233,6 +252,8 @@ class DesktopPlaybackWindows with WindowListener {
           initialization.complete(message);
         } else {
           switch (message['type']) {
+            case 'diagnosticFlushed':
+              _flushRequests.remove(message['id'])?.complete();
             case 'bounds':
               final values = (message['bounds'] as List).cast<num>();
               unawaited(
@@ -291,6 +312,30 @@ class DesktopPlaybackWindows with WindowListener {
   void _sendChild(Map<String, dynamic> message) {
     if (_childSocket?.readyState == WebSocket.open) {
       _childSocket!.add(jsonEncode(message));
+    }
+  }
+
+  void sendDiagnosticRecord(Map<String, Object?> record) =>
+      _sendChild({'type': 'diagnostic', 'record': record});
+
+  Future<void> flushDiagnostics() async {
+    if (_childSocket?.readyState != WebSocket.open) return;
+    final id = ++_flushSequence;
+    final request = _flushRequests[id] = Completer<void>();
+    _sendChild({'type': 'diagnosticFlush', 'id': id});
+    try {
+      await request.future.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          Diagnostics.instance.log(
+            DiagnosticLogLevel.warning,
+            'window',
+            '等待主窗口确认日志写入超时',
+          );
+        },
+      );
+    } finally {
+      _flushRequests.remove(id);
     }
   }
 
@@ -398,6 +443,7 @@ class DesktopPlaybackWindows with WindowListener {
         ? null
         : await windowManager.getBounds();
     await onPlayerClose?.call();
+    await Diagnostics.instance.flush();
     if (_childSocket?.readyState == WebSocket.open) {
       if (bounds != null) {
         _childSocket!.add(

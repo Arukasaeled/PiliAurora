@@ -178,7 +178,7 @@ class _MainAppState extends PopScopeState<MainApp>
     _disposeTray();
     await GStorage.compact();
     await GStorage.close();
-    DeviceUtils.exitApp();
+    await DeviceUtils.exitApp();
   }
 
   @override

@@ -30,7 +30,7 @@ enum DiagnosticLogLevel {
       values.where((level) => level.name == value).firstOrNull ?? warning;
 }
 
-class Diagnostics extends ChangeNotifier {
+class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   Diagnostics({this.processReader});
 
   static final instance = Diagnostics();
@@ -58,6 +58,7 @@ class Diagnostics extends ChangeNotifier {
   Timer? _timer;
   Timer? _notification;
   bool _tracing = false;
+  bool _observingLifecycle = false;
   DiagnosticLogLevel _level = DiagnosticLogLevel.warning;
   int _intervalMs = 1000;
   int _sequence = 0;
@@ -68,6 +69,20 @@ class Diagnostics extends ChangeNotifier {
 
   set saveSettings(Future<void> Function(Map<String, Object?>) callback) =>
       _saveSettings = callback;
+
+  void observeLifecycle() {
+    if (_observingLifecycle) return;
+    WidgetsBinding.instance.addObserver(this);
+    _observingLifecycle = true;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(flush());
+    }
+  }
 
   bool get tracing => _tracing;
   DiagnosticLogLevel get level => _level;
@@ -578,6 +593,7 @@ class Diagnostics extends ChangeNotifier {
   void dispose() {
     if (_tracing) _stop();
     _notification?.cancel();
+    if (_observingLifecycle) WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 }

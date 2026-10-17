@@ -74,6 +74,16 @@ void main() {
     expect(text, isNot(contains('fixture-token')));
   });
 
+  test('flush awaits the forwarding acknowledgement', () async {
+    var acknowledged = false;
+    diagnostics.forwardFlush = () async {
+      await Future<void>.delayed(Duration.zero);
+      acknowledged = true;
+    };
+    await diagnostics.flush();
+    expect(acknowledged, isTrue);
+  });
+
   test('levels change immediately and recent logs stay bounded', () async {
     diagnostics.log(DiagnosticLogLevel.debug, 'test', 'hidden');
     expect(diagnostics.recentLogs, isEmpty);

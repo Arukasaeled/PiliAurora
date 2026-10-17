@@ -20,6 +20,7 @@ import 'package:pili_aurora/utils/cache_manager.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
 import 'package:pili_aurora/utils/font_utils.dart';
 import 'package:pili_aurora/services/diagnostics/report_handler.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
 import 'package:pili_aurora/utils/request_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -34,23 +35,39 @@ import 'package:media_kit/media_kit.dart';
 
 /// 初始化本地资源和平台服务，配置异常捕获后挂载应用根 Widget。
 Future<void> bootstrapApplication([List<String> arguments = const []]) async {
+  try {
+    await _bootstrapApplication(arguments);
+  } catch (error, stackTrace) {
+    logger.e('应用启动失败', error: error, stackTrace: stackTrace);
+    await Diagnostics.instance.flush();
+    rethrow;
+  }
+}
+
+Future<void> _bootstrapApplication(List<String> arguments) async {
   ScaledWidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
   await initializeSupportPath();
   final windows = DesktopPlaybackWindows.instance;
   final playerWindow =
       Platform.isWindows &&
       arguments.firstOrNull == DesktopPlaybackWindows.argument;
+  if (!playerWindow) await LoggerUtils.prepare();
   final initialization = playerWindow ? await windows.connectPlayer() : null;
+  if (playerWindow) {
+    Diagnostics.instance.forwardRecord = windows.sendDiagnosticRecord;
+    Diagnostics.instance.forwardFlush = windows.flushDiagnostics;
+  }
+  MediaKit.ensureInitialized();
   try {
     await GStorage.init(memorySnapshot: initialization?.storage);
-  } catch (e) {
+  } catch (e, stack) {
+    logger.e('GStorage init error', error: e, stackTrace: stack);
+    await Diagnostics.instance.flush();
     if (playerWindow) {
       windows.playerFailed();
       exit(1);
     }
     await Utils.copyText(e.toString(), needToast: false);
-    logger.e('GStorage init error', error: e);
     exit(0);
   }
   if (playerWindow) {
@@ -66,7 +83,7 @@ Future<void> bootstrapApplication([List<String> arguments = const []]) async {
     });
   }
   ScaledWidgetsFlutterBinding.instance.scaleFactor = Pref.uiScale;
-  if (!playerWindow) await LoggerUtils.initialize();
+  await LoggerUtils.initialize();
   await Future.wait([
     initializeDownloadPath(),
     initializeTemporaryPath(),
