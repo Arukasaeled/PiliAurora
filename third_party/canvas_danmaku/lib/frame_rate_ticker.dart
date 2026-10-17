@@ -234,8 +234,11 @@ class FrameRateTicker extends Ticker {
       final screen = _screenPeriod;
       final anchor = _nativeAnchor! + screen;
       final desired = _lastSystemFrame.inMicroseconds + delay.inMicroseconds;
-      // 就近校准，避免每次批量采样都向后跨过一个目标周期。
-      var target = anchor + ((desired - anchor) / period).round() * period;
+      // 优先选择目标之前仍可达的相位点，避免重锁相时额外拉长一帧。
+      // 槽位取整误差沿用截止容差，防止分频目标误落回前一视频周期。
+      var target = anchor +
+          ((desired - anchor + _frameToleranceMicros) / period).floor() *
+              period;
       final now = clockMicroseconds;
       int screenTarget() =>
           anchor + ((target - anchor - 1000) / screen).ceil() * screen;

@@ -33,6 +33,8 @@ CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dar
 
 `pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理刷新请求批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、30 FPS 视频配 60 FPS 弹幕在 120 Hz 上的相位变化、匹配到失配再匹配时的退化与恢复、mpv 显示同步状态切换与订阅释放、批次限界、请求时间抖动、29.97 FPS 漂移与来源释放。相位变化测试同时断言弹幕更新频率和视频、弹幕合计刷新的次数。屏幕槽位与呈现的结论来自设备检查。
 
+`pages/danmaku/frame_cadence_test.dart` 逐次记录更新所在屏幕槽位，覆盖24/30/60 FPS视频、60/90 FPS弹幕及稳定、每秒相位变化、请求完成时间抖动。120Hz无阻塞模型中检查更新间隔，防止平均帧率正常时仍夹入25ms长间隔；GPU呈现由目标设备检查。
+
 `pages/danmaku/frame_rate_ticker_test.dart` 检查所属视图刷新率、屏幕降频、刷新率不可用、暂停与静音时的帧请求释放，以及 30/60/90/120 FPS 档位。测试使用模拟时钟，不测量设备屏幕或 GPU 合成。
 
 `plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。`super_resolution_selection_test.dart` 检查不可用的显式选择保留档位和设置。`super_resolution_menu_tile_test.dart` 覆盖侧边超分入口的禁用状态、原因展示、点击提示和可用档位选择。
