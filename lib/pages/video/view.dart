@@ -52,11 +52,14 @@ import 'package:pili_aurora/pages/video/widgets/detail_panels.dart';
 import 'package:pili_aurora/pages/video/widgets/intro_layout.dart';
 import 'package:pili_aurora/pages/video/widgets/player_focus.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/models/data_status.dart';
 import 'package:pili_aurora/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/fullscreen.dart';
 import 'package:pili_aurora/plugin/pl_player/view/view.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/player_loading.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/desktop_window_controls.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/services/desktop_playback_request.dart';
 import 'package:pili_aurora/models/common/video/source_type.dart';
@@ -79,6 +82,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
 
 class VideoDetailPageV extends StatefulWidget {
@@ -1164,11 +1168,35 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     onPopInvokedWithResult:
         videoDetailController.plPlayerController.onPopInvokedWithResult,
     child: Obx(
-      () =>
-          !videoDetailController.videoState.value ||
-              !videoDetailController.autoPlay ||
-              plPlayerController?.videoController == null
+      () => !videoDetailController.autoPlay
           ? const SizedBox.shrink()
+          : !videoDetailController.videoState.value ||
+                plPlayerController?.videoController == null
+          ? SizedBox(
+              width: width,
+              height: height,
+              child: PlayerLoadingPanel(
+                headerControl:
+                    videoDetailController.plPlayerController.isDesktopPip
+                    ? GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onPanStart: (_) => windowManager.startDragging(),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            DesktopWindowControls(
+                              controller:
+                                  videoDetailController.plPlayerController,
+                            ),
+                          ],
+                        ),
+                      )
+                    : null,
+                failed:
+                    videoDetailController.plPlayerController.dataStatus.error,
+                onRetry: () => videoDetailController.queryVideoUrl(),
+              ),
+            )
           : PLVideoPlayer(
               maxWidth: width,
               maxHeight: height,

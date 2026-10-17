@@ -149,7 +149,9 @@ class PlPlayerController
   final RxBool controlsLock = false.obs;
 
   final RxBool isFullScreen = false.obs;
-  bool isLive = false;
+  final _isLive = false.obs;
+  bool get isLive => _isLive.value;
+  set isLive(bool value) => _isLive.value = value;
 
   bool _isVertical = false;
 
@@ -198,6 +200,8 @@ class PlPlayerController
 
   /// [videoController] instance of Player
   VideoController? get videoController => _videoController;
+  ValueListenable<VideoController?> get videoControllerListenable =>
+      _runtime.videoControllerListenable;
   PlaybackOwner? get activePlaybackOwner =>
       _activeOwner?.isActive == true ? _activeOwner : null;
   ValueListenable<List<int>> get videoFrameTimings =>

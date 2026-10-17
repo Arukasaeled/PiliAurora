@@ -19,6 +19,8 @@
 
 测试文件使用 `_test.dart` 后缀，领域内共用的 fixture 与调用者放在同一目录，例如 `services/download/download_fixtures.dart` 和 `services/messaging/messaging_fixtures.dart`。
 
+`pages/live_room/loading_test.dart` 在直播请求持续未返回时检查加载动画、控件、刷新与失败提示；`app/desktop_playback_launch_test.dart` 检查小窗显示不等待播放流就绪。前者使用内存设置和挂起的 HTTP 响应，后者模拟窗口平台调用；实际纹理、声音交接和窗口显示仍需设备验证。
+
 CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dart` 供相位测试和帧率矩阵共用请求时间换算；Android 模型把目标帧时钟领先和视频驱动 Dart 帧绑定在一起，隔离模型用于检查 ticker 自行唤醒。`frame_rate_diagnostics_test.dart` 检查实际更新、请求和定时器累计计数、单调时间及停止后的释放；相位测试同时检查稳定锁相状态。
 
 同一组件的场景集中在对应文件，播放图标测试位于 `common/widgets/svg/play_icon_test.dart`，诊断记录存储及突发写入位于 `services/diagnostics/record_store_test.dart`。页面测试与服务测试分开组织；`pages/danmaku/windows_screen_test.dart` 覆盖 screen 的时钟、预热和 widget 重建行为。

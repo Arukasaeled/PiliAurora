@@ -51,6 +51,7 @@ class DesktopPlaybackWindows with WindowListener {
   double? initialVolume;
   Directory? cacheDirectory;
   bool _closing = false;
+  Future<void>? _showPlayerWindow;
   Map<String, dynamic>? _diagnosticSettings;
   int _flushSequence = 0;
   late final _diagnosticCoordinator = DiagnosticWindowCoordinator(
@@ -441,9 +442,16 @@ class DesktopPlaybackWindows with WindowListener {
     }
   }
 
-  Future<void> playerReady() async {
+  Future<void> showPlayerWindow() =>
+      _showPlayerWindow ??= _presentPlayerWindow();
+
+  Future<void> _presentPlayerWindow() async {
     await windowManager.show();
     await windowManager.focus();
+  }
+
+  Future<void> playerReady() async {
+    await showPlayerWindow();
     _sendChild({'type': 'ready'});
   }
 

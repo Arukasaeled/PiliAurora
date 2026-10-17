@@ -34,10 +34,12 @@ import 'package:pili_aurora/pages/live_room/widgets/chat_panel.dart';
 import 'package:pili_aurora/pages/live_room/widgets/header_control.dart';
 import 'package:pili_aurora/pages/video/widgets/player_focus.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/models/data_status.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/fullscreen.dart';
 import 'package:pili_aurora/plugin/pl_player/view/view.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/player_loading.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/utils/android/bindings.g.dart';
 import 'package:pili_aurora/utils/extension/num_ext.dart';
@@ -129,7 +131,6 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     addObserverMobile(this);
     if (!plPlayerController.isLive) {
       plPlayerController.isLive = true;
-      _liveRoomController.isLoaded.refresh();
     }
     plPlayerController.danmakuController =
         _liveRoomController.danmakuController;
@@ -255,42 +256,62 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     Widget player = Obx(
       key: playerKey,
       () {
-        if (_liveRoomController.isLoaded.value && plPlayerController.isLive) {
-          final roomInfoH5 = _liveRoomController.roomInfoH5.value;
-          return PLVideoPlayer(
-            maxWidth: width,
-            maxHeight: height,
-            fill: fill,
-            alignment: alignment,
-            plPlayerController: plPlayerController,
-            headerControl: LiveHeaderControl(
-              key: _liveRoomController.headerKey,
-              title: roomInfoH5?.roomInfo?.title,
-              upName: roomInfoH5?.anchorInfo?.baseInfo?.uname,
-              plPlayerController: plPlayerController,
-              onSendDanmaku: _liveRoomController.onSendDanmaku,
-              onPlayAudio: _liveRoomController.queryLiveUrl,
-              isPortrait: isPortrait,
-              liveController: _liveRoomController,
-              onlineWidget: onlineWidget,
-            ),
-            bottomControl: BottomControl(
-              plPlayerController: plPlayerController,
-              liveRoomCtr: _liveRoomController,
-              onRefresh: _liveRoomController.queryLiveUrl,
-            ),
-            danmuWidget: !needDm
-                ? null
-                : LiveDanmaku(
-                    liveRoomController: _liveRoomController,
-                    plPlayerController: plPlayerController,
-                    isFullScreen: isFullScreen,
-                    isPipMode: plPlayerController.isDesktopPip || isPipMode,
-                    size: Size(width, height),
+        if (!plPlayerController.isLive) return const SizedBox.shrink();
+        final roomInfoH5 = _liveRoomController.roomInfoH5.value;
+        final header = LiveHeaderControl(
+          key: _liveRoomController.headerKey,
+          title: roomInfoH5?.roomInfo?.title,
+          upName: roomInfoH5?.anchorInfo?.baseInfo?.uname,
+          plPlayerController: plPlayerController,
+          onSendDanmaku: _liveRoomController.onSendDanmaku,
+          onPlayAudio: _liveRoomController.queryLiveUrl,
+          isPortrait: isPortrait,
+          liveController: _liveRoomController,
+          onlineWidget: onlineWidget,
+        );
+        final bottom = BottomControl(
+          plPlayerController: plPlayerController,
+          liveRoomCtr: _liveRoomController,
+          onRefresh: _liveRoomController.queryLiveUrl,
+        );
+        return ValueListenableBuilder(
+          valueListenable: plPlayerController.videoControllerListenable,
+          builder: (context, videoController, _) {
+            if (videoController == null) {
+              return SizedBox(
+                width: width,
+                height: height,
+                child: Obx(
+                  () => PlayerLoadingPanel(
+                    headerControl: header,
+                    bottomControl: bottom,
+                    failed: plPlayerController.dataStatus.error,
+                    onRetry: _liveRoomController.queryLiveUrl,
+                    fill: fill,
                   ),
-          );
-        }
-        return const SizedBox.shrink();
+                ),
+              );
+            }
+            return PLVideoPlayer(
+              maxWidth: width,
+              maxHeight: height,
+              fill: fill,
+              alignment: alignment,
+              plPlayerController: plPlayerController,
+              headerControl: header,
+              bottomControl: bottom,
+              danmuWidget: !needDm
+                  ? null
+                  : LiveDanmaku(
+                      liveRoomController: _liveRoomController,
+                      plPlayerController: plPlayerController,
+                      isFullScreen: isFullScreen,
+                      isPipMode: plPlayerController.isDesktopPip || isPipMode,
+                      size: Size(width, height),
+                    ),
+            );
+          },
+        );
       },
     );
     if (_liveRoomController.showSuperChat &&

@@ -57,6 +57,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
 
   Player? _player;
   VideoController? _videoController;
+  final _videoControllerListenable = ValueNotifier<VideoController?>(null);
   PlayerDiagnostics? _diagnostics;
   NativeHookRegistration? _hookRegistration;
   Future<void>? _initializeFuture;
@@ -102,6 +103,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
 
   Player? get player => _player;
   VideoController? get videoController => _videoController;
+  ValueListenable<VideoController?> get videoControllerListenable =>
+      _videoControllerListenable;
   PlayerDiagnostics? get diagnostics => _diagnostics;
 
   Map<String, Object?> get videoFrameDiagnostics => {
@@ -793,6 +796,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       _subscriptions.add(
         video.outputProgress.listen(_observeOutputProgress),
       );
+      // 输出已可挂载；媒体探测和首帧准备继续在原生加载链中完成。
+      _videoControllerListenable.value = video;
       return player;
     } catch (error) {
       if (player == null) {
@@ -1787,6 +1792,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       }
       _player = null;
       _videoController = null;
+      _videoControllerListenable.value = null;
       await _closeRuntimeStreams();
       if (!_released.isCompleted) _released.complete();
       return const PlaybackShutdownResult.released();
@@ -1822,6 +1828,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   }
 
   Future<void> _closeRuntimeStreams() async {
+    _videoControllerListenable.value = null;
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
@@ -1831,6 +1838,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     videoDisplaySyncActive.value = false;
     videoFrameTimings.dispose();
     videoDisplaySyncActive.dispose();
+    _videoControllerListenable.dispose();
   }
 }
 

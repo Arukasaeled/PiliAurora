@@ -357,7 +357,7 @@ class LiveRoomController extends GetxController {
     }
   }
 
-  late List<Stream> stream;
+  List<Stream> stream = const [];
   int streamIndex = 0;
   int formatIndex = 0;
   int codecIndex = 0;

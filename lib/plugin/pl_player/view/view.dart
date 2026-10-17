@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:pili_aurora/utils/volume_utils.dart';
-import 'package:pili_aurora/common/assets.dart';
 import 'package:pili_aurora/common/constants.dart';
 import 'package:pili_aurora/common/style.dart';
 import 'package:pili_aurora/common/widgets/cropped_image.dart';
@@ -52,6 +51,7 @@ import 'package:pili_aurora/plugin/pl_player/utils/video_output_handoff.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/video_output_paint_barrier.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/video_output_handoff.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/app_bar_ani.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/player_loading.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/backward_seek.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/bottom_control.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/common_btn.dart';
@@ -65,7 +65,6 @@ import 'package:pili_aurora/utils/android/bindings.g.dart';
 import 'package:pili_aurora/utils/cache_manager.dart';
 import 'package:pili_aurora/utils/connectivity_utils.dart';
 import 'package:pili_aurora/utils/duration_utils.dart';
-import 'package:pili_aurora/utils/extension/num_ext.dart';
 import 'package:pili_aurora/utils/extension/theme_ext.dart';
 import 'package:pili_aurora/utils/feed_back.dart';
 import 'package:pili_aurora/utils/id_utils.dart';
@@ -212,8 +211,13 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   int? tmpSubtitlePaddingB;
   StreamSubscription? _controlsListener;
+  StreamSubscription? _loadingListener;
   void _onControlChanged(bool val) {
-    final visible = val && !plPlayerController.controlsLock.value;
+    final visible =
+        (val ||
+            plPlayerController.dataStatus.loading ||
+            plPlayerController.dataStatus.error) &&
+        !plPlayerController.controlsLock.value;
 
     if ((widget.headerControl.key as GlobalKey<TimeBatteryMixin>).currentState
         case final state?) {
@@ -271,6 +275,15 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 100),
+      value:
+          plPlayerController.showControls.value ||
+              plPlayerController.dataStatus.loading ||
+              plPlayerController.dataStatus.error
+          ? 1
+          : 0,
+    );
+    _loadingListener = plPlayerController.dataStatus.listen(
+      (_) => _onControlChanged(plPlayerController.showControls.value),
     );
     videoController = plPlayerController.videoController!;
     _videoOutputPaintBarrier = VideoOutputPaintBarrier();
@@ -427,6 +440,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     _videoOutputHandoff.dispose();
     _videoOutputPaintBarrier.dispose();
     _controlsListener?.cancel();
+    _loadingListener?.cancel();
     _animationController.dispose();
     _transformationController.dispose();
     _removeDmAction();
@@ -2203,56 +2217,14 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
           listenable: _videoOutputHandoff,
           builder: (context, _) => Obx(() {
             if (plPlayerController.dataStatus.loading ||
+                plPlayerController.dataStatus.error ||
                 _videoOutputHandoff.image != null ||
                 (plPlayerController.isBuffering.value &&
                     plPlayerController.playerStatus.isPlaying)) {
-              return Center(
-                child: GestureDetector(
-                  onTap: plPlayerController.refreshPlayer,
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [Colors.black26, Colors.transparent],
-                      ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Image.asset(
-                          Assets.buffering,
-                          height: 25,
-                          cacheHeight: 25.cacheSize(context),
-                          semanticLabel: "加载中",
-                          color: Colors.white,
-                        ),
-                        if (plPlayerController.dataStatus.loading ||
-                            _videoOutputHandoff.image != null ||
-                            plPlayerController.isBuffering.value)
-                          Obx(() {
-                            final buffered = plPlayerController.buffered.value;
-                            if (buffered == 0) {
-                              return const Text(
-                                '加载中...',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                ),
-                              );
-                            }
-                            return Text(
-                              DurationUtils.formatDuration(buffered),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                              ),
-                            );
-                          }),
-                      ],
-                    ),
-                  ),
-                ),
+              return PlayerLoadingIndicator(
+                failed: plPlayerController.dataStatus.error,
+                buffered: plPlayerController.buffered.value,
+                onRetry: plPlayerController.refreshPlayer,
               );
             } else {
               return const SizedBox.shrink();
