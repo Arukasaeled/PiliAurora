@@ -50,6 +50,7 @@ class DesktopPlaybackWindows with WindowListener {
   double? initialVolume;
   Directory? cacheDirectory;
   bool _closing = false;
+  Map<String, dynamic>? _diagnosticSettings;
   int _flushSequence = 0;
   final _flushRequests = <int, Completer<void>>{};
 
@@ -116,6 +117,12 @@ class DesktopPlaybackWindows with WindowListener {
           }),
         );
       case 'ready':
+        window.socket?.add(
+          jsonEncode({
+            'type': 'diagnosticSettings',
+            'settings': Diagnostics.instance.settings,
+          }),
+        );
         if (!window.ready.isCompleted) window.ready.complete();
       case 'bounds':
         final bounds = (message['bounds'] as List).cast<num>();
@@ -202,6 +209,7 @@ class DesktopPlaybackWindows with WindowListener {
         [argument],
         workingDirectory: File(Platform.resolvedExecutable).parent.path,
         environment: {
+          'PILIAURORA_WINDOW_ID': '$id',
           'PILIAURORA_WINDOW_PORT': '${server.port}',
           'PILIAURORA_WINDOW_TOKEN': token,
         },
@@ -252,6 +260,13 @@ class DesktopPlaybackWindows with WindowListener {
           initialization.complete(message);
         } else {
           switch (message['type']) {
+            case 'diagnosticSettings':
+              unawaited(
+                applyDiagnosticSettings(
+                  Map<String, dynamic>.from(message['settings'] as Map),
+                ),
+              );
+
             case 'diagnosticFlushed':
               _flushRequests.remove(message['id'])?.complete();
             case 'bounds':
@@ -315,8 +330,35 @@ class DesktopPlaybackWindows with WindowListener {
     }
   }
 
-  void sendDiagnosticRecord(Map<String, Object?> record) =>
-      _sendChild({'type': 'diagnostic', 'record': record});
+  void syncDiagnosticSettings() {
+    final message = jsonEncode({
+      'type': 'diagnosticSettings',
+      'settings': Diagnostics.instance.settings,
+    });
+    for (final window in _windows.values) {
+      if (window.socket?.readyState == WebSocket.open) {
+        window.socket!.add(message);
+      }
+    }
+  }
+
+  Future<void> applyDiagnosticSettings([Map<String, dynamic>? incoming]) async {
+    if (incoming != null) _diagnosticSettings = incoming;
+    final settings = _diagnosticSettings;
+    if (settings == null) return;
+    await Diagnostics.instance.configure(
+      level: DiagnosticLogLevel.parse(settings['level'] as String?),
+      playerLevel: DiagnosticLogLevel.parse(settings['playerLevel'] as String?),
+      tracing: settings['tracing'] as bool,
+      intervalMs: settings['intervalMs'] as int,
+    );
+  }
+
+  bool sendDiagnosticRecord(Map<String, Object?> record) {
+    if (_childSocket?.readyState != WebSocket.open) return false;
+    _childSocket!.add(jsonEncode({'type': 'diagnostic', 'record': record}));
+    return true;
+  }
 
   Future<void> flushDiagnostics() async {
     if (_childSocket?.readyState != WebSocket.open) return;

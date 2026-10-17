@@ -84,6 +84,86 @@ void main() {
     expect(acknowledged, isTrue);
   });
 
+  test('delayed forwarded records are displayed by origin time', () {
+    diagnostics
+      ..log(DiagnosticLogLevel.error, 'app', 'newer')
+      ..receiveRecord({
+        'time': '2000-01-01T00:00:00.000Z',
+        'channel': 'runtime',
+        'level': 'error',
+        'message': 'older',
+      }, windowId: 2);
+    expect(diagnostics.recentLogs.map((record) => record['message']), [
+      'newer',
+      'older',
+    ]);
+  });
+
+  test(
+    'forwarding failure preserves local logs and child performance export',
+    () async {
+      final child = Diagnostics(processReader: () => {'rssBytes': 42});
+      await child.initialize(
+        directory: Directory('${directory.path}/window-2'),
+        childProcess: true,
+      );
+      child
+        ..forwardRecord = ((_) => false)
+        ..log(DiagnosticLogLevel.error, 'app', 'offline failure');
+      await child.configure(tracing: true);
+      child.capture();
+      await child.configure(tracing: false);
+      await child.flush();
+      expect(child.forwardingFailures, 1);
+      expect(child.droppedRecords, 0);
+      expect(
+        await File('${directory.path}/window-2/runtime.jsonl').readAsString(),
+        contains('offline failure'),
+      );
+      expect(
+        await File('${directory.path}/window-2/performance.jsonl')
+            .readAsString(),
+        contains('rssBytes'),
+      );
+      final archive = await diagnostics.exportArchive();
+      try {
+        final zip = ZipDecoder().decodeBytes(await archive.readAsBytes());
+        expect(
+          zip.files.map((file) => file.name),
+          containsAll(['window-2-runtime.jsonl', 'window-2-performance.jsonl']),
+        );
+      } finally {
+        await archive.parent.delete(recursive: true);
+        child.dispose();
+      }
+      await diagnostics.clear();
+      expect(
+        File('${directory.path}/window-2/runtime.jsonl').existsSync(),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'settings changes notify once and expose effective configuration',
+    () async {
+      var changes = 0;
+      diagnostics.onSettingsChanged = () => changes++;
+      await diagnostics.configure(
+        level: DiagnosticLogLevel.debug,
+        playerLevel: DiagnosticLogLevel.error,
+        intervalMs: 250,
+      );
+      expect(changes, 1);
+      expect(diagnostics.settings, {
+        'level': 'debug',
+        'playerLevel': 'error',
+        'intervalMs': 250,
+        'tracing': false,
+      });
+    },
+  );
+
   test('levels change immediately and recent logs stay bounded', () async {
     diagnostics.log(DiagnosticLogLevel.debug, 'test', 'hidden');
     expect(diagnostics.recentLogs, isEmpty);

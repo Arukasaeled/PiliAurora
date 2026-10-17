@@ -484,7 +484,10 @@ class _LogCardState extends State<_LogCard> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${level.label} · ${record['category']} · ${time ?? record['time']}',
+                        '${level.label} · ${record['category']} · ${time ?? record['time']}'
+                        '${record['windowId'] == null ? '' : ' · 窗口 ${record['windowId']}'}'
+                        '${record['processId'] == null ? '' : ' · 进程 ${record['processId']}'}'
+                        '${record['route'] == null ? '' : ' · ${record['route']}'}',
                         style: TextStyle(color: colors.outline, fontSize: 13),
                       ),
                     ],

@@ -10,7 +10,7 @@ class DiagnosticReportHandler extends ReportHandler {
 
   @override
   Future<bool> handle(Report report) async {
-    diagnostics.log(
+    final record = diagnostics.log(
       DiagnosticLogLevel.error,
       'exception',
       report.error,
@@ -36,6 +36,7 @@ class DiagnosticReportHandler extends ReportHandler {
         'build': report.customParameters,
       },
     );
+    if (record?.queued != true) return false;
     await diagnostics.flush();
     return diagnostics.storageError == null;
   }

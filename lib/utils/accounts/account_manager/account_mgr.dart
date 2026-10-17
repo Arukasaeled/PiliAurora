@@ -172,7 +172,9 @@ class AccountManager extends Interceptor {
       'site/getCoin',
     ];
     String url = err.requestOptions.uri.toString();
-    logger.d('🌹🌹ApiInterceptor: $url\n$err');
+    logger
+        .scoped('http')
+        .w('网络请求失败: $url', error: err, stackTrace: err.stackTrace);
     if (skipShow.any(url.contains) ||
         (url.contains('skipSegments') && err.requestOptions.method == 'GET')) {
       // skip

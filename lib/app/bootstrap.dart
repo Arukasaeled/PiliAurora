@@ -51,7 +51,14 @@ Future<void> _bootstrapApplication(List<String> arguments) async {
   final playerWindow =
       Platform.isWindows &&
       arguments.firstOrNull == DesktopPlaybackWindows.argument;
-  if (!playerWindow) await LoggerUtils.prepare();
+  await LoggerUtils.prepare(
+    windowId: playerWindow
+        ? int.parse(Platform.environment['PILIAURORA_WINDOW_ID']!)
+        : null,
+  );
+  if (!playerWindow) {
+    Diagnostics.instance.onSettingsChanged = windows.syncDiagnosticSettings;
+  }
   final initialization = playerWindow ? await windows.connectPlayer() : null;
   if (playerWindow) {
     Diagnostics.instance.forwardRecord = windows.sendDiagnosticRecord;
@@ -84,6 +91,7 @@ Future<void> _bootstrapApplication(List<String> arguments) async {
   }
   ScaledWidgetsFlutterBinding.instance.scaleFactor = Pref.uiScale;
   await LoggerUtils.initialize();
+  if (playerWindow) await windows.applyDiagnosticSettings();
   await Future.wait([
     initializeDownloadPath(),
     initializeTemporaryPath(),

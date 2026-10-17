@@ -56,8 +56,25 @@ void main() {
       expect(content, isNot(contains('fixture-app-token')));
       expect(content, contains('fixture-model'));
       await diagnostics.configure(level: DiagnosticLogLevel.off);
-      expect(await handler.handle(report), isTrue);
+      expect(await handler.handle(report), isFalse);
       expect(diagnostics.recentLogs, hasLength(1));
+    },
+  );
+
+  test(
+    'report without persistent storage is not reported as delivered',
+    () async {
+      final handler = DiagnosticReportHandler(diagnostics: diagnostics);
+      final report = Report(
+        'error',
+        'stack',
+        DateTime(2026),
+        const {},
+        const {},
+        const {},
+        null,
+      );
+      expect(await handler.handle(report), isFalse);
     },
   );
 

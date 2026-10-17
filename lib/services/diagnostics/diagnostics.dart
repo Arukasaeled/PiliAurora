@@ -30,6 +30,14 @@ enum DiagnosticLogLevel {
       values.where((level) => level.name == value).firstOrNull ?? warning;
 }
 
+class DiagnosticLogResult {
+  const DiagnosticLogResult({required this.record, required this.queued});
+  final Map<String, Object?> record;
+
+  /// 已进入持久化队列；写盘结果需在 flush 后检查存储状态。
+  final bool queued;
+}
+
 class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   Diagnostics({this.processReader});
 
@@ -41,10 +49,21 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   final _sources = <String, Map<String, Object?> Function()>{};
   final _operations = <String, _OperationStats>{};
   final _gauges = <String, num>{};
-  final _recent = Queue<Map<String, Object?>>();
+  final _recent = <String, Queue<Map<String, Object?>>>{};
   final _frames = _FrameStats();
-  void Function(Map<String, Object?>)? forwardRecord;
+  bool Function(Map<String, Object?>)? forwardRecord;
+  int forwardingFailures = 0;
   Future<void> Function()? forwardFlush;
+  VoidCallback? onSettingsChanged;
+  Directory? _directory;
+  bool _childProcess = false;
+  int? _windowId;
+  Map<String, Object?> get settings => {
+    'level': _level.name,
+    'playerLevel': _playerLevel.name,
+    'tracing': _tracing,
+    'intervalMs': _intervalMs,
+  };
   final _elapsed = Stopwatch();
   DiagnosticRecordStore? _logs;
   DiagnosticRecordStore? _trace;
@@ -88,14 +107,24 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   DiagnosticLogLevel get level => _level;
   DiagnosticLogLevel get playerLevel => _playerLevel;
   Map<String, Object?> get storageStatus => {
+    'forwardingFailures': forwardingFailures,
     'runtime': _logs?.status,
     'player': _playerLogs?.status,
     'performance': _trace?.status,
   };
   int get intervalMs => _intervalMs;
   String? get session => _session;
+  static int _compareRecords(Map<String, Object?> a, Map<String, Object?> b) {
+    final time = '${a['time']}'.compareTo('${b['time']}');
+    if (time != 0) return time;
+    final run = '${a['runId']}'.compareTo('${b['runId']}');
+    if (run != 0) return run;
+    return (a['sequence'] as int? ?? 0).compareTo(b['sequence'] as int? ?? 0);
+  }
+
   List<Map<String, Object?>> get recentLogs =>
-      _recent.toList().reversed.toList();
+      _recent.values.expand((queue) => queue).toList()
+        ..sort((a, b) => _compareRecords(b, a));
   int get droppedRecords =>
       (_logs?.dropped ?? 0) +
       (_trace?.dropped ?? 0) +
@@ -106,30 +135,39 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> initialize({
     required Directory directory,
     File? legacyReports,
+    bool childProcess = false,
+    int? windowId,
     DiagnosticLogLevel level = DiagnosticLogLevel.warning,
     DiagnosticLogLevel playerLevel = DiagnosticLogLevel.info,
     bool tracing = false,
     int intervalMs = 1000,
     Future<void> Function(Map<String, Object?>)? saveSettings,
   }) async {
-    _logs = DiagnosticRecordStore(File('${directory.path}/runtime.jsonl'));
+    _directory = directory;
+    _childProcess = childProcess;
+    _windowId = windowId;
+    _logs = DiagnosticRecordStore(
+      File('${directory.path}/runtime.jsonl'),
+      maxBytes: childProcess ? 1 << 20 : 8 << 20,
+      retainedFiles: childProcess ? 2 : 4,
+    );
     _legacyReports = legacyReports == null
         ? null
         : DiagnosticRecordStore(legacyReports);
     _trace = DiagnosticRecordStore(
       File('${directory.path}/performance.jsonl'),
-      maxBytes: 16 << 20,
+      maxBytes: childProcess ? 4 << 20 : 16 << 20,
     );
     _playerLogs = DiagnosticRecordStore(
       File('${directory.path}/player.jsonl'),
-      maxBytes: 16 << 20,
-      retainedFiles: 8,
+      maxBytes: childProcess ? 4 << 20 : 16 << 20,
+      retainedFiles: childProcess ? 2 : 8,
     );
     _playerLevel = playerLevel;
     _saveSettings = saveSettings;
     _level = level;
     _intervalMs = intervals.contains(intervalMs) ? intervalMs : 1000;
-    final pending = _recent.toList();
+    final pending = _recent.values.expand((queue) => queue).toList();
     _recent.clear();
     await _loadHistory();
     for (final record in pending) {
@@ -202,6 +240,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
         (_) => capture(),
       );
     }
+    onSettingsChanged?.call();
     notifyListeners();
     await _saveSettings?.call({
       'level': _level.name,
@@ -214,15 +253,22 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   bool accepts(DiagnosticLogLevel level) =>
       _level != DiagnosticLogLevel.off && level.index >= _level.index;
 
-  void log(
+  DiagnosticLogResult? log(
     DiagnosticLogLevel level,
     String category,
     Object? message, {
     Object? details,
     StackTrace? stack,
   }) {
-    if (!accepts(level)) return;
-    _writeLog(_logs, level, category, message, details: details, stack: stack);
+    if (!accepts(level)) return null;
+    return _writeLog(
+      _logs,
+      level,
+      category,
+      message,
+      details: details,
+      stack: stack,
+    );
   }
 
   bool acceptsPlayer(DiagnosticLogLevel level) =>
@@ -248,7 +294,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  void _writeLog(
+  DiagnosticLogResult _writeLog(
     DiagnosticRecordStore? store,
     DiagnosticLogLevel level,
     String category,
@@ -261,6 +307,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       'time': DateTime.now().toUtc().toIso8601String(),
       'runId': _runId,
       'processId': pid,
+      if (_windowId != null) 'windowId': _windowId,
       'route': _route,
       'sequence': ++_logSequence,
       'elapsedUs': _clock.elapsedMicroseconds,
@@ -287,17 +334,20 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       if (_tracing) 'session': _session,
     };
     _remember(record);
-    store?.add(record);
-    forwardRecord?.call(record);
+    final accepted = store?.add(record) ?? false;
+    try {
+      if (forwardRecord?.call(record) == false) forwardingFailures++;
+    } catch (_) {
+      forwardingFailures++;
+    }
     _notifySoon();
+    return DiagnosticLogResult(record: record, queued: accepted);
   }
 
   void _remember(Map<String, Object?> record) {
-    _recent.add(record);
-    final channel = record['channel'];
-    if (_recent.where((item) => item['channel'] == channel).length > 200) {
-      _recent.remove(_recent.firstWhere((item) => item['channel'] == channel));
-    }
+    final channel = record['channel'] as String? ?? 'runtime';
+    final queue = _recent.putIfAbsent(channel, Queue.new)..add(record);
+    if (queue.length > 200) queue.removeFirst();
   }
 
   /// 子进程记录保留其时钟和页面上下文，由主进程统一轮转和导出。
@@ -415,6 +465,9 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     }
     latest = {
       'type': 'sample',
+      'runId': _runId,
+      'processId': pid,
+      if (_windowId != null) 'windowId': _windowId,
       'session': _session,
       'sequence': ++_sequence,
       'time': DateTime.now().toUtc().toIso8601String(),
@@ -479,7 +532,47 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// 子窗口独立落盘，导出时同时收集断连期间的现场和性能采样。
+  Future<List<File>> _childFiles() async {
+    final directory = _directory;
+    if (_childProcess || directory == null || !directory.existsSync()) {
+      return [];
+    }
+    final files = <File>[];
+    await for (final entry in directory.list(followLinks: false)) {
+      if (entry is! Directory ||
+          !RegExp(
+            r'^window-\d+$',
+          ).hasMatch(entry.uri.pathSegments.where((s) => s.isNotEmpty).last)) {
+        continue;
+      }
+      await for (final file in entry.list(followLinks: false)) {
+        if (file is File &&
+            RegExp(r'^(runtime|player|performance)\.jsonl(\.[0-9]+)?$')
+                .hasMatch(file.uri.pathSegments.last)) {
+          files.add(file);
+        }
+      }
+    }
+    return files;
+  }
+
+  Future<List<String>> _childSnapshots(Directory destination) async {
+    final paths = <String>[];
+    for (final file in await _childFiles()) {
+      final parts = file.uri.pathSegments;
+      final name = '${parts[parts.length - 2]}-${parts.last}';
+      try {
+        paths.add((await file.copy('${destination.path}/$name')).path);
+      } on FileSystemException {
+        // 子窗口可能正轮转此文件，跳过已被替换的快照。
+      }
+    }
+    return paths;
+  }
+
   Future<List<File>> files() async => [
+    ...await _childFiles(),
     ...?await _logs?.files(),
     ...?await _playerLogs?.files(),
     ...?await _trace?.files(),
@@ -498,6 +591,9 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     await _playerLogs?.clear();
     await _trace?.clear();
     await _legacyReports?.clear();
+    for (final file in await _childFiles()) {
+      if (file.existsSync()) await file.delete();
+    }
     _recent.clear();
     latest = null;
     notifyListeners();
@@ -514,6 +610,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
         ...?await _playerLogs?.snapshot(directory),
         ...?await _trace?.snapshot(directory),
         ...await _legacySnapshots(directory),
+        ...await _childSnapshots(directory),
       ];
       final manifest = File('${directory.path}/manifest.json');
       await manifest.writeAsString(

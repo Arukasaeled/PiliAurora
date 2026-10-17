@@ -42,13 +42,24 @@ abstract final class LoggerUtils {
   }
 
   /// 本地设置读取失败时，也能保存启动错误。
-  static Future<void> prepare() async => Diagnostics.instance.initialize(
-    directory: Directory(p.join(appSupportDirPath, 'diagnostics')),
-    legacyReports: File(
-      p.join(
-        (await getApplicationDocumentsDirectory()).path,
-        '.pili_logs.json',
-      ),
-    ),
-  );
+  static Future<void> prepare({int? windowId}) async =>
+      Diagnostics.instance.initialize(
+        directory: Directory(
+          p.join(
+            appSupportDirPath,
+            'diagnostics',
+            windowId == null ? '' : 'window-$windowId',
+          ),
+        ),
+        childProcess: windowId != null,
+        windowId: windowId,
+        legacyReports: windowId != null
+            ? null
+            : File(
+                p.join(
+                  (await getApplicationDocumentsDirectory()).path,
+                  '.pili_logs.json',
+                ),
+              ),
+      );
 }
