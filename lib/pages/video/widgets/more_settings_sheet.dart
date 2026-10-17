@@ -6,6 +6,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:pili_aurora/common/widgets/app_select_field.dart';
 import 'package:pili_aurora/models/common/super_resolution_type.dart';
 import 'package:pili_aurora/models/common/video/audio_quality.dart';
 import 'package:pili_aurora/models/common/video/cdn_type.dart';
@@ -178,42 +179,15 @@ class _VideoMoreSettingsSheetState extends State<VideoMoreSettingsSheet> {
           const SizedBox(width: 12),
           Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
           const SizedBox(width: 8),
-          SizedBox(
-            width: 128,
-            child: PopupMenuButton<T>(
-              enabled: enabled && options.isNotEmpty,
-              tooltip: hint ?? '$label：$selectedLabel',
-              initialValue: value,
-              onSelected: onSelected,
-              itemBuilder: (_) => [
-                for (final (value, label) in options)
-                  PopupMenuItem(value: value, child: Text(label)),
-              ],
-              child: Container(
-                height: 34,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  border: Border.all(color: colors.outlineVariant),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: DefaultTextStyle(
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: enabled
-                        ? colors.onSurface
-                        : Theme.of(context).disabledColor,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  child: Row(
-                    children: [
-                      Expanded(child: selectedWidget ?? Text(selectedLabel)),
-                      const Icon(Icons.expand_more, size: 18),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          AppSelectField<T>(
+            value: value,
+            label: label,
+            selectedLabel: selectedLabel,
+            options: options,
+            onSelected: onSelected,
+            enabled: enabled,
+            tooltip: hint ?? '$label：$selectedLabel',
+            selectedWidget: selectedWidget,
           ),
         ],
       ),

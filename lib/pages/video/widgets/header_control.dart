@@ -58,6 +58,7 @@ import 'package:hive_ce/hive.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
 import 'package:material_ui/material_ui.dart' hide showBottomSheet;
+import 'package:pili_aurora/common/widgets/app_select_field.dart';
 import 'package:media_kit/media_kit.dart' show NativePlayer;
 
 mixin TimeBatteryMixin<T extends StatefulWidget> on State<T> {
@@ -542,7 +543,6 @@ class HeaderControlState extends State<HeaderControl>
       builder: (context) {
         SubtitleFormat format = .vtt;
         final subtitles = videoDetailCtr.subtitles;
-        final secondary = ColorScheme.of(context).secondary;
         return SimpleDialog(
           clipBehavior: .hardEdge,
           contentPadding: const .only(bottom: 12),
@@ -551,43 +551,19 @@ class HeaderControlState extends State<HeaderControl>
             children: [
               const Expanded(child: Text('保存字幕')),
               const Text('格式: ', style: TextStyle(fontSize: 14)),
-              Builder(
-                builder: (context) => PopupMenuButton<SubtitleFormat>(
-                  tooltip: '',
-                  initialValue: format,
-                  onSelected: (value) {
-                    format = value;
-                    (context as Element).markNeedsBuild();
-                  },
-                  itemBuilder: (_) => SubtitleFormat.values
-                      .map(
-                        (e) => PopupMenuItem(
-                          value: e,
-                          height: 35,
-                          child: Text(e.label),
-                        ),
-                      )
-                      .toList(),
-                  child: Padding(
-                    padding: const .symmetric(horizontal: 2, vertical: 5),
-                    child: Text.rich(
-                      style: .new(fontSize: 14, color: secondary),
-                      TextSpan(
-                        children: [
-                          TextSpan(text: format.label),
-                          WidgetSpan(
-                            alignment: .middle,
-                            child: Icon(
-                              size: 14,
-                              MdiIcons.unfoldMoreHorizontal,
-                              color: secondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+              AppSelectField<SubtitleFormat>(
+                value: format,
+                label: '格式',
+                selectedLabel: format.label,
+                width: 96,
+                menuWidth: 190,
+                options: [
+                  for (final item in SubtitleFormat.values) (item, item.label),
+                ],
+                onSelected: (value) {
+                  format = value;
+                  (context as Element).markNeedsBuild();
+                },
               ),
             ],
           ),

@@ -155,7 +155,6 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
                   () => PopupMenuButton<VideoFitType>(
                     tooltip: '画面比例',
                     initialValue: plPlayerController.videoFit.value,
-                    color: Colors.black.withValues(alpha: 0.8),
                     itemBuilder: (context) {
                       return VideoFitType.values
                           .map(
@@ -193,7 +192,6 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
                     tooltip: '画质',
                     padding: EdgeInsets.zero,
                     initialValue: liveRoomCtr.currentQn,
-                    color: Colors.black.withValues(alpha: 0.8),
                     itemBuilder: (context) {
                       return liveRoomCtr.acceptQnList
                           .map(

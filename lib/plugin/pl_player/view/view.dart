@@ -558,7 +558,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
               tooltip: hint,
               requestFocus: false,
               initialValue: type,
-              color: Colors.black.withValues(alpha: 0.8),
               itemBuilder: (context) {
                 return SuperResolutionType.values
                     .map(
@@ -691,7 +690,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
             tooltip: '画面比例',
             requestFocus: false,
             initialValue: fit,
-            color: Colors.black.withValues(alpha: 0.8),
             itemBuilder: (context) {
               return VideoFitType.values
                   .map(
@@ -731,7 +729,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
               requestFocus: false,
               initialValue: videoDetailController.currLang.value,
               onSelected: videoDetailController.setLanguage,
-              color: Colors.black.withValues(alpha: 0.8),
               itemBuilder: (context) => [
                 const PopupMenuItem<String>(
                   height: 35,
@@ -776,7 +773,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
               tooltip: '字幕',
               requestFocus: false,
               initialValue: val,
-              color: Colors.black.withValues(alpha: 0.8),
               itemBuilder: (context) {
                 return [
                   PopupMenuItem<int>(
@@ -833,7 +829,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
           tooltip: '倍速',
           requestFocus: false,
           initialValue: plPlayerController.playbackSpeed,
-          color: Colors.black.withValues(alpha: 0.8),
           itemBuilder: (context) {
             return plPlayerController.speedList
                 .map(
@@ -879,7 +874,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
             tooltip: '画质',
             requestFocus: false,
             initialValue: currentVideoQa.code,
-            color: Colors.black.withValues(alpha: 0.8),
             itemBuilder: (context) {
               return List.generate(
                 videoFormat.length,

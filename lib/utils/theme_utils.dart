@@ -12,6 +12,7 @@ import 'package:dynamic_color/dynamic_color.dart' show DynamicColorPlugin;
 import 'package:flutter/foundation.dart' show PlatformDispatcher;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:pili_aurora/common/widgets/app_menu_theme.dart';
 
 abstract final class ThemeUtils {
   static ColorScheme? _light, _dark;
@@ -167,9 +168,8 @@ abstract final class ThemeUtils {
           color: colorScheme.onSecondaryContainer,
         ),
       ),
-      popupMenuTheme: PopupMenuThemeData(
-        surfaceTintColor: isDark ? colorScheme.surfaceContainerHighest : null,
-      ),
+      popupMenuTheme: AppMenuTheme.popupMenuThemeData(colorScheme),
+      menuTheme: AppMenuTheme.menuThemeData(colorScheme),
       cardTheme: CardThemeData(
         elevation: 1,
         margin: EdgeInsets.zero,
@@ -275,6 +275,12 @@ abstract final class ThemeUtils {
         backgroundColor: Colors.black,
       ),
       popupMenuTheme: theme.popupMenuTheme.copyWith(color: color),
+      menuTheme: MenuThemeData(
+        style: theme.menuTheme.style?.copyWith(
+          backgroundColor: WidgetStatePropertyAll<Color?>(color),
+        ),
+        submenuIcon: theme.menuTheme.submenuIcon,
+      ),
       colorScheme: colorScheme.copyWith(
         primary: colorScheme.primary.darken(0.1),
         onPrimary: colorScheme.onPrimary.darken(0.1),

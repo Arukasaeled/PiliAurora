@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:pili_aurora/common/widgets/app_select_field.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:share_plus/share_plus.dart';
@@ -286,17 +287,23 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('采样间隔'),
-                        trailing: DropdownButton<int>(
+                        trailing: AppSelectField<int>(
                           value: service.intervalMs,
-                          onChanged: (value) => _configure(intervalMs: value),
-                          items: const [
-                            DropdownMenuItem(value: 250, child: Text('250 毫秒')),
-                            DropdownMenuItem(
-                              value: 1000,
-                              child: Text('1 秒（推荐）'),
-                            ),
-                            DropdownMenuItem(value: 5000, child: Text('5 秒')),
+                          label: '采样间隔',
+                          selectedLabel: switch (service.intervalMs) {
+                            250 => '250 毫秒',
+                            1000 => '1 秒（推荐）',
+                            5000 => '5 秒',
+                            final value => '$value 毫秒',
+                          },
+                          options: const [
+                            (250, '250 毫秒'),
+                            (1000, '1 秒（推荐）'),
+                            (5000, '5 秒'),
                           ],
+                          onSelected: (value) => _configure(intervalMs: value),
+                          width: 140,
+                          menuWidth: 200,
                         ),
                       ),
                       if (latest == null)

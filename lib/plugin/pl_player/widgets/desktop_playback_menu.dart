@@ -15,7 +15,6 @@ class DesktopPlaybackMenu extends StatelessWidget {
       tooltip: '播放窗口',
       onOpened: () => controller.setControlsMenuOpen(true),
       onCanceled: () => controller.setControlsMenuOpen(false),
-      color: ColorScheme.of(context).surface,
       onSelected: (action) {
         controller.setControlsMenuOpen(false);
         switch (action) {

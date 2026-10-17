@@ -34,6 +34,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:pili_aurora/common/widgets/app_select_field.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
 class DownloadPanel extends StatefulWidget {
@@ -117,23 +118,20 @@ class _DownloadPanelState extends State<DownloadPanel> {
             spacing: 16,
             children: [
               Text('最高画质', style: textStyle),
-              Builder(
-                builder: (context) => PopupMenuButton<VideoQuality>(
-                  initialValue: _quality,
-                  onSelected: (value) {
-                    _quality = value;
-                    (context as Element).markNeedsBuild();
-                  },
-                  itemBuilder: (context) => VideoQuality.values
-                      .map(
-                        (e) => PopupMenuItem(
-                          value: e,
-                          child: Text(e.desc),
-                        ),
-                      )
-                      .toList(),
-                  child: _buildQualityLabel(_quality.desc, theme),
-                ),
+              AppSelectField<VideoQuality>(
+                value: _quality,
+                label: '最高画质',
+                selectedLabel: _quality.desc,
+                width: 110,
+                menuWidth: 240,
+                options: [
+                  for (final quality in VideoQuality.values)
+                    (quality, quality.desc),
+                ],
+                onSelected: (value) {
+                  _quality = value;
+                  (context as Element).markNeedsBuild();
+                },
               ),
               if (kDebugMode || PlatformUtils.isMobile) ...[
                 const Spacer(),
@@ -158,23 +156,20 @@ class _DownloadPanelState extends State<DownloadPanel> {
             spacing: 16,
             children: [
               Text('音质', style: textStyle),
-              Builder(
-                builder: (context) => PopupMenuButton<AudioQuality>(
-                  initialValue: _audioQuality,
-                  onSelected: (value) {
-                    _audioQuality = value;
-                    (context as Element).markNeedsBuild();
-                  },
-                  itemBuilder: (context) => AudioQuality.values
-                      .map(
-                        (e) => PopupMenuItem(
-                          value: e,
-                          child: Text(e.desc),
-                        ),
-                      )
-                      .toList(),
-                  child: _buildQualityLabel(_audioQuality.desc, theme),
-                ),
+              AppSelectField<AudioQuality>(
+                value: _audioQuality,
+                label: '音质',
+                selectedLabel: _audioQuality.desc,
+                width: 110,
+                menuWidth: 220,
+                options: [
+                  for (final quality in AudioQuality.values)
+                    (quality, quality.desc),
+                ],
+                onSelected: (value) {
+                  _audioQuality = value;
+                  (context as Element).markNeedsBuild();
+                },
               ),
             ],
           ),
@@ -182,25 +177,6 @@ class _DownloadPanelState extends State<DownloadPanel> {
       ),
     );
   }
-
-  Widget _buildQualityLabel(String value, ThemeData theme) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          value,
-          style: const TextStyle(height: 1),
-          strutStyle: const StrutStyle(height: 1, leading: 0),
-        ),
-        Icon(
-          size: 18,
-          Icons.keyboard_arrow_down,
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ],
-    ),
-  );
 
   Widget _buildBody(ThemeData theme) {
     final episodes = widget.episodes;
