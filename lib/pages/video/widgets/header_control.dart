@@ -450,86 +450,93 @@ class HeaderControlState extends State<HeaderControl>
     showBottomSheet(
       (context, setState) {
         final theme = Theme.of(context);
+        final isPortrait =
+            MediaQuery.orientationOf(context) == Orientation.portrait;
         return Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
           child: Material(
             clipBehavior: Clip.hardEdge,
             color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.all(Radius.circular(12)),
-            child: CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: 45,
-                    child: GestureDetector(
-                      onTap: () => SmartDialog.showToast(
-                        '标灰画质需要bilibili会员（已是会员？请关闭无痕模式）；4k和杜比视界播放效果可能不佳',
-                      ),
-                      child: Row(
-                        spacing: 8,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Text('选择画质', style: titleStyle),
-                          Icon(
-                            Icons.info_outline,
-                            size: 16,
-                            color: theme.colorScheme.outline,
-                          ),
-                        ],
+            borderRadius: isPortrait
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            child: SafeArea(
+              top: false,
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: 45,
+                      child: GestureDetector(
+                        onTap: () => SmartDialog.showToast(
+                          '标灰画质需要bilibili会员（已是会员？请关闭无痕模式）；4k和杜比视界播放效果可能不佳',
+                        ),
+                        child: Row(
+                          spacing: 8,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('选择画质', style: titleStyle),
+                            Icon(
+                              Icons.info_outline,
+                              size: 16,
+                              color: theme.colorScheme.outline,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-                SliverList.builder(
-                  itemCount: videoFormat.length,
-                  itemBuilder: (context, index) {
-                    final item = videoFormat[index];
-                    final isCurr = currentVideoQa.code == item.quality;
-                    return ListTile(
-                      dense: true,
-                      onTap: () async {
-                        if (isCurr) {
-                          return;
-                        }
-                        Get.back();
-                        final int quality = item.quality!;
-                        final newQa = VideoQuality.fromCode(quality);
-                        videoDetailCtr
-                          ..plPlayerController.cacheVideoQa = newQa.code
-                          ..currentVideoQa.value = newQa
-                          ..updatePlayer();
+                  SliverList.builder(
+                    itemCount: videoFormat.length,
+                    itemBuilder: (context, index) {
+                      final item = videoFormat[index];
+                      final isCurr = currentVideoQa.code == item.quality;
+                      return ListTile(
+                        dense: true,
+                        onTap: () async {
+                          if (isCurr) {
+                            return;
+                          }
+                          Get.back();
+                          final int quality = item.quality!;
+                          final newQa = VideoQuality.fromCode(quality);
+                          videoDetailCtr
+                            ..plPlayerController.cacheVideoQa = newQa.code
+                            ..currentVideoQa.value = newQa
+                            ..updatePlayer();
 
-                        SmartDialog.showToast("画质已变为：${newQa.desc}");
+                          SmartDialog.showToast("画质已变为：${newQa.desc}");
 
-                        // update
-                        if (!plPlayerController.tempPlayerConf) {
-                          setting.put(
-                            await ConnectivityUtils.isWiFi
-                                ? SettingBoxKey.defaultVideoQa
-                                : SettingBoxKey.defaultVideoQaCellular,
-                            quality,
-                          );
-                        }
-                      },
-                      // 可能包含会员解锁画质
-                      enabled: availableQa.contains(item.quality),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                      ),
-                      title: Text(item.newDesc!),
-                      trailing: isCurr
-                          ? Icon(
-                              Icons.done,
-                              color: theme.colorScheme.primary,
-                            )
-                          : Text(
-                              item.format!,
-                              style: subTitleStyle,
-                            ),
-                    );
-                  },
-                ),
-              ],
+                          // update
+                          if (!plPlayerController.tempPlayerConf) {
+                            setting.put(
+                              await ConnectivityUtils.isWiFi
+                                  ? SettingBoxKey.defaultVideoQa
+                                  : SettingBoxKey.defaultVideoQaCellular,
+                              quality,
+                            );
+                          }
+                        },
+                        // 可能包含会员解锁画质
+                        enabled: availableQa.contains(item.quality),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                        ),
+                        title: Text(item.newDesc!),
+                        trailing: isCurr
+                            ? Icon(
+                                Icons.done,
+                                color: theme.colorScheme.primary,
+                              )
+                            : Text(
+                                item.format!,
+                                style: subTitleStyle,
+                              ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -653,6 +660,8 @@ class HeaderControlState extends State<HeaderControl>
       padding: () => isFullScreen ? const .only(bottom: 70) : .zero,
       (context, setState) {
         final theme = Theme.of(context);
+        final isPortrait =
+            MediaQuery.orientationOf(context) == Orientation.portrait;
 
         const EdgeInsets sliderPadding = .symmetric(vertical: 16);
 
@@ -716,157 +725,170 @@ class HeaderControlState extends State<HeaderControl>
         }
 
         return Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
           child: Material(
             clipBehavior: Clip.hardEdge,
             color: theme.colorScheme.surface,
-            borderRadius: const BorderRadius.all(Radius.circular(12)),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: SliderTheme(
-                data: sliderTheme,
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    const SizedBox(
-                      height: 45,
-                      child: Center(child: Text('字幕设置', style: titleStyle)),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '字体大小 ${(subtitleFontScale * 100).toStringAsFixed(1)}%',
+            borderRadius: isPortrait
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: SliderTheme(
+                  data: sliderTheme,
+                  child: ListView(
+                    padding: EdgeInsets.zero,
+                    children: [
+                      const SizedBox(
+                        height: 45,
+                        child: Center(child: Text('字幕设置', style: titleStyle)),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '字体大小 ${(subtitleFontScale * 100).toStringAsFixed(1)}%',
+                          ),
+                          resetBtn(theme, '100.0%', () => updateFontScale(1.0)),
+                        ],
+                      ),
+                      Padding(
+                        padding: sliderPadding,
+                        child: Slider(
+                          min: 0.5,
+                          max: 2.5,
+                          value: subtitleFontScale,
+                          divisions: 200,
+                          label:
+                              '${(subtitleFontScale * 100).toStringAsFixed(1)}%',
+                          onChanged: updateFontScale,
                         ),
-                        resetBtn(theme, '100.0%', () => updateFontScale(1.0)),
-                      ],
-                    ),
-                    Padding(
-                      padding: sliderPadding,
-                      child: Slider(
-                        min: 0.5,
-                        max: 2.5,
-                        value: subtitleFontScale,
-                        divisions: 200,
-                        label:
-                            '${(subtitleFontScale * 100).toStringAsFixed(1)}%',
-                        onChanged: updateFontScale,
                       ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '全屏字体大小 ${(subtitleFontScaleFS * 100).toStringAsFixed(1)}%',
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '全屏字体大小 ${(subtitleFontScaleFS * 100).toStringAsFixed(1)}%',
+                          ),
+                          resetBtn(
+                            theme,
+                            '150.0%',
+                            () => updateFontScaleFS(1.5),
+                          ),
+                        ],
+                      ),
+                      Padding(
+                        padding: sliderPadding,
+                        child: Slider(
+                          min: 0.5,
+                          max: 2.5,
+                          value: subtitleFontScaleFS,
+                          divisions: 200,
+                          label:
+                              '${(subtitleFontScaleFS * 100).toStringAsFixed(1)}%',
+                          onChanged: updateFontScaleFS,
                         ),
-                        resetBtn(theme, '150.0%', () => updateFontScaleFS(1.5)),
-                      ],
-                    ),
-                    Padding(
-                      padding: sliderPadding,
-                      child: Slider(
-                        min: 0.5,
-                        max: 2.5,
-                        value: subtitleFontScaleFS,
-                        divisions: 200,
-                        label:
-                            '${(subtitleFontScaleFS * 100).toStringAsFixed(1)}%',
-                        onChanged: updateFontScaleFS,
                       ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('字体粗细 ${subtitleFontWeight + 1}（可能无法精确调节）'),
-                        resetBtn(theme, 6, () => updateFontWeight(5)),
-                      ],
-                    ),
-                    Padding(
-                      padding: sliderPadding,
-                      child: Slider(
-                        min: 0,
-                        max: 8,
-                        value: subtitleFontWeight.toDouble(),
-                        divisions: 8,
-                        label: '${subtitleFontWeight + 1}',
-                        onChanged: updateFontWeight,
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('字体粗细 ${subtitleFontWeight + 1}（可能无法精确调节）'),
+                          resetBtn(theme, 6, () => updateFontWeight(5)),
+                        ],
                       ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('描边粗细 $subtitleStrokeWidth'),
-                        resetBtn(theme, 2.0, () => updateStrokeWidth(2.0)),
-                      ],
-                    ),
-                    Padding(
-                      padding: sliderPadding,
-                      child: Slider(
-                        min: 0,
-                        max: 5,
-                        value: subtitleStrokeWidth,
-                        divisions: 10,
-                        label: '$subtitleStrokeWidth',
-                        onChanged: updateStrokeWidth,
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('左右边距 $subtitlePaddingH'),
-                        resetBtn(theme, 24, () => updateHorizontalPadding(24)),
-                      ],
-                    ),
-                    Padding(
-                      padding: sliderPadding,
-                      child: Slider(
-                        min: 0,
-                        max: 100,
-                        value: subtitlePaddingH.toDouble(),
-                        divisions: 100,
-                        label: '$subtitlePaddingH',
-                        onChanged: updateHorizontalPadding,
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('底部边距 $subtitlePaddingB'),
-                        resetBtn(theme, 24, () => updateBottomPadding(24)),
-                      ],
-                    ),
-                    Padding(
-                      padding: sliderPadding,
-                      child: Slider(
-                        min: 0,
-                        max: 200,
-                        value: subtitlePaddingB.toDouble(),
-                        divisions: 200,
-                        label: '$subtitlePaddingB',
-                        onChanged: updateBottomPadding,
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          '背景不透明度 ${(subtitleBgOpacity * 100).toStringAsFixed(1)}%',
+                      Padding(
+                        padding: sliderPadding,
+                        child: Slider(
+                          min: 0,
+                          max: 8,
+                          value: subtitleFontWeight.toDouble(),
+                          divisions: 8,
+                          label: '${subtitleFontWeight + 1}',
+                          onChanged: updateFontWeight,
                         ),
-                        resetBtn(theme, '67%', () => updateOpacity(0.67)),
-                      ],
-                    ),
-                    Padding(
-                      padding: sliderPadding,
-                      child: Slider(
-                        min: 0,
-                        max: 1,
-                        divisions: 100,
-                        value: subtitleBgOpacity,
-                        onChanged: updateOpacity,
                       ),
-                    ),
-                  ],
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('描边粗细 $subtitleStrokeWidth'),
+                          resetBtn(theme, 2.0, () => updateStrokeWidth(2.0)),
+                        ],
+                      ),
+                      Padding(
+                        padding: sliderPadding,
+                        child: Slider(
+                          min: 0,
+                          max: 5,
+                          value: subtitleStrokeWidth,
+                          divisions: 10,
+                          label: '$subtitleStrokeWidth',
+                          onChanged: updateStrokeWidth,
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('左右边距 $subtitlePaddingH'),
+                          resetBtn(
+                            theme,
+                            24,
+                            () => updateHorizontalPadding(24),
+                          ),
+                        ],
+                      ),
+                      Padding(
+                        padding: sliderPadding,
+                        child: Slider(
+                          min: 0,
+                          max: 100,
+                          value: subtitlePaddingH.toDouble(),
+                          divisions: 100,
+                          label: '$subtitlePaddingH',
+                          onChanged: updateHorizontalPadding,
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('底部边距 $subtitlePaddingB'),
+                          resetBtn(theme, 24, () => updateBottomPadding(24)),
+                        ],
+                      ),
+                      Padding(
+                        padding: sliderPadding,
+                        child: Slider(
+                          min: 0,
+                          max: 200,
+                          value: subtitlePaddingB.toDouble(),
+                          divisions: 200,
+                          label: '$subtitlePaddingB',
+                          onChanged: updateBottomPadding,
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '背景不透明度 ${(subtitleBgOpacity * 100).toStringAsFixed(1)}%',
+                          ),
+                          resetBtn(theme, '67%', () => updateOpacity(0.67)),
+                        ],
+                      ),
+                      Padding(
+                        padding: sliderPadding,
+                        child: Slider(
+                          min: 0,
+                          max: 1,
+                          divisions: 100,
+                          value: subtitleBgOpacity,
+                          onChanged: updateOpacity,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -881,55 +903,62 @@ class HeaderControlState extends State<HeaderControl>
     if (ctr == null) return;
     showBottomSheet((context, setState) {
       final theme = Theme.of(context);
+      final isPortrait =
+          MediaQuery.orientationOf(context) == Orientation.portrait;
       return Container(
-        margin: const EdgeInsets.all(12),
+        margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
-          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          borderRadius: isPortrait
+              ? const BorderRadius.vertical(top: Radius.circular(12))
+              : BorderRadius.circular(12),
         ),
-        child: Column(
-          children: [
-            Container(
-              height: 45,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: theme.colorScheme.outline.withValues(alpha: 0.1),
-                  ),
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('弹幕列表'),
-                  iconButton(
-                    onPressed: () => setState(() {}),
-                    icon: const Icon(Icons.refresh),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Material(
-                type: .transparency,
-                clipBehavior: .hardEdge,
-                borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(12),
-                ),
-                child: CustomScrollView(
-                  slivers: [
-                    ?_buildDanmakuList(ctr.staticDanmaku.nonNulls.toList()),
-                    ?_buildDanmakuList(
-                      ctr.scrollDanmaku.expand((e) => e).toList(),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              Container(
+                height: 45,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: theme.colorScheme.outline.withValues(alpha: 0.1),
                     ),
-                    ?_buildDanmakuList(ctr.specialDanmaku.toList()),
-                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('弹幕列表'),
+                    iconButton(
+                      onPressed: () => setState(() {}),
+                      icon: const Icon(Icons.refresh),
+                    ),
                   ],
                 ),
               ),
-            ),
-          ],
+              Expanded(
+                child: Material(
+                  type: .transparency,
+                  clipBehavior: .hardEdge,
+                  borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(12),
+                  ),
+                  child: CustomScrollView(
+                    slivers: [
+                      ?_buildDanmakuList(ctr.staticDanmaku.nonNulls.toList()),
+                      ?_buildDanmakuList(
+                        ctr.scrollDanmaku.expand((e) => e).toList(),
+                      ),
+                      ?_buildDanmakuList(ctr.specialDanmaku.toList()),
+                      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     });

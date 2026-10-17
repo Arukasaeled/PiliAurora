@@ -249,104 +249,116 @@ class ShutdownTimerService {
     final child = ShutdownPanel(
       builder: (context, countdown, onCountdown, setState) {
         final theme = Theme.of(context);
+        final isPortrait =
+            MediaQuery.orientationOf(context) == Orientation.portrait;
         return Padding(
-          padding: const .all(12),
+          padding: const .fromLTRB(12, 12, 12, 0),
           child: Material(
             clipBehavior: .hardEdge,
             color: theme.colorScheme.surface,
-            borderRadius: const .all(.circular(12)),
-            child: ListView(
-              padding: const .symmetric(vertical: 14),
-              children: [
-                Stack(
-                  alignment: .center,
-                  clipBehavior: .none,
-                  children: [
-                    const Text('定时关闭', style: titleStyle),
-                    Positioned(top: 0, bottom: 0, right: 16, child: countdown),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                ...{...scheduleTimeMinutes, _durationInMinutes}
-                    .sorted(Comparable.compare)
-                    .map(
-                      (minutes) => ListTile(
-                        dense: true,
-                        onTap: () {
-                          Navigator.pop(context);
-                          startShutdownTimer(minutes);
-                        },
-                        title: Text(
-                          switch (minutes) {
-                            0 => '禁用',
-                            _ => _format(minutes),
-                          },
-                          style: titleStyle,
-                        ),
-                        trailing: _durationInMinutes == minutes
-                            ? Icon(
-                                size: 20,
-                                Icons.done,
-                                color: theme.colorScheme.primary,
-                              )
-                            : null,
+            borderRadius: isPortrait
+                ? const BorderRadius.vertical(top: Radius.circular(12))
+                : BorderRadius.circular(12),
+            child: SafeArea(
+              top: false,
+              child: ListView(
+                padding: const .symmetric(vertical: 14),
+                children: [
+                  Stack(
+                    alignment: .center,
+                    clipBehavior: .none,
+                    children: [
+                      const Text('定时关闭', style: titleStyle),
+                      Positioned(
+                        top: 0,
+                        bottom: 0,
+                        right: 16,
+                        child: countdown,
                       ),
-                    ),
-                ListTile(
-                  dense: true,
-                  onTap: () =>
-                      _showTimePickerDialog(context, onCountdown, setState),
-                  title: const Text('自定义', style: titleStyle),
-                ),
-                if (!isLive) ...[
-                  Builder(
-                    builder: (context) {
-                      void onChanged([_]) {
-                        _waitUntilCompleted = !_waitUntilCompleted;
-                        (context as Element).markNeedsBuild();
-                      }
-
-                      return ListTile(
-                        dense: true,
-                        onTap: onChanged,
-                        title: const Text('额外等待视频播放完毕', style: titleStyle),
-                        trailing: Transform.scale(
-                          alignment: .centerRight,
-                          scale: 0.8,
-                          child: Switch(
-                            value: _waitUntilCompleted,
-                            onChanged: onChanged,
-                          ),
-                        ),
-                      );
-                    },
+                    ],
                   ),
-                ],
-                const SizedBox(height: 5),
-                Padding(
-                  padding: const .only(left: 18),
-                  child: Builder(
-                    builder: (context) {
-                      return Row(
-                        spacing: 12,
-                        children: [
-                          const Text('倒计时结束:', style: titleStyle),
-                          ..._ShutdownType.values.map(
-                            (e) => ActionRowLineItem(
-                              onTap: () {
-                                _shutdownType = e;
-                                (context as Element).markNeedsBuild();
-                              },
-                              text: ' ${e.label} ',
-                              selectStatus: _shutdownType == e,
+                  const SizedBox(height: 10),
+                  ...{...scheduleTimeMinutes, _durationInMinutes}
+                      .sorted(Comparable.compare)
+                      .map(
+                        (minutes) => ListTile(
+                          dense: true,
+                          onTap: () {
+                            Navigator.pop(context);
+                            startShutdownTimer(minutes);
+                          },
+                          title: Text(
+                            switch (minutes) {
+                              0 => '禁用',
+                              _ => _format(minutes),
+                            },
+                            style: titleStyle,
+                          ),
+                          trailing: _durationInMinutes == minutes
+                              ? Icon(
+                                  size: 20,
+                                  Icons.done,
+                                  color: theme.colorScheme.primary,
+                                )
+                              : null,
+                        ),
+                      ),
+                  ListTile(
+                    dense: true,
+                    onTap: () =>
+                        _showTimePickerDialog(context, onCountdown, setState),
+                    title: const Text('自定义', style: titleStyle),
+                  ),
+                  if (!isLive) ...[
+                    Builder(
+                      builder: (context) {
+                        void onChanged([_]) {
+                          _waitUntilCompleted = !_waitUntilCompleted;
+                          (context as Element).markNeedsBuild();
+                        }
+
+                        return ListTile(
+                          dense: true,
+                          onTap: onChanged,
+                          title: const Text('额外等待视频播放完毕', style: titleStyle),
+                          trailing: Transform.scale(
+                            alignment: .centerRight,
+                            scale: 0.8,
+                            child: Switch(
+                              value: _waitUntilCompleted,
+                              onChanged: onChanged,
                             ),
                           ),
-                        ],
-                      );
-                    },
+                        );
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 5),
+                  Padding(
+                    padding: const .only(left: 18),
+                    child: Builder(
+                      builder: (context) {
+                        return Row(
+                          spacing: 12,
+                          children: [
+                            const Text('倒计时结束:', style: titleStyle),
+                            ..._ShutdownType.values.map(
+                              (e) => ActionRowLineItem(
+                                onTap: () {
+                                  _shutdownType = e;
+                                  (context as Element).markNeedsBuild();
+                                },
+                                text: ' ${e.label} ',
+                                selectStatus: _shutdownType == e,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );

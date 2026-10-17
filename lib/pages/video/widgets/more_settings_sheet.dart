@@ -96,7 +96,10 @@ Future<void> showVideoMoreSettings(
       await PageUtils.showVideoBottomSheet(
         context,
         maxWidth: 512,
-        child: Padding(padding: const EdgeInsets.all(8), child: panel),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+          child: panel,
+        ),
       );
     }
   } finally {
@@ -491,133 +494,140 @@ class _VideoMoreSettingsSheetState extends State<VideoMoreSettingsSheet> {
   Widget build(BuildContext context) {
     final colors = ColorScheme.of(context);
     final player = controller.plPlayerController;
+    final isPortrait =
+        MediaQuery.orientationOf(context) == Orientation.portrait;
     return Material(
       color: colors.surface,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: isPortrait
+          ? const BorderRadius.vertical(top: Radius.circular(12))
+          : BorderRadius.circular(12),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          SizedBox(
-            height: 48,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 16, right: 4),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      '更多设置',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            SizedBox(
+              height: 48,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 16, right: 4),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '更多设置',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, size: 20),
-                  ),
-                ],
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close, size: 20),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          Expanded(
-            child: Scrollbar(
-              controller: _scrollController,
-              thumbVisibility: PlatformUtils.isDesktop,
-              child: Padding(
-                // 始终保留滚动条宽度，展开高级设置时控件列保持原位。
-                padding: const EdgeInsets.only(right: 8),
-                child: Obx(() {
-                  final audioAvailable = controller.isFileSource
-                      ? player.dataSource is FileSource &&
-                            !(player.dataSource as FileSource).isMp4
-                      : controller.audioUrl?.isNotEmpty == true;
-                  return ListView(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.only(bottom: 12),
-                    children: [
-                      if (PlatformUtils.isDesktop)
-                        _switch(
-                          Icons.pause_circle_outline,
-                          '最小化时暂停',
-                          player.pauseOnMinimize.value,
-                          (value) {
-                            player.pauseOnMinimize.value = value;
-                            if (!player.tempPlayerConf) {
-                              GStorage.setting.put(
-                                SettingBoxKey.pauseOnMinimize,
-                                value,
-                              );
-                              if (Get.isRegistered<MainController>()) {
-                                Get.find<MainController>().pauseOnMinimize =
-                                    value;
+            Expanded(
+              child: Scrollbar(
+                controller: _scrollController,
+                thumbVisibility: PlatformUtils.isDesktop,
+                child: Padding(
+                  // 始终保留滚动条宽度，展开高级设置时控件列保持原位。
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Obx(() {
+                    final audioAvailable = controller.isFileSource
+                        ? player.dataSource is FileSource &&
+                              !(player.dataSource as FileSource).isMp4
+                        : controller.audioUrl?.isNotEmpty == true;
+                    return ListView(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.only(bottom: 12),
+                      children: [
+                        if (PlatformUtils.isDesktop)
+                          _switch(
+                            Icons.pause_circle_outline,
+                            '最小化时暂停',
+                            player.pauseOnMinimize.value,
+                            (value) {
+                              player.pauseOnMinimize.value = value;
+                              if (!player.tempPlayerConf) {
+                                GStorage.setting.put(
+                                  SettingBoxKey.pauseOnMinimize,
+                                  value,
+                                );
+                                if (Get.isRegistered<MainController>()) {
+                                  Get.find<MainController>().pauseOnMinimize =
+                                      value;
+                                }
                               }
-                            }
+                            },
+                          ),
+                        if (PlatformUtils.isMobile)
+                          _switch(
+                            Icons.play_circle_outline,
+                            '后台播放',
+                            player.continuePlayInBackground.value,
+                            (_) => player.setContinuePlayInBackground(),
+                          ),
+                        _switch(
+                          Icons.headphones_outlined,
+                          '仅播放音频',
+                          player.onlyPlayAudio.value,
+                          audioAvailable
+                              ? (value) => unawaited(player.setOnlyAudio(value))
+                              : null,
+                        ),
+                        if (Platform.isAndroid)
+                          _switch(
+                            Icons.picture_in_picture_outlined,
+                            '自动画中画',
+                            player.autoPipEnabled.value,
+                            player.setAutoPiP,
+                          ),
+                        const Divider(height: 12),
+                        _timer(),
+                        _select<PlayRepeat>(
+                          Icons.repeat,
+                          '播放顺序',
+                          value: player.playRepeat,
+                          selectedLabel: player.playRepeat.label,
+                          options: [
+                            for (final repeat in PlayRepeat.values)
+                              (repeat, repeat.label),
+                          ],
+                          onSelected: (value) {
+                            player.setPlayRepeat(value);
+                            setState(() {});
                           },
                         ),
-                      if (PlatformUtils.isMobile)
-                        _switch(
-                          Icons.play_circle_outline,
-                          '后台播放',
-                          player.continuePlayInBackground.value,
-                          (_) => player.setContinuePlayInBackground(),
+                        _contentActions(),
+                        const Divider(height: 12),
+                        ListTile(
+                          dense: true,
+                          minTileHeight: 44,
+                          leading: const Icon(Icons.tune, size: 20),
+                          title: const Text(
+                            '高级设置',
+                            style: TextStyle(fontSize: 13),
+                          ),
+                          trailing: Icon(
+                            _advanced ? Icons.expand_less : Icons.expand_more,
+                            size: 20,
+                          ),
+                          onTap: () => setState(() => _advanced = !_advanced),
                         ),
-                      _switch(
-                        Icons.headphones_outlined,
-                        '仅播放音频',
-                        player.onlyPlayAudio.value,
-                        audioAvailable
-                            ? (value) => unawaited(player.setOnlyAudio(value))
-                            : null,
-                      ),
-                      if (Platform.isAndroid)
-                        _switch(
-                          Icons.picture_in_picture_outlined,
-                          '自动画中画',
-                          player.autoPipEnabled.value,
-                          player.setAutoPiP,
-                        ),
-                      const Divider(height: 12),
-                      _timer(),
-                      _select<PlayRepeat>(
-                        Icons.repeat,
-                        '播放顺序',
-                        value: player.playRepeat,
-                        selectedLabel: player.playRepeat.label,
-                        options: [
-                          for (final repeat in PlayRepeat.values)
-                            (repeat, repeat.label),
-                        ],
-                        onSelected: (value) {
-                          player.setPlayRepeat(value);
-                          setState(() {});
-                        },
-                      ),
-                      _contentActions(),
-                      const Divider(height: 12),
-                      ListTile(
-                        dense: true,
-                        minTileHeight: 44,
-                        leading: const Icon(Icons.tune, size: 20),
-                        title: const Text(
-                          '高级设置',
-                          style: TextStyle(fontSize: 13),
-                        ),
-                        trailing: Icon(
-                          _advanced ? Icons.expand_less : Icons.expand_more,
-                          size: 20,
-                        ),
-                        onTap: () => setState(() => _advanced = !_advanced),
-                      ),
-                      if (_advanced) ..._advancedSettings(),
-                    ],
-                  );
-                }),
+                        if (_advanced) ..._advancedSettings(),
+                      ],
+                    );
+                  }),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
