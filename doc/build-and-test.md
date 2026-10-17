@@ -39,6 +39,17 @@ pwsh -File tool/build.ps1 -Platform android -Mode debug
 
 Android 默认生成包含所有 ABI 的通用 APK。可使用 `-Abi arm64-v8a`、`-Abi armeabi-v7a` 或 `-Abi x86_64` 只打包指定架构；省略参数时保留通用 APK 行为。
 
+## 发布构建与附件
+
+本地发布验证分别执行：
+
+```powershell
+pwsh -File tool/build.ps1 -Platform android -Mode release
+pwsh -File tool/build.ps1 -Platform windows -Mode release
+```
+
+Android 通用 APK 位于 `build/app/outputs/flutter-apk/app-release.apk`，Windows 运行目录位于 `build/windows/x64/runner/Release/`。正式 GitHub Release 由 `.github/workflows/build.yml` 手动触发并传入 `vX.Y.Z`：Android 生成三个分 ABI APK，Windows 生成 x64 便携包和安装程序。版本名与构建号取自 `pubspec.yaml`，工作流会用 tag 重写本次构建的版本和 `pili_release.json`。
+
 ## 静态检查与测试
 
 ```powershell

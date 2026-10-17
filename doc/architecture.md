@@ -60,6 +60,42 @@ flowchart LR
 
 部分页面 controller 直接调用 `http/`，另一些经由 `services/`。`models/` 同时包含远端响应和页面间共享对象，用途比数据库实体更宽。
 
+## 播放统一架构
+
+点播视频和直播共用一套播放协议。页面只拥有业务计划和页面副作用；播放状态、原生操作与输出资源分别由 owner、会话和运行时持有。
+
+```mermaid
+flowchart LR
+    Page[视频页 / 直播页] --> Owner[PlaybackOwner]
+    Owner --> Session[PlaybackSession]
+    Session --> Runtime[NativePlaybackRuntime]
+    Runtime --> Output[media_kit_video<br/>Android Surface / Windows 纹理]
+    Session --> Snapshot[PlaybackSnapshot]
+    Snapshot --> Controller[PlPlayerController]
+    Controller --> UI[播放器控件]
+    Page --> Controller
+```
+
+| 层 | 主要入口 | 职责 | 不应承担 |
+| --- | --- | --- | --- |
+| 页面 | `pages/video/`、`pages/live_room/` | 生成业务内容键，解析地址和媒体候选，装配 `PlaybackPlan`，处理字幕、历史和弹幕等页面副作用 | 直接调度原生加载、把 URL 当作内容身份 |
+| 页面所有者 | `PlaybackOwner` | 表达页面控制权，提交查询、加载和控制命令，持有页面 inhibitor 与 keepalive 租约 | 跨页面保存原生资源 |
+| 播放会话 | `PlaybackSession` | 接受请求代次，提交不可变计划，合并播放意图与配置，执行来源故障切换、命令串行化和状态快照发布 | 构建控件、发起业务 HTTP 请求 |
+| 原生运行时 | `NativePlaybackRuntime` | 创建和释放 Player/VideoController，校验原生事件身份，准备输出、首帧和几何，串行执行已接受的原生操作 | 判断页面业务归属 |
+| UI 门面 | `PlPlayerController` | 把快照投影到现有控件状态，转发页面命令，保留播放器外观与业务适配 | 成为播放状态或原生输出的第二所有者 |
+| 平台输出 | `media_kit_video` 及 `third_party/` 适配 | 管理 Surface/纹理、输出代次、尺寸提交、帧交接和释放回执 | 推断视频业务身份 |
+
+关键约束：
+
+- `PlaybackPlan` 冻结业务内容键、来源候选索引、时间线、位置和已捕获配置。内容键表示视频、分集或直播间，来源地址只表示当前候选。
+- 查询绑定 requestId 与 owner；加载和命令继续绑定 loadId。失去控制权的 owner 不能提交新操作；已发出的原生操作可以完成，但返回值只有代次仍匹配时才进入规范状态。
+- `PlaybackSnapshot` 区分用户意图、原生实际状态和 inhibitor。命令成功只表示原生写入被接受，不能据此推断播放器实际已播放、暂停或缓冲。
+- 原生事件、输出挂载和释放回执都必须匹配当前 runtimeId、loadId 与 outputEpoch。迟到的结果不能覆盖新加载或新输出。
+- 页面关闭先停止接受命令，再排空已接受操作、卸载媒体、释放输出并销毁 Player。跨控制器运行时槽等待 `Player.released` 后才允许下一次初始化。
+- Windows 独立播放窗口拥有自己的 Flutter 进程、Player、输出和缓存；主窗口只负责启动、排列、声音切换、设置快照和离线进度回写。
+
+统一协议的回归入口见 `test/plugin/pl_player/playback/`，其中 `playback_session_test.dart` 覆盖代次、意图、配置和故障切换，`player_architecture_acceptance_test.dart` 覆盖 deadline、owner 与资源释放。设备侧加载、暂停、首帧和释放协议见 [`session_device_acceptance.dart`](../tool/probes/playback/session_device_acceptance.dart)、[`paused_output_attach.dart`](../tool/probes/playback/paused_output_attach.dart) 和 [`session_paused_load.dart`](../tool/probes/playback/session_paused_load.dart)。
+
 ## 关键边界与约束
 
 - `main.dart` 只进入 `bootstrapApplication()`。启动依赖顺序和服务装配集中在 `app/bootstrap.dart`；平台初始化在 `app/platform_setup.dart`。

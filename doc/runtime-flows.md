@@ -118,6 +118,17 @@ sequenceDiagram
 
 旧 owner 的查询和命令在失去控制权时失效。会话在每次 await 和原生返回后核对请求代次；已经发出的原生操作保留在运行时串行链中。快速切源复用原生资源。关闭时先停止接受新命令，再按有界时限执行卸载、输出释放和 Player dispose；资源槽只有在 `Player.released` 后才放开，避免旧运行时和新运行时同时占用原生播放器。
 
+### 原生加载、首帧与释放
+
+1. 会话接受 load 后冻结计划并分配 loadId；运行时初始化等待资源槽，再用同一个输出代次创建 Player 和 VideoController。
+2. Android 在 `on_preloaded` 阶段读取唯一视频轨并准备 Surface，使 Surface 在解码器创建前可用；FILE_LOADED 继续核对实际选轨、几何、PAR 和旋转。无法复用预挂载输出时，才进入加载后的受控挂接回退。
+3. Windows 在输出线程创建 render context 和 ANGLE 资源，按目标显示器完成初始尺寸提交。独立播放窗口收到稳定纹理后才交接声音并结束窗口启动等待。
+4. 原生文件加载和输出准备完成后，会话进入 ready；页面加载过渡仍等待实际视频帧呈现，纯音频或明确无视频的媒体走无纹理路径。
+5. 输出就绪前出现 EOF、断流或无效几何时，加载按对应类别及时失败。直播几何等待有 5 秒上限，且不能超过请求剩余预算。
+6. shutdown 先停止接受新命令，再排空已接受操作、卸载文件、解除 VO/wid、等待原生输出释放回执并销毁 Player。运行时 `released` 完成后才释放跨控制器资源槽。
+
+加载阶段、输出证据和释放耗时可从播放器诊断的 `runtime.initialize.*`、`media.output.preloaded`、`media.startup.failed` 与 `runtime.shutdown.*` 区分。首帧出现、纹理像素、MediaCodec/GPU 和音频输出仍需目标设备验证。
+
 实现见 [`playback_session.dart`](../lib/plugin/pl_player/playback/playback_session.dart)、[`native_playback_runtime.dart`](../lib/plugin/pl_player/playback/native_playback_runtime.dart) 和 [`playback_source.dart`](../lib/pages/video/playback_source.dart)。
 
 ### 网络错误恢复
