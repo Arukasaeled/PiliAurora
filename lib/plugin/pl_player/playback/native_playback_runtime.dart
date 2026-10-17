@@ -10,6 +10,7 @@ import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_runtime_slot.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/video_frame_timings.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_media_source.dart';
 import 'package:pili_aurora/services/android_video_output_limit.dart';
@@ -44,9 +45,11 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       _activeBinding != null &&
       _player!.state.width > 0;
 
-  final ValueNotifier<List<int>> videoFrameTimings = ValueNotifier(
-    const [],
+  final _frameTimings = PlaybackVideoFrameTimings(
+    useRequestTimings: Platform.isAndroid,
   );
+  ValueNotifier<List<int>> get videoFrameTimings => _frameTimings.frames;
+  ValueListenable<bool> get videoFramePresented => _frameTimings.presented;
   final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier(false);
   final StreamController<PlaybackRuntimeEvent> _events =
       StreamController<PlaybackRuntimeEvent>.broadcast(sync: true);
@@ -80,9 +83,6 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   int _outputEpoch = 0;
   int _configRevision = 0;
   String _appliedShaderList = '';
-  int _videoFrameBatches = 0;
-  int _videoFrameSamples = 0;
-  int? _lastVideoFrame;
   int _lastBatchId = 0;
   bool _shutdownRequested = false;
   bool _nativeLifecycleUnknown = false;
@@ -107,12 +107,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       _videoControllerListenable;
   PlayerDiagnostics? get diagnostics => _diagnostics;
 
-  Map<String, Object?> get videoFrameDiagnostics => {
-    'nativeFrameBatches': _videoFrameBatches,
-    'nativeFrameSamples': _videoFrameSamples,
-    if (_lastVideoFrame case final stamp?)
-      'nativeFrameAgeUs': Timeline.now - stamp,
-  };
+  Map<String, Object?> get videoFrameDiagnostics =>
+      _frameTimings.diagnostics(Timeline.now);
 
   @override
   Future<PlaybackRuntimeLoadResult> load(
@@ -417,6 +413,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       });
       _activeNow = context.monotonicNow;
       _resetHealthEvidence();
+      _frameTimings.beginLoad();
 
       player
         ..setMediaHeader(
@@ -831,14 +828,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   }
 
   void _recordLegacyFrameTimings(List<int> frames) {
-    if (frames.isNotEmpty) {
-      _videoFrameBatches++;
-      _videoFrameSamples += frames.length;
-      _lastVideoFrame = frames.last;
-    } else {
-      _lastVideoFrame = null;
-    }
-    videoFrameTimings.value = List.unmodifiable(frames);
+    _frameTimings.recordRequests(frames);
   }
 
   Future<void> _handleLifecycleHook(
@@ -1464,15 +1454,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         progress.consumedAtMonotonicUs.isEmpty) {
       return;
     }
-    final samples = progress.consumedAtMonotonicUs;
-    final last = samples.reduce((left, right) => left > right ? left : right);
-    final previous = _lastVideoFrame;
-    if (previous != null && last <= previous) return;
-    _lastVideoFrame = last;
-    _videoFrameBatches++;
-    _videoFrameSamples += samples.length;
+    if (!_frameTimings.recordConsumed(progress.consumedAtMonotonicUs)) return;
     _lastVideoFrameConsumed = _activeNow();
-    videoFrameTimings.value = List.unmodifiable(samples);
     _scheduleHealthExpiry();
     _emitActual(binding.loadId);
   }
@@ -1588,7 +1571,6 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     _lastAudioPtsAdvance = null;
     _lastVideoFrameAdvance = null;
     _lastVideoFrameConsumed = null;
-    _lastVideoFrame = null;
     _lastVideoFrameNumber = null;
     _recordLegacyFrameTimings(const []);
     if (!keepCapabilities) {
@@ -1834,9 +1816,9 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     }
     _subscriptions.clear();
     if (!_events.isClosed) unawaited(_events.close());
-    videoFrameTimings.value = const [];
+    _frameTimings.clearPhase();
     videoDisplaySyncActive.value = false;
-    videoFrameTimings.dispose();
+    _frameTimings.dispose();
     videoDisplaySyncActive.dispose();
     _videoControllerListenable.dispose();
   }

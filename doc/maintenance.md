@@ -24,6 +24,8 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 
 播放器快照的 `appLifecycle` 记录采样时的应用生命周期。性能记录的 `route` 跟踪当前页面，弹窗和菜单沿用下方页面；旧版记录会将未命名弹窗写为 `/`，因此该值不能单独证明用户已返回首页。系统后台策略由播放会话持有，覆盖加载、切换页面和后台媒体租约存续期间。
 
+Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`consumedFrameBatches/consumedFrameSamples` 单独统计带当前输出 token 的纹理消费。弹幕相位使用请求时间，消费时间用于首帧与健康证据；两路时间不可混入同一个相位学习器。Windows 沿用输出消费批次作为调度来源。
+
 设备侧可运行[Android 帧时间采集](../tool/probes/README.md#android-帧时间采集)，明确指定设备和包名。采集结果与应用诊断分别保留时钟域，结合相同复现窗口检查；SurfaceFlinger 图层、Android gfxinfo、Flutter UI 和 Scene 使用各自统计口径。
 
 ### 直播
