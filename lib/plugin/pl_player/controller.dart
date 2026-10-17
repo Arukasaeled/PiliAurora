@@ -172,7 +172,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   late final tryLook = !Accounts.get(AccountType.video).isLogin && Pref.p1080;
 
   /// 兼容仍需读取文件元数据的旧调用方；执行和候选选择只读当前计划快照。
-  DataSource get dataSource => _currentPlan!.source.toDataSource();
+  DataSource get dataSource => currentPlaybackPlan!.source.toDataSource();
 
   Timer? _timer;
   StreamSubscription? _subForSeek;
@@ -860,7 +860,12 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   bool get processing => _session.isLoading;
   String? get currentPlaybackContentKey => _currentPlan?.contentKey;
   PlaybackPlan? get currentPlaybackPlan {
-    final plan = _currentPlan;
+    final loaded = _session.currentPlan;
+    final plan =
+        _session.currentSnapshot.phase == PlaybackPhase.ready &&
+            loaded?.contentKey == _currentPlan?.contentKey
+        ? loaded
+        : _currentPlan;
     if (plan == null) return null;
     return plan.withConfiguration(
       _session.currentSnapshot.configuration.desired,

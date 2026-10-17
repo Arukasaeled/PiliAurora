@@ -110,6 +110,7 @@ class PlaybackSession {
       _phase == PlaybackPhase.closing;
   bool get isDisposed => _disposed || _closingRequested;
   PlaybackSnapshot get currentSnapshot => _snapshot;
+  PlaybackPlan? get currentPlan => _currentPlan;
   Stream<PlaybackSessionTrace> get trace => _traceController.stream;
   Future<void> get drained => _operations.drained;
 
@@ -589,6 +590,31 @@ class PlaybackSession {
         plan = plan.withConfiguration(desired);
         // 配置在本次加载期间变化时，以相同结构协议重新加载最新完整计划。
         continue;
+      }
+      // 直播预期包含画面；已确认无视频轨时直接轮换候选，避免等待纯音频流 EOF。
+      if (plan.timeline.kind == PlaybackTimelineKind.live &&
+          !plan.configuration.audioOnly &&
+          result.output.strategy == PlaybackOutputStrategy.noVideo) {
+        final next = plan.source.advanceCandidate();
+        if (next != null) {
+          _emitTrace('load.missing-video', {
+            'loadId': thisLoadId,
+            'candidate': plan.source.candidateIndex,
+          });
+          plan = plan.withSource(next);
+          continue;
+        }
+        return PlaybackRuntimeLoadResult(
+          loaded: false,
+          output: result.output,
+          failure: const PlaybackFailure(
+            category: PlaybackFailureCategory.source,
+            operation: 'validate-live-video',
+            stage: PlaybackStage.outputPreparing,
+            recoverable: false,
+            cause: '直播候选均未提供视频轨。',
+          ),
+        );
       }
       if (!context.isCurrent()) throw const _PlaybackSuperseded();
       return result;

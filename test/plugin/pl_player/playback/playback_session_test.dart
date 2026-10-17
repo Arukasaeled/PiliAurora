@@ -6,6 +6,118 @@ import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 
 void main() {
+  test('直播候选确认无视频轨后立即尝试下一源，保留请求和播放意图', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    runtime.onLoad = (plan, context, index) async =>
+        index == 0 ? _audioLoaded(context) : _loaded(context, plan);
+    final result = await owner.load(
+      _plan(
+        'live',
+        kind: PlaybackTimelineKind.live,
+        candidates: [
+          'https://example.test/audio.flv',
+          'https://example.test/video.flv',
+        ],
+      ),
+      start: PlaybackStartPolicy.play,
+    );
+    expect(result.outcome, LoadOutcome.ready);
+    expect(runtime.loadedPlans.map((p) => p.source.videoIndex), [0, 1]);
+    expect(runtime.playCalls, [true]);
+    expect(session.currentSnapshot.requestId, 1);
+    expect(session.currentSnapshot.loadId, 2);
+    expect(session.currentPlan?.source.videoIndex, 1);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('直播全部候选无视频轨时失败并停止重试', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    runtime.onLoad = (plan, context, index) async => _audioLoaded(context);
+    final result = await owner.load(
+      _plan(
+        'live',
+        kind: PlaybackTimelineKind.live,
+        candidates: [
+          'https://example.test/one.flv',
+          'https://example.test/two.flv',
+        ],
+      ),
+    );
+    expect(result.outcome, LoadOutcome.failed);
+    expect(result.failure?.operation, 'validate-live-video');
+    expect(runtime.loadedPlans, hasLength(2));
+    expect(runtime.playCalls, isEmpty);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('直播轮换候选期间的暂停与新媒体请求仍优先生效', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final secondStarted = Completer<void>();
+    final secondFinished = Completer<void>();
+    runtime.onLoad = (plan, context, index) async {
+      if (index == 0) return _audioLoaded(context);
+      if (index == 1) {
+        secondStarted.complete();
+        await secondFinished.future;
+      }
+      return _loaded(context, plan);
+    };
+    final live = owner.load(
+      _plan(
+        'live',
+        kind: PlaybackTimelineKind.live,
+        candidates: [
+          'https://example.test/one.flv',
+          'https://example.test/two.flv',
+        ],
+      ),
+      start: PlaybackStartPolicy.play,
+    );
+    await secondStarted.future;
+    await owner.setPlaying(false);
+    final latest = owner.load(
+      _plan('latest'),
+      start: PlaybackStartPolicy.preserve,
+    );
+    expect((await live).outcome, LoadOutcome.superseded);
+    secondFinished.complete();
+    expect((await latest).outcome, LoadOutcome.ready);
+    expect(session.currentPlan?.contentKey, 'latest');
+    expect(runtime.playCalls, [false]);
+    owner.close();
+    await runtime.released;
+  });
+
+  for (final live in [false, true]) {
+    test('允许${live ? '显式纯音频直播' : '纯音频点播'}的无视频输出', () async {
+      final runtime = _FakeRuntime();
+      final session = PlaybackSession(runtime: runtime);
+      final owner = session.attach();
+      runtime.onLoad = (plan, context, index) async => _audioLoaded(context);
+      final result = await owner.load(
+        _plan(
+          'audio',
+          kind: live
+              ? PlaybackTimelineKind.live
+              : PlaybackTimelineKind.onDemand,
+          audioOnly: live,
+        ),
+      );
+      expect(result.outcome, LoadOutcome.ready);
+      expect(runtime.loadedPlans, hasLength(1));
+      owner.close();
+      await runtime.released;
+    });
+  }
+
   test('查询成功后业务回写仍属于当前媒体，下一次加载使其失效', () async {
     var now = Duration.zero;
     final runtime = _FakeRuntime();
@@ -540,12 +652,15 @@ PlaybackPlan _plan(
   String key, {
   PlaybackSeekPolicy seekPolicy = PlaybackSeekPolicy.allowed,
   PlaybackTimelineKind kind = PlaybackTimelineKind.onDemand,
+  List<String>? candidates,
+  bool audioOnly = false,
 }) => PlaybackPlan(
   contentKey: key,
   source: PlaybackSourceSnapshot.fromDataSource(
     NetworkSource(
-      videoSource: 'https://example.test/$key.mp4',
+      videoSource: candidates?.first ?? 'https://example.test/$key.mp4',
       audioSource: null,
+      videoCandidates: candidates ?? const [],
     ),
   ),
   timeline: PlaybackTimeline(
@@ -555,8 +670,20 @@ PlaybackPlan _plan(
         ? null
         : const Duration(seconds: 10),
   ),
-  configuration: PlaybackConfiguration(),
+  configuration: PlaybackConfiguration(audioOnly: audioOnly),
 );
+
+PlaybackRuntimeLoadResult _audioLoaded(PlaybackExecutionContext context) =>
+    PlaybackRuntimeLoadResult(
+      loaded: true,
+      output: PlaybackOutputPreparation(
+        strategy: PlaybackOutputStrategy.noVideo,
+        evidence: 'native-track-list-no-video',
+        outputEpoch: context.loadId,
+        hasVideo: false,
+      ),
+      capabilities: const PlaybackCapabilities(hasVideo: false, hasAudio: true),
+    );
 
 PlaybackRuntimeLoadResult _loaded(
   PlaybackExecutionContext context,
