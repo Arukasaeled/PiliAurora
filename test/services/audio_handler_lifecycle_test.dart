@@ -75,6 +75,26 @@ void main() {
     expect(handler.playbackState.value.controls[1].action, MediaAction.play);
   });
 
+  test('媒体尚未准备完成时发布加载状态', () {
+    final handler = VideoPlayerServiceHandler()..enableBackgroundPlay = true;
+    addTearDown(handler.clear);
+    handler
+      ..onVideoDetailChange(Part(part: 'current'), 1, 'current')
+      ..onUpdateState(
+        PlayerStatus.paused,
+        false,
+        false,
+        position: Duration.zero,
+        speed: 1,
+        loading: true,
+      );
+    expect(handler.playbackState.value.playing, isFalse);
+    expect(
+      handler.playbackState.value.processingState,
+      AudioProcessingState.loading,
+    );
+  });
+
   test('禁用时缓存当前媒体和状态，开启后立即发布并排除已退出页面', () {
     final handler = VideoPlayerServiceHandler()..enableBackgroundPlay = false;
     addTearDown(handler.clear);

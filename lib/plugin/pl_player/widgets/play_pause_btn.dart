@@ -1,5 +1,7 @@
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/models/data_status.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
+import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
 class PlayOrPauseButton extends StatefulWidget {
@@ -35,6 +37,7 @@ class PlayOrPauseButtonState extends State<PlayOrPauseButton>
     } else {
       controller.reverse();
     }
+    if (mounted) setState(() {});
   }
 
   @override
@@ -52,15 +55,26 @@ class PlayOrPauseButtonState extends State<PlayOrPauseButton>
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.plPlayerController.onDoubleTapCenter,
-        child: Center(
-          child: AnimatedIcon(
-            semanticLabel: widget.plPlayerController.playerStatus.isPlaying
-                ? '暂停'
-                : '播放',
-            progress: controller,
-            icon: AnimatedIcons.play_pause,
-            color: Colors.white,
-            size: 20,
+        child: Obx(
+          () => Center(
+            child: widget.plPlayerController.dataStatus.loading
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : AnimatedIcon(
+                    semanticLabel:
+                        widget.plPlayerController.playerStatus.isPlaying
+                        ? '暂停'
+                        : '播放',
+                    progress: controller,
+                    icon: AnimatedIcons.play_pause,
+                    color: Colors.white,
+                    size: 20,
+                  ),
           ),
         ),
       ),

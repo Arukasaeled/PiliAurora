@@ -41,6 +41,7 @@ typedef _StatusConfig = (
   bool isBuffering,
   bool isLive,
   double speed,
+  bool loading,
 );
 
 class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
@@ -64,6 +65,7 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
           config.$3,
           position: _currentPosition,
           speed: config.$4,
+          loading: config.$5,
         );
       }
     }
@@ -130,10 +132,11 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
     bool isLive, {
     required Duration position,
     required double speed,
+    bool loading = false,
     String? debugLabel,
   }) {
     if (onPlay != null && debugLabel == 'onVideoPaused') return;
-    final newConfig = (status, isBuffering, isLive, speed);
+    final newConfig = (status, isBuffering, isLive, speed, loading);
     _currentConfig = newConfig;
     _currentPosition = position;
     if (!enableBackgroundPlay || _item.isEmpty) return;
@@ -149,16 +152,21 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
 
     final AudioProcessingState processingState;
     final bool playing;
-    switch (status) {
-      case .completed:
-        playing = false;
-        processingState = .completed;
-      case .playing:
-        playing = true;
-        processingState = isBuffering ? .buffering : .ready;
-      case .paused:
-        playing = false;
-        processingState = isBuffering ? .buffering : .ready;
+    if (loading) {
+      playing = false;
+      processingState = .loading;
+    } else {
+      switch (status) {
+        case .completed:
+          playing = false;
+          processingState = .completed;
+        case .playing:
+          playing = true;
+          processingState = isBuffering ? .buffering : .ready;
+        case .paused:
+          playing = false;
+          processingState = isBuffering ? .buffering : .ready;
+      }
     }
     _updateState(
       processingState,

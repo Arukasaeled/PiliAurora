@@ -862,6 +862,7 @@ class PlPlayerController
       updateDuration(actualDuration);
     }
 
+    final wasLoading = dataStatus.loading;
     dataStatus.value = switch (snapshot.phase) {
       PlaybackPhase.idle => DataStatus.none,
       PlaybackPhase.loading || PlaybackPhase.recovering => DataStatus.loading,
@@ -884,7 +885,10 @@ class PlPlayerController
             null => playerStatus,
           };
     if (nextStatus == playerStatus) {
-      if (wasBuffering != isBuffering.value) _updatePlaybackState();
+      if (wasBuffering != isBuffering.value ||
+          wasLoading != dataStatus.loading) {
+        _updatePlaybackState();
+      }
       return;
     }
     playerStatus = nextStatus;
@@ -1504,6 +1508,7 @@ class PlPlayerController
       isLive,
       position: position ?? player.state.position,
       speed: playbackSpeed,
+      loading: dataStatus.loading,
       debugLabel: debugLabel,
     );
   }
