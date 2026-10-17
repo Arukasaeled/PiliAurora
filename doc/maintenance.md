@@ -26,6 +26,8 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 
 Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`consumedFrameBatches/consumedFrameSamples` 单独统计带当前输出 token 的纹理消费。弹幕相位使用请求时间，消费时间用于首帧与健康证据；两路时间不可混入同一个相位学习器。Windows 沿用输出消费批次作为调度来源。播放器 `runtime.initialize.*` 日志按资源槽等待、Player 创建和输出创建分别记录累计与分段耗时，可用于区分地址请求和本地初始化的等待。
 
+直播 FILE_LOADED 后缺少有效视频几何时，最多等待 5 秒，且不超过请求剩余预算；输出就绪前的 EOF/error 立即使加载失败。正常点播沿用请求预算，纯音频沿用无视频输出路径。`media.startup.failed` 记录几何等待失败，页面显示既有失败及刷新入口。加载动画的首帧可见性和驱动行为仍需设备验证。
+
 设备侧可运行[Android 帧时间采集](../tool/probes/README.md#android-帧时间采集)，明确指定设备和包名。采集结果与应用诊断分别保留时钟域，结合相同复现窗口检查；SurfaceFlinger 图层、Android gfxinfo、Flutter UI 和 Scene 使用各自统计口径。
 
 ### 直播

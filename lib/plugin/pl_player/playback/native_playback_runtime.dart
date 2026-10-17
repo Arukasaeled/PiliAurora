@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:pili_aurora/http/browser_ua.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_load_readiness.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_runtime_slot.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/video_frame_timings.dart';
@@ -1097,6 +1098,10 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         if (binding == null) return;
         binding.endFileSeen = true;
         _tryRetireBinding(binding);
+        final pending = _pendingLoad;
+        if (pending != null && identical(pending.binding, binding)) {
+          pending.handleEnd(reason, error);
+        }
         if (reason == NativeEndFileReason.eof &&
             identical(binding, _activeBinding)) {
           _emit(
@@ -1114,22 +1119,6 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
             recoverable: true,
             cause: 'Native end-file error $error.',
           );
-          final pending = _pendingLoad;
-          if (pending != null &&
-              identical(pending.binding, binding) &&
-              !pending.result.isCompleted) {
-            pending.result.complete(
-              PlaybackRuntimeLoadResult(
-                loaded: false,
-                output: PlaybackOutputPreparation(
-                  strategy: PlaybackOutputStrategy.unknown,
-                  evidence: 'native-end-file-error',
-                  outputEpoch: pending.token.outputEpoch,
-                ),
-                failure: failure,
-              ),
-            );
-          }
           _emit(
             PlaybackRuntimeFailure(
               runtimeId: runtimeId,
@@ -1251,8 +1240,9 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     try {
       // FILE_LOADED 可以先于首份输出参数到达；保持暂停，等待同一文件的事实。
       if (!_hasOutputGeometry(videoOutputParameters)) {
-        videoOutputParameters = await pending.outputGeometry.future.timeout(
+        videoOutputParameters = await pending.waitForGeometry(
           _remaining(pending.context),
+          live: pending.plan.timeline.kind == PlaybackTimelineKind.live,
         );
         if (!pending.context.isCurrent() || !identical(_pendingLoad, pending)) {
           _completeUnknownOutput(pending, 'output-geometry-expired');
@@ -1351,6 +1341,17 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
           height: outputHeight,
           hasVideo: true,
         ),
+      );
+    } on PlaybackFailure catch (failure) {
+      pending.failLoad(failure, 'video-output-geometry-unavailable');
+      _diagnostics?.event(
+        'media.startup.failed',
+        level: DiagnosticLogLevel.error,
+        details: {
+          'loadId': pending.context.loadId,
+          'operation': failure.operation,
+          'cause': failure.cause,
+        },
       );
     } catch (error) {
       _completeUnknownOutput(
@@ -1848,57 +1849,22 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   }
 }
 
-class _PendingNativeLoad {
+class _PendingNativeLoad extends NativeLoadReadiness {
   _PendingNativeLoad({
     required this.plan,
     required this.context,
     required this.token,
-  });
+  }) : super(outputEpoch: token.outputEpoch);
 
   final PlaybackPlan plan;
   final PlaybackExecutionContext context;
   final OutputOperationToken token;
   final Completer<void> started = Completer<void>();
-  final Completer<PlaybackOutputPreparation> output = Completer();
-  final Completer<NativeVideoOutputParameters> outputGeometry = Completer();
-  final Completer<PlaybackRuntimeLoadResult> result = Completer();
   _NativeFileBinding? binding;
   OutputLoadSelectionResult? selection;
   String? selectionFailure;
   Set<String>? preloadedVideoTrackIds;
-  bool fileLoaded = false;
-  bool? hasVideo;
   bool explicitAudioOnly = false;
-
-  void resultMaybeComplete() {
-    if (result.isCompleted || !fileLoaded || !output.isCompleted) return;
-    final prepared = output.future;
-    unawaited(
-      prepared.then(
-        (value) {
-          if (result.isCompleted) return;
-          result.complete(
-            PlaybackRuntimeLoadResult(
-              loaded: true,
-              output: value,
-              failure: value.strategy == PlaybackOutputStrategy.unknown
-                  ? PlaybackFailure(
-                      category: PlaybackFailureCategory.output,
-                      operation: 'prepare-output',
-                      stage: PlaybackStage.outputPreparing,
-                      recoverable: false,
-                      cause: value.evidence,
-                    )
-                  : null,
-            ),
-          );
-        },
-        onError: (Object error, StackTrace stack) {
-          if (!result.isCompleted) result.completeError(error, stack);
-        },
-      ),
-    );
-  }
 
   void fail(Object error) {
     if (!output.isCompleted) {
