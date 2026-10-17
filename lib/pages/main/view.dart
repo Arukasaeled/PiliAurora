@@ -192,7 +192,8 @@ class _MainAppState extends PopScopeState<MainApp>
   }
 
   void _onHideWindow() {
-    if (_mainController.pauseOnMinimize) {
+    if (PlPlayerController.instance?.pauseOnMinimize.value ??
+        _mainController.pauseOnMinimize) {
       if (PlPlayerController.instance case final player?) {
         final owner = player.activePlaybackOwner;
         final isPlaying = player.playerStatus.isPlaying && owner != null;

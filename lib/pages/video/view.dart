@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 import 'dart:math';
 
@@ -46,6 +47,7 @@ import 'package:pili_aurora/pages/video/reply/controller.dart';
 import 'package:pili_aurora/pages/video/reply/view.dart';
 import 'package:pili_aurora/pages/video/view_point/view.dart';
 import 'package:pili_aurora/pages/video/widgets/header_control.dart';
+import 'package:pili_aurora/pages/video/widgets/more_settings_sheet.dart';
 import 'package:pili_aurora/pages/video/widgets/detail_panels.dart';
 import 'package:pili_aurora/pages/video/widgets/intro_layout.dart';
 import 'package:pili_aurora/pages/video/widgets/player_focus.dart';
@@ -60,11 +62,9 @@ import 'package:pili_aurora/services/desktop_playback_request.dart';
 import 'package:pili_aurora/models/common/video/source_type.dart';
 import 'package:pili_aurora/services/shutdown_timer_service.dart'
     show shutdownTimerService;
-import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/android/bindings.g.dart';
 import 'package:pili_aurora/utils/extension/scroll_controller_ext.dart';
 import 'package:pili_aurora/utils/extension/theme_ext.dart';
-import 'package:pili_aurora/utils/image_utils.dart';
 import 'package:pili_aurora/utils/max_screen_size.dart';
 import 'package:pili_aurora/utils/mobile_observer.dart';
 import 'package:pili_aurora/utils/num_utils.dart';
@@ -698,27 +698,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
               Center(child: playBtn),
               Align(
                 alignment: .centerRight,
-                child: videoDetailController.playedTime == null
-                    ? _moreBtn(colorScheme.onSurface)
-                    : SizedBox(
-                        width: 42,
-                        height: 34,
-                        child: IconButton(
-                          tooltip: "更多设置",
-                          style: const ButtonStyle(
-                            padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                          ),
-                          onPressed: () =>
-                              (videoDetailController.headerCtrKey.currentState
-                                      as HeaderControlState?)
-                                  ?.showSettingSheet(),
-                          icon: Icon(
-                            Icons.more_vert_outlined,
-                            size: 19,
-                            color: colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
+                child: _moreBtn(colorScheme.onSurface),
               ),
             ],
           ),
@@ -1150,50 +1130,25 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     return const SizedBox.shrink();
   });
 
-  Widget _moreBtn(Color color, {List<Shadow>? shadows}) => PopupMenuButton(
-    icon: Icon(
-      size: 22,
-      Icons.more_vert,
-      color: color,
-      shadows: shadows,
-    ),
-    itemBuilder: (BuildContext context) => <PopupMenuEntry>[
-      PopupMenuItem(
-        onTap: introController.viewLater,
-        child: const Text('稍后再看'),
-      ),
-      if (videoDetailController.epId == null)
-        PopupMenuItem(
-          onTap: () => videoDetailController.showNoteList(context),
-          child: const Text('查看笔记'),
+  void _showMoreSettings() {
+    final header = videoDetailController.headerCtrKey.currentState;
+    if (header is HeaderControlState) {
+      header.showSettingSheet();
+    } else {
+      unawaited(
+        showVideoMoreSettings(
+          context,
+          controller: videoDetailController,
+          introController: introController,
         ),
-      if (!videoDetailController.isFileSource)
-        PopupMenuItem(
-          onTap: () => videoDetailController.onDownload(this.context),
-          child: const Text('缓存视频'),
-        ),
-      if (videoDetailController.cover.value.isNotEmpty)
-        PopupMenuItem(
-          onTap: () =>
-              ImageUtils.downloadImg([videoDetailController.cover.value]),
-          child: const Text('保存封面'),
-        ),
-      if (!videoDetailController.isFileSource && videoDetailController.isUgc)
-        PopupMenuItem(
-          onTap: videoDetailController.toAudioPage,
-          child: const Text('听音频'),
-        ),
-      PopupMenuItem(
-        onTap: () {
-          if (!Accounts.main.isLogin) {
-            SmartDialog.showToast('账号未登录');
-          } else {
-            PageUtils.reportVideo(videoDetailController.aid);
-          }
-        },
-        child: const Text('举报'),
-      ),
-    ],
+      );
+    }
+  }
+
+  Widget _moreBtn(Color color, {List<Shadow>? shadows}) => IconButton(
+    tooltip: '更多设置',
+    onPressed: _showMoreSettings,
+    icon: Icon(size: 22, Icons.more_vert, color: color, shadows: shadows),
   );
 
   Widget plPlayer({
@@ -1448,6 +1403,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
   Widget videoPlayer({required double width, required double height}) {
     final isFullScreen = this.isFullScreen;
     return Stack(
+      key: videoDetailController.moreSettingsAnchorKey,
       clipBehavior: Clip.none,
       children: [
         const Positioned.fill(

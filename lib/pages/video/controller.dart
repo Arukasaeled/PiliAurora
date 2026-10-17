@@ -125,6 +125,7 @@ class VideoDetailController extends GetxController
   final RxBool _autoPlay = Pref.autoPlayEnable.obs;
 
   final videoPlayerKey = GlobalKey();
+  final moreSettingsAnchorKey = GlobalKey();
   final childKey = GlobalKey<MiniScaffoldState>();
 
   final plPlayerController = PlPlayerController.getInstance()

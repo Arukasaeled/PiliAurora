@@ -83,7 +83,8 @@ import 'package:window_manager/window_manager.dart';
 
 typedef PlayCallback = Future<void>? Function();
 
-class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
+class PlPlayerController
+    with BlockConfigMixin, AudioNormalizationMixin, WindowListener {
   late final NativePlaybackRuntime _runtime = NativePlaybackRuntime(
     configuration: _captureRuntimeConfiguration(),
     diagnosticsExtra: () => {
@@ -254,7 +255,44 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   RxBool get enableShowDanmakuAdaptive =>
       isLive ? enableShowLiveDanmaku : enableShowDanmaku;
 
-  late final bool autoPiP = Pref.autoPiP;
+  late final RxBool autoPipEnabled = Pref.autoPiP.obs;
+  bool get autoPiP => autoPipEnabled.value;
+  late final RxBool pauseOnMinimize = Pref.pauseOnMinimize.obs;
+  PlaybackOwner? _minimizedWindowOwner;
+  PlaybackInhibitorToken? _minimizedWindowToken;
+  bool _listensToWindowEvents = false;
+
+  void setAutoPiP(bool value) {
+    if (!Platform.isAndroid) return;
+    if (!value) _disableAutoEnterPip();
+    autoPipEnabled.value = value;
+    _isAutoEnterPip = value && DeviceUtils.sdkInt >= 31;
+    if (_isAutoEnterPip && playerStatus.isPlaying) enterPip(autoEnter: true);
+    if (!tempPlayerConf) setting.put(SettingBoxKey.autoPiP, value);
+  }
+
+  @override
+  void onWindowMinimize() {
+    if (!pauseOnMinimize.value || !playerStatus.isPlaying) return;
+    final owner = activePlaybackOwner;
+    if (owner == null) return;
+    _minimizedWindowOwner = owner;
+    _minimizedWindowToken ??= owner.acquireInhibitor(
+      PlaybackInhibitorSource.system,
+    );
+  }
+
+  @override
+  void onWindowRestore() {
+    final owner = _minimizedWindowOwner;
+    final token = _minimizedWindowToken;
+    _minimizedWindowOwner = null;
+    _minimizedWindowToken = null;
+    if (owner != null && token != null) {
+      unawaited(owner.releaseInhibitor(token));
+    }
+  }
+
   bool get isPipMode =>
       (Platform.isAndroid && AndroidHelper.isPipMode) ||
       (PlatformUtils.isDesktop && isDesktopPip);
@@ -597,6 +635,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
   // 添加一个私有构造函数
   PlPlayerController._() {
+    if (isDesktopPip) {
+      windowManager.addListener(this);
+      _listensToWindowEvents = true;
+    }
     if (PlatformUtils.isMobile) {
       _backgroundPolicy = PlaybackBackgroundPolicy(
         session: _session,
@@ -617,20 +659,20 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       enableHeart = false;
     }
 
-    if (Platform.isAndroid && autoPiP) {
+    if (Platform.isAndroid) {
       if (DeviceUtils.sdkInt < 31) {
         final callback = Runnable.implement($Runnable(run: _onUserLeaveHint));
         AndroidHelper$ToDart.onUserLeaveHint = callback;
         callback.release();
       } else {
-        _isAutoEnterPip = true;
+        _isAutoEnterPip = autoPiP;
       }
     }
     audioSessionHandler?.attachPlaybackController(this);
   }
 
   void _onUserLeaveHint() {
-    if (playerStatus.isPlaying && _isCurrVideoPage) {
+    if (autoPiP && playerStatus.isPlaying && _isCurrVideoPage) {
       enterPip();
     }
   }
@@ -713,6 +755,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   void _disposeFacadeAfterRelease() {
     if (_facadeDisposed) return;
     _facadeDisposed = true;
+    if (_listensToWindowEvents) {
+      windowManager.removeListener(this);
+      _listensToWindowEvents = false;
+      onWindowRestore();
+    }
     _backgroundPolicy?.dispose();
     _backgroundPolicy = null;
     unawaited(_backgroundPolicySubscription?.cancel());

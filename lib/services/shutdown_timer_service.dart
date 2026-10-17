@@ -42,6 +42,7 @@ class ShutdownTimerService {
   Timer? _shutdownTimer;
   bool get isActive => _shutdownTimer?.isActive ?? false;
   int _durationInMinutes = 0;
+  int get durationInMinutes => _durationInMinutes;
   _ShutdownType _shutdownType = .pause;
 
   bool _isWaiting = false;
@@ -62,7 +63,7 @@ class ShutdownTimerService {
     _durationInMinutes = durationInMinutes;
   }
 
-  void _startShutdownTimer(int durationInMinutes) {
+  void startShutdownTimer(int durationInMinutes) {
     reset(durationInMinutes);
     if (durationInMinutes == 0) {
       SmartDialog.showToast('取消定时关闭');
@@ -220,7 +221,7 @@ class ShutdownTimerService {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              _startShutdownTimer(hour * 60 + minute);
+              startShutdownTimer(hour * 60 + minute);
               onCountdown();
               setState(() {});
             },
@@ -273,7 +274,7 @@ class ShutdownTimerService {
                         dense: true,
                         onTap: () {
                           Navigator.pop(context);
-                          _startShutdownTimer(minutes);
+                          startShutdownTimer(minutes);
                         },
                         title: Text(
                           switch (minutes) {

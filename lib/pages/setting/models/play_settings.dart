@@ -17,6 +17,7 @@ import 'package:pili_aurora/pages/setting/widgets/slider_dialog.dart';
 import 'package:pili_aurora/plugin/pl_player/models/bottom_progress_behavior.dart';
 import 'package:pili_aurora/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
+import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
@@ -58,6 +59,7 @@ List<SettingsModel> get playSettings => [
           setKey: SettingBoxKey.pauseOnMinimize,
           defaultVal: false,
           onChanged: (value) {
+            PlPlayerController.instance?.pauseOnMinimize.value = value;
             try {
               Get.find<MainController>().pauseOnMinimize = value;
             } catch (_) {}
@@ -79,6 +81,7 @@ List<SettingsModel> get playSettings => [
           setKey: SettingBoxKey.autoPiP,
           defaultVal: false,
           onChanged: (val) {
+            PlPlayerController.instance?.setAutoPiP(val);
             if (val && !videoPlayerServiceHandler!.enableBackgroundPlay) {
               SmartDialog.showToast('建议开启后台音频服务');
             }

@@ -10,22 +10,12 @@ class DesktopPlaybackMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => PopupMenuTheme(
-    data: Theme.of(context).popupMenuTheme.copyWith(
-      surfaceTintColor: Colors.transparent,
-      textStyle: const TextStyle(color: Colors.white),
-      labelTextStyle: WidgetStateProperty.resolveWith(
-        (states) => Theme.of(context).textTheme.labelLarge?.copyWith(
-          color: states.contains(WidgetState.disabled)
-              ? Colors.white38
-              : Colors.white,
-        ),
-      ),
-    ),
+    data: Theme.of(context).popupMenuTheme,
     child: PopupMenuButton<String>(
       tooltip: '播放窗口',
       onOpened: () => controller.setControlsMenuOpen(true),
       onCanceled: () => controller.setControlsMenuOpen(false),
-      color: const Color(0xEE202020),
+      color: ColorScheme.of(context).surface,
       onSelected: (action) {
         controller.setControlsMenuOpen(false);
         switch (action) {
