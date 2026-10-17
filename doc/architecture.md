@@ -68,12 +68,14 @@ flowchart LR
 - `services/messaging/` 按主账号的 `MessagingSession` 管理消息业务。GetX 保留路由，Riverpod 订阅业务快照；聊天和分享共用会话缓存及发送锁。分类消息句柄由页面 Notifier 创建和释放，未读概览、会话列表及聊天缓存由 Session 持有。入口和异步约定见[消息模块](../lib/services/messaging/README.md)。
 - `DownloadRepository` 负责下载目录布局和记录读写；`DownloadService` 负责队列、状态和任务调度；`DownloadManager` 负责单路媒体传输。详情见[下载流程](runtime-flows.md#下载)。
 - `DownloadRepository.load()` 跳过损坏的单条记录并通过回调报告；写入在进入串行队列前编码数据快照。它是文件存储，不提供事务或崩溃原子性。
-- `pl_player/` 是项目与 `media_kit`、mpv 及平台输出之间的协调层。`PlPlayerController` 保留交互、可观察状态和事件接线；`playback/` 管理页面借用、查询有效性、串行加载、原生资源与网络恢复。平台渲染行为在目标设备验证。
-- `PlaybackSession` 与网络恢复模块通过操作及状态回调连接调用者，不依赖 GetX、页面、HTTP 或全局设置。`NativePlaybackRuntime` 集中处理原生初始化、平台配置与资源释放；点播来源选择集中在 `pages/video/playback_source.dart`。
-- 播放状态区分用户的播放意图与原生加载过程中的短暂暂停。切画质、音质和网络恢复沿用播放意图；字幕等媒体附属请求提交前检查当前媒体与页面归属。
-- 快速切源共享一套 Player、VideoController、事件订阅和纹理输出。会话协调发生在查询、切源和恢复路径，不新增每帧状态广播；过期排队加载跳过原生操作。
+- `pl_player/` 是项目与 `media_kit`、mpv 及平台输出之间的协调层。`PlPlayerController` 负责 UI 投影、业务事件和平台适配；页面通过 `PlaybackOwner` 提交查询、加载与控制命令，`PlaybackSession` 管理页面归属、播放意图、配置快照和原生操作顺序。
+- 每个 `PlaybackPlan` 冻结业务内容键、来源候选及索引、时间线、位置和加载配置。查询在队列外解析，但 owner 在开始时同步接受请求代次与播放策略，再由会话提交解析出的计划；来源地址不承担内容身份。偏好只在装配计划或创建运行时配置时读取。
+- `PlaybackSnapshot` 是播放状态和配置的规范投影。页面控制器将其投影到现有 UI 状态；进度和视频帧仍走专用通道。页面保留字幕请求、直播消息和弹幕等业务副作用，并在异步提交时核对媒体与页面归属。
+- `NativePlaybackRuntime` 集中处理 Player/VideoController 初始化、原生配置和释放。跨控制器的运行时槽在旧 Player 的 `released` 完成前不允许创建新 Player；显式后台媒体租约可让页面 owner 关闭后继续播放。最后一个 owner 和租约释放后才开始会话关闭。
+- 播放状态区分用户意图、原生实际状态和会话 inhibitor。切画质、音轨、倍速、音量、shader 与网络恢复通过 owner 命令协调；页面路由、后台和音频焦点只释放自己持有的 inhibitor，不重写用户暂停意图。
+- 快速切源共享一套 Player、VideoController、事件订阅和纹理输出。过期请求在进入原生操作前被跳过；原生已发出的操作保留在运行时串行链中，并在返回后核对请求代次。
 - Windows 独立播放窗口由 `DesktopPlaybackWindows` 启动子进程，通过本地连接接收播放请求、账号与设置快照。每个窗口有自己的 Flutter、播放器和缓存目录；窗口内的设置保存在内存中，主窗口负责排列、位置保存与离线进度回写。
-- Windows 超分更新有独立的串行队列，必要时重建原生渲染器；播放器释放等待加载与 shader 更新都结束。原生资源释放顺序见[Windows 视频输出](windows-video-output.md)。
+- Windows 超分更新通过会话 shader 配置槽串行化，必要时重建原生渲染器；播放器释放等待已接受的原生操作结束。原生资源释放顺序见[Windows 视频输出](windows-video-output.md)。
 - protobuf 与 Android JNI 属于生成产物。修改源定义或生成脚本，再运行项目生成流程；不要直接维护生成文件。
 - 定制依赖通过 `dependency_overrides` 指向 `third_party/` 中的本地包。来源、版本和许可证以 `pubspec.yaml`、`pubspec.lock` 与 [`third_party/README.md`](../third_party/README.md) 为准。
 
@@ -87,7 +89,7 @@ flowchart LR
 | 下载记录与媒体索引 | `DownloadRepository` | 文件位于下载根目录；目录格式与 JSON 字段由仓库维护。 |
 | 临时目录、缓存、字体 | `app/app_paths.dart`、`CacheManager`、`FontUtils` | 初始化先于页面使用。 |
 | 诊断记录 | `services/diagnostics/`、`DiagnosticReportHandler` | 记录会按设置脱敏；导出前仍应确认没有账号凭据。 |
-| 播放器状态 | `PlaybackSession`、`NativePlaybackRuntime` 与 `PlPlayerController` | 会话拥有页面归属与加载代次，运行时拥有原生资源，控制器负责 UI 状态与事件接线。 |
+| 播放器状态 | `PlaybackSession`、`PlaybackOwner`、`NativePlaybackRuntime` 与 `PlPlayerController` | 会话快照是规范状态；owner 表达页面控制权，运行时拥有原生资源，控制器负责 UI 投影和业务适配。 |
 | 消息状态 | `MessagingSession`、业务句柄与 Riverpod provider | 根 Widget 提供 `ProviderScope`；切换主账号时释放旧 Session，订阅重建。消息列表、聊天缓存和未读快照保存在内存中。 |
 
 ## 平台边界

@@ -76,44 +76,47 @@ sequenceDiagram
 
 ### 请求、切源与页面归属
 
-视频页与直播页通过 `PlaybackSession.attach()` 借用共享播放器。最近进入的页面拥有加载权；返回上一页面时显式激活其 `PlaybackOwner`，关闭页面时释放借用。页面被替换时，其在途查询同步失效，返回该页面后也不会重新接受这些旧结果。
+视频页与直播页各自持有一个 `PlaybackOwner`。最近激活的 owner 拥有控制权；路由返回时重新激活原 owner，页面释放 owner 不会影响其他页面或仍持有后台媒体租约的播放。所有者关闭后，如果没有其他 owner 或租约，会话开始关闭；跨控制器运行时槽会一直保留到旧 Player 的 `released` 完成。
 
-地址查询绑定请求开始时的媒体标识。新查询立即执行，并取消上一轮在途 HTTP 请求；响应与补充画质结果提交前检查请求代次及页面归属。`VideoPlaybackSource` 将画质、编码、独立音轨与 CDN 地址解析成一次选择；页面用这份选择提交加载，字幕和播放信息沿用该媒体的有效性检查。
+页面装配不可变 `PlaybackPlan`，其中包含业务内容键、来源候选与选中索引、时间线、起播/重载位置和已捕获配置。内容键使用视频/分集/直播间等业务标识，不使用 URL。新查询通过 `owner.query` 同步接受 requestId 和起播策略，再在队列外查询地址；解析器只返回计划，由会话内部提交一次。相同内容重新解析保留当前播放意图与最新配置。视频的画质、编码、独立音轨选择仍由 `VideoPlaybackSource` 和页面业务逻辑完成。
+
+查询、计划加载、暂停/播放、跳转、倍速、音量、音轨、解码器和 shader 都经 owner 命令进入 `PlaybackSession`。`PlaybackSnapshot` 同步给新订阅者当前完整状态，之后提供最新快照；`PlPlayerController` 将其投影到 UI。进度和视频帧继续通过专用流处理，字幕、播放历史、直播消息和弹幕等副作用留在页面适配层。
 
 ```mermaid
 sequenceDiagram
     participant Page as 视频页 / 直播页
     participant Owner as PlaybackOwner
     participant Http as 播放地址 API
-    participant Session as PlaybackSession / LoadQueue
+    participant Session as PlaybackSession
     participant C as PlPlayerController
     participant Runtime as NativePlaybackRuntime
     participant P as media_kit / 平台输出
 
-    Page->>Owner: query(请求快照)
-    Owner->>Http: 查询地址 / 补充画质
-    Http-->>Owner: 响应
-    Owner->>Owner: 校验代次、媒体标识与归属
-    Owner-->>Page: 提交当前来源选择
-    Page->>C: setDataSource(source, owner, autoplay, seekTo)
-    C->>Session: load(owner, operation)
-    Session->>Session: 新代次、跳过旧排队任务、串行执行
-    Session->>C: operation(isCurrent)
-    C->>C: 更新元数据，暂停旧播放
-    C->>Runtime: initialize / open
+    Page->>Owner: query(resolver, startPolicy)
+    Owner->>Session: 同步接受 requestId 与播放策略
+    Session-->>Page: resolver(PlaybackQuery)
+    Page->>Http: 查询地址 / 补充画质
+    Http-->>Page: 响应
+    Page->>Page: 校验代次、媒体标识与归属并装配计划
+    Page-->>Session: 返回不可变 PlaybackPlan
+    Session->>Session: 同一请求提交计划并串行调度
+    Session->>Runtime: initialize / load
     opt 首次加载
-        Runtime->>P: 创建 Player 与 VideoController
+        Runtime->>Runtime: 等待跨控制器资源槽
+        Runtime->>P: single-flight 创建 Player 与 VideoController
     end
     Runtime->>P: open(media, play: false)
-    P-->>Runtime: open 完成
-    Runtime-->>C: 校验当前请求后返回
-    C->>C: 更新时长、位置、loaded 与画面适配
-    opt 播放意图允许且请求有效
-        C->>P: 开始播放
+    P-->>Runtime: loaded 与真实输出准备完成
+    Runtime-->>Session: LoadResult
+    Session->>Session: 合并最新意图、配置与有效 inhibitor
+    opt 最新意图允许且没有有效 inhibitor
+        Session->>Runtime: setPlaying(true)
     end
+    Session-->>Owner: 发布同步播放快照
+    Owner-->>C: 快照投影到 UI
 ```
 
-已发出的原生操作保留在串行链中，返回后再检查代次。快速切源复用原生资源；释放最后一份借用后，先使会话与资源不可见，再等待在途加载和 shader 更新结束并销毁播放器，避免原生操作与 `dispose` 并发。
+旧 owner 的查询和命令在失去控制权时失效。会话在每次 await 和原生返回后核对请求代次；已经发出的原生操作保留在运行时串行链中。快速切源复用原生资源。关闭时先停止接受新命令，再按有界时限执行卸载、输出释放和 Player dispose；资源槽只有在 `Player.released` 后才放开，避免旧运行时和新运行时同时占用原生播放器。
 
 实现见 [`playback_session.dart`](../lib/plugin/pl_player/playback/playback_session.dart)、[`native_playback_runtime.dart`](../lib/plugin/pl_player/playback/native_playback_runtime.dart) 和 [`playback_source.dart`](../lib/pages/video/playback_source.dart)。
 
@@ -159,7 +162,7 @@ flowchart TD
 
 Windows 在确定硬件或软件后端后注册纹理，硬件初始化失败时先释放 GL 资源再进入软件路径。Android 保留既有 MediaCodec、Surface 与解码恢复实现，GPU、MediaCodec、Surface 行为和帧率在目标设备验证。
 
-Windows 超分切换使用独立的串行更新队列，暂停视频输出后重建渲染器，再提交 shader 并恢复输出。释放顺序和首帧条件见[Windows 视频输出](windows-video-output.md#超分切换)。
+Windows 超分切换通过 owner 的 shader 配置命令进入会话调度；运行时在需要时暂停视频输出、重建渲染器、提交 shader 并恢复输出。释放顺序和首帧条件见[Windows 视频输出](windows-video-output.md#超分切换)。
 
 ## 下载
 
@@ -298,21 +301,26 @@ sequenceDiagram
 
 ## 直播消息与弹幕
 
-视频播放和聊天使用独立连接。页面从 `LiveHttp` 获取播放地址；聊天另取连接信息，再由 WebSocket 接收弹幕和互动消息。
+视频播放和聊天使用独立连接。直播播放地址通过 owner 查询解析成计划并由会话提交；聊天连接另取连接信息。消息连接由 `wantedConnected` 和连接代次控制，token、历史、图片及回调必须匹配当前连接代次和房间。
 
 ```mermaid
 sequenceDiagram
     participant Page as LiveRoomController
+    participant Owner as PlaybackOwner / PlaybackSession
     participant API as LiveHttp
     participant WS as LiveMessageStream
     participant Socket as WebSocket 服务端
     participant Decoder as LivePacketDecoder isolate
     participant UI as 聊天缓冲与弹幕渲染
 
-    Page->>API: 获取直播间信息与播放地址
-    API-->>Page: 播放流
-    Page->>Page: setDataSource(isLive: true)
-    Page->>API: 首次启动聊天时获取 token 与 host 列表
+    Page->>Owner: query(resolveLivePlan, startPolicy)
+    Owner-->>Page: 分配 requestId 并启动 resolver
+    Page->>API: 获取直播信息与播放地址
+    API-->>Page: 地址候选与直播元数据
+    Page->>Page: 校验房间与请求代次并返回 PlaybackPlan
+    Page-->>Owner: 提交当前直播计划
+    Page->>Page: 开始聊天连接 (wantedConnected=true)
+    Page->>API: 获取 token、host 列表和聊天历史
     API-->>Page: 连接信息
     Page->>WS: 创建消息流并注册监听器
     WS->>Socket: 依次尝试 WebSocket host
@@ -328,9 +336,9 @@ sequenceDiagram
         WS->>Page: 调用业务监听器
         Page->>UI: 更新缓冲、未读数、弹幕或互动消息
     end
-    Page->>WS: 页面关闭
+    Page->>WS: 暂停、切房或离开页面时关闭当前连接
     WS->>Decoder: 关闭 worker 并结束在途任务
     WS->>Socket: 取消订阅并关闭连接
 ```
 
-每条连接复用一个解析 worker。关闭或 worker 异常会结束在途任务；损坏的数据包会被跳过。实现见 [`live.dart`](../lib/services/live_stream/live.dart)、[`live_packet_decoder.dart`](../lib/services/live_stream/live_packet_decoder.dart) 和 [`live_packet.dart`](../lib/services/live_stream/live_packet.dart)，测试位于 `test/services/live_stream/`。
+每条连接复用一个解析 worker。`startLiveMsg` 同一时刻共用一次 token/history/连接建立；暂停、切房或离开页面会撤销连接意图并推进代次，使旧 HTTP 结果、连接回调和图片结果失效。直播页返回时先重绑状态监听与弹幕控制器，再释放路由 inhibitor；若当前实际播放，监听会接续消息与弹幕。关闭或 worker 异常会结束在途任务，损坏的数据包会被跳过。实现见 [`live_room/controller.dart`](../lib/pages/live_room/controller.dart)、[`live.dart`](../lib/services/live_stream/live.dart)、[`live_packet_decoder.dart`](../lib/services/live_stream/live_packet_decoder.dart) 和 [`live_packet.dart`](../lib/services/live_stream/live_packet.dart)，回归位于 `test/pages/live_room/controller_test.dart` 与 `test/services/live_stream/`。
