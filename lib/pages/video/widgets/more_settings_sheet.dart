@@ -594,57 +594,6 @@ class _VideoMoreSettingsSheetState extends State<VideoMoreSettingsSheet> {
                           setState(() {});
                         },
                       ),
-                      if (PlatformUtils.isMobile)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                          child: Column(
-                            children: [
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.volume_up_outlined,
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  const Expanded(
-                                    child: Text(
-                                      '播放器音量',
-                                      style: TextStyle(fontSize: 13),
-                                    ),
-                                  ),
-                                  Text(
-                                    '${player.playbackVolumePercent.round()}%',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: colors.primary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              Slider(
-                                value: player.playbackVolumePercent.clamp(
-                                  0,
-                                  100,
-                                ),
-                                max: 100,
-                                divisions: 100,
-                                onChanged: player.videoPlayerController == null
-                                    ? null
-                                    : (value) {
-                                        unawaited(
-                                          player.setPlayerVolumePercent(value),
-                                        );
-                                        if (!player.tempPlayerConf) {
-                                          GStorage.setting.put(
-                                            SettingBoxKey.playerVolume,
-                                            value,
-                                          );
-                                        }
-                                      },
-                              ),
-                            ],
-                          ),
-                        ),
                       _contentActions(),
                       const Divider(height: 12),
                       ListTile(

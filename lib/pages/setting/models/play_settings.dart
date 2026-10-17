@@ -399,17 +399,16 @@ Future<void> showPlayerVolumeDialog(
   BuildContext context,
   VoidCallback setState, {
   ValueChanged<double>? onChanged,
+  double? value,
 }) {
   return showVolumeDialog(
     context,
     title: const Text('播放器音量'),
-    value: Pref.playerVolume,
+    value: value ?? Pref.playerVolume,
+    onChanging: onChanged,
     onChanged: (value) => GStorage.setting
         .put(SettingBoxKey.playerVolume, value.roundToDouble())
-        .whenComplete(() {
-          setState();
-          onChanged?.call(value.roundToDouble());
-        }),
+        .whenComplete(setState),
   );
 }
 
@@ -418,7 +417,9 @@ Future<void> showVolumeDialog(
   required Widget title,
   required double value,
   required ValueChanged<double> onChanged,
+  ValueChanged<double>? onChanging,
 }) async {
+  var previewed = false;
   final res = await showDialog<double>(
     context: context,
     builder: (context) => SliderDialog(
@@ -429,10 +430,16 @@ Future<void> showVolumeDialog(
       precise: 0,
       value: value,
       suffix: '%',
+      onChanged: (nextValue) {
+        previewed = true;
+        onChanging?.call(nextValue);
+      },
     ),
   );
   if (res != null) {
     onChanged(res);
+  } else if (previewed) {
+    onChanging?.call(value);
   }
 }
 

@@ -4,8 +4,6 @@ import 'dart:math' as math;
 import 'package:pili_aurora/common/widgets/marquee.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/live_room/widgets/live_stream_panel.dart';
-import 'package:pili_aurora/pages/setting/models/play_settings.dart'
-    show showPlayerVolumeDialog;
 import 'package:pili_aurora/pages/video/widgets/header_control.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/desktop_playback_menu.dart';
@@ -280,26 +278,6 @@ class _LiveHeaderControlState extends State<LiveHeaderControl>
                           player: player,
                         ),
                       ),
-                      if (PlatformUtils.isMobile)
-                        PopupMenuItem(
-                          height: 35,
-                          child: Row(
-                            spacing: 8,
-                            children: [
-                              const Icon(Icons.volume_up, size: 17),
-                              Text(
-                                '播放器音量: ${plPlayerController.playbackVolumePercent.toStringAsFixed(0)}%',
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                            ],
-                          ),
-                          onTap: () => showPlayerVolumeDialog(
-                            context,
-                            () {},
-                            onChanged: (value) => plPlayerController
-                                .setPlayerVolumePercent(value),
-                          ),
-                        ),
                     ],
                   ),
                 ),
