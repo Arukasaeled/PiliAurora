@@ -649,6 +649,26 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   Future<Player?> _initialize(PlaybackExecutionContext context) async {
     PlaybackRuntimeSlotLease? lease;
     Player? player;
+    final watch = Stopwatch()..start();
+    var previousStageUs = 0;
+    void recordStage(String stage) {
+      final elapsed = watch.elapsedMicroseconds;
+      Diagnostics.instance.playerLog(
+        DiagnosticLogLevel.info,
+        'player',
+        'runtime.initialize.$stage',
+        details: {
+          'runtimeId': runtimeId,
+          'requestId': context.requestId,
+          'loadId': context.loadId,
+          'durationUs': elapsed,
+          'stageDurationUs': elapsed - previousStageUs,
+        },
+      );
+      previousStageUs = elapsed;
+    }
+
+    recordStage('begin');
     try {
       lease = await PlaybackRuntimeSlot.shared.acquire(
         deadline: context.deadline,
@@ -660,6 +680,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         lease?.release();
         return null;
       }
+      recordStage('slot-acquired');
       try {
         player = await Player.create(
           configuration: PlayerConfiguration(
@@ -675,6 +696,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       }
       lease.attachReleased(player.released);
       _player = player;
+      recordStage('player-created');
       if (!context.isCurrent() ||
           context.deadline <= context.monotonicNow() ||
           _shutdownRequested) {
@@ -795,8 +817,10 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       );
       // 输出已可挂载；媒体探测和首帧准备继续在原生加载链中完成。
       _videoControllerListenable.value = video;
+      recordStage('output-created');
       return player;
     } catch (error) {
+      recordStage('failed');
       if (player == null) {
         lease?.release();
       } else {
