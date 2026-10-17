@@ -2,7 +2,7 @@ import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'frame_sync_fixture.dart';
+import '../../../test/pages/danmaku/frame_sync_fixture.dart';
 
 void main() {
   const synchronizedPairs = {
@@ -83,7 +83,6 @@ void main() {
             }
             ticker.dispose();
             final disposedTicks = ticks;
-            // 跟随屏幕可已有一张已请求的引擎帧，处理后不得再发出新请求。
             await tester.pump();
             await tester.binding.delayed(const Duration(seconds: 2));
             expect(tester.binding.hasScheduledFrame, isFalse);

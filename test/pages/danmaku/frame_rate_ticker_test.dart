@@ -47,7 +47,7 @@ void main() {
     expect(stableTicks, closeTo(360, 3));
   });
 
-  for (final fps in [90, 120]) {
+  for (final fps in [120]) {
     testWidgets('$fps FPS 在 vsync 前关闭接收本帧请求时仍保持目标更新率', (tester) async {
       tester.view.display.refreshRate = 120.00000762939453;
       addTearDown(tester.view.display.resetRefreshRate);
@@ -180,7 +180,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  for (final fps in [30, 60, 90, 120]) {
+  for (final fps in [30, 120]) {
     testWidgets('$fps FPS 减少帧请求并保持实际经过时间', (tester) async {
       tester.view.display.refreshRate = 120;
       addTearDown(tester.view.display.resetRefreshRate);

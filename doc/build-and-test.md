@@ -69,7 +69,7 @@ pwsh -NoProfile -File tool/run-ci-tests.ps1
 弹幕合并、后台处理与帧率改动可运行：
 
 ```powershell
-fvm flutter test --no-pub test/pages/danmaku/merge_test.dart test/pages/danmaku/controller_test.dart test/pages/danmaku/merge_render_test.dart test/pages/danmaku/frame_rate_ticker_test.dart test/pages/danmaku/native_video_frame_sync_test.dart test/pages/danmaku/frame_rate_matrix_test.dart test/pages/danmaku/frame_rate_workload_test.dart
+fvm flutter test --no-pub test/pages/danmaku/merge_test.dart test/pages/danmaku/controller_test.dart test/pages/danmaku/merge_render_test.dart test/pages/danmaku/frame_rate_ticker_test.dart test/pages/danmaku/native_video_frame_sync_test.dart
 ```
 
 推荐与热门分页改动可运行 `fvm flutter test --no-pub test/common/widgets/feed_pagination_test.dart`。这些是针对模块的验证入口，CI 当前选择的文件以 `tool/run-ci-tests.ps1` 为准。

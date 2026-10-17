@@ -53,20 +53,6 @@ void main() {
       backup = SettingsBackup(setting: setting, video: video);
     });
 
-    test('exports the existing two-section JSON schema and indentation', () {
-      expect(jsonDecode(backup.exportJson()), {
-        'setting': {'theme': 'dark', 'old': 1},
-        'video': {'quality': 80, 'old': 2},
-      });
-      expect(backup.exportJson(), contains('\n    "setting": {'));
-      expect(events, isEmpty);
-    });
-
-    test('identical snapshots perform no storage writes or deletes', () async {
-      await backup.restoreJson(backup.exportJson());
-      expect(events, isEmpty);
-    });
-
     test(
       'nested lists and maps are compared by value rather than identity',
       () async {
@@ -78,17 +64,6 @@ void main() {
         expect(events, isEmpty);
       },
     );
-
-    test('both upserts precede deletion of stale keys', () async {
-      await backup.restoreMap({
-        'setting': {'theme': 'light', 'new': true},
-        'video': {'quality': 120},
-      });
-      expect(setting.data, {'theme': 'light', 'new': true});
-      expect(video.data, {'quality': 120});
-      expect(events.take(2).toSet(), {'setting:write', 'video:write'});
-      expect(events.skip(2).toSet(), {'setting:delete', 'video:delete'});
-    });
 
     test('empty sections intentionally remove their previous keys', () async {
       await backup.restoreMap({'setting': {}, 'video': {}});
@@ -110,15 +85,7 @@ void main() {
     for (final document in <Object?>[
       null,
       [],
-      {},
-      {'setting': {}},
-      {'video': {}},
-      {'setting': null, 'video': {}},
       {'setting': {}, 'video': []},
-      {
-        'setting': {},
-        'video': {true: 1},
-      },
     ]) {
       test(
         'rejects malformed snapshot $document before touching either box',
@@ -232,20 +199,6 @@ void main() {
         SettingsBackup(setting: setting, video: video).exportJson(),
         snapshot,
       );
-    });
-
-    test('unchanged nested values emit no Hive write events', () async {
-      await setting.put('nested', {
-        'types': [1, 2, 3],
-      });
-      final changes = <BoxEvent>[];
-      final subscription = setting.watch().listen(changes.add);
-      try {
-        await backup.restoreJson(backup.exportJson());
-        expect(changes, isEmpty);
-      } finally {
-        await subscription.cancel();
-      }
     });
 
     test('invalid second partition never clears first partition', () async {

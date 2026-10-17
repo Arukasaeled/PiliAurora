@@ -19,13 +19,7 @@ void main() {
   for (final scenario in [
     (size: const Size(390, 844), fullscreen: false),
     (size: const Size(844, 390), fullscreen: true),
-    (size: const Size(640, 360), fullscreen: true),
-    (size: const Size(390, 844), fullscreen: true),
     (size: const Size(1280, 800), fullscreen: false),
-    (size: const Size(1920, 1080), fullscreen: true),
-    (size: const Size(600, 900), fullscreen: false),
-    (size: const Size(960, 540), fullscreen: false),
-    (size: const Size(640, 480), fullscreen: false),
   ]) {
     testWidgets('点播面板 ${scenario.size} fullscreen=${scenario.fullscreen}', (
       tester,

@@ -2,7 +2,7 @@ import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'frame_sync_fixture.dart';
+import '../../../test/pages/danmaku/frame_sync_fixture.dart';
 
 void main() {
   for (final hz in [119.88, 120.0, 120.12]) {

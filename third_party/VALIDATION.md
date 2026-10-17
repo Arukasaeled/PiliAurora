@@ -26,6 +26,8 @@
 | 工作流 YAML、构建 PowerShell 语法解析 | 通过。 |
 | `git diff --cached --check` | 通过。 |
 
+> 2026-10-17 的测试清理移除了仅验证第三方图标接口的 `font_awesome_icons_test.dart`；上表保留当时的验证记录。
+
 ## 排查中遇到的问题
 
 1. 初次使用 Font Awesome 10.x 时，双平台编译报告其继承 `final IconData` 不合法。通过升级发布版 11.0.0 并适配 `.data` 解决。

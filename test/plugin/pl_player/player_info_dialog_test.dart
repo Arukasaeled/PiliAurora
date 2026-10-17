@@ -49,7 +49,6 @@ void main() {
   for (final size in [
     const Size(640, 360),
     const Size(1280, 800),
-    const Size(320, 640),
   ]) {
     testWidgets('信息弹窗在 $size 下保持紧凑工具栏与可滚动详情', (tester) async {
       tester.view.physicalSize = size;

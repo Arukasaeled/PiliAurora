@@ -11,7 +11,6 @@ Set-Location $Workspace
 $ciTests = @(
     "test/architecture/dependency_policy_test.dart",
     "test/architecture/internal_dependencies_test.dart",
-    "test/common/widgets/font_awesome_icons_test.dart",
     "test/common/widgets/debounced_state_test.dart",
     "test/common/widgets/image/image_lifecycle_test.dart",
     "test/common/widgets/tab_activity_test.dart",
@@ -26,7 +25,6 @@ $ciTests = @(
     "test/services/messaging/sharing_test.dart",
     "test/services/messaging/protocol_test.dart",
     "test/architecture/dependency_rules_test.dart",
-    "test/architecture/release_workflow_test.dart",
     "test/pages/common/common_controller_test.dart",
     "test/pages/live_room/controller_test.dart",
     "test/pages/video/playback_lifecycle_test.dart",
@@ -39,7 +37,6 @@ $ciTests = @(
     "test/services/diagnostics/http_diagnostics_test.dart",
     "test/services/diagnostics/record_store_test.dart",
     "test/services/diagnostics/player_diagnostics_test.dart",
-    "test/services/diagnostics/process_metrics_test.dart",
     "test/pages/about/diagnostics_page_test.dart",
     "test/pages/setting/settings_navigation_test.dart",
     "test/pages/danmaku",

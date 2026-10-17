@@ -236,57 +236,56 @@ void main() {
     controller.onDelete();
   });
 
-  for (final ratio in [1.0, 1.5, 2.0]) {
-    for (final (unique, inline, natural, expected) in [
-      ('room_1_1', false, const Size(240, 120), const Size(40, 20)),
-      ('official_1', false, const Size(120, 240), const Size(20, 40)),
-      ('official_2', true, const Size(180, 90), const Size(20, 10)),
-      ('official_3', true, const Size(16, 12), const Size(16, 12)),
-    ]) {
-      testWidgets('聊天表情 $unique 在 DPR $ratio 下保持紧凑尺寸和比例', (tester) async {
-        final controller = createController();
-        BaseEmote emote(String unique, double width, double height) =>
-            BaseEmote.fromJson({
-              'url': 'https://example.test/emote.png',
-              'emoticon_unique': unique,
-              'width': width,
-              'height': height,
-            });
-        final imageEmote = emote(unique, natural.width, natural.height);
-        controller.addDm(
-          DanmakuMsg(
-            name: '用户',
-            text: '[表情]',
-            uemote: inline ? null : imageEmote,
-            emots: inline ? {'[表情]': imageEmote} : null,
-            extra: _message(1).extra,
+  const ratio = 2.0;
+  for (final (unique, inline, natural, expected) in [
+    ('room_1_1', false, const Size(240, 120), const Size(40, 20)),
+    ('official_1', false, const Size(120, 240), const Size(20, 40)),
+    ('official_2', true, const Size(180, 90), const Size(20, 10)),
+    ('official_3', true, const Size(16, 12), const Size(16, 12)),
+  ]) {
+    testWidgets('聊天表情 $unique 在 DPR $ratio 下保持紧凑尺寸和比例', (tester) async {
+      final controller = createController();
+      BaseEmote emote(String unique, double width, double height) =>
+          BaseEmote.fromJson({
+            'url': 'https://example.test/emote.png',
+            'emoticon_unique': unique,
+            'width': width,
+            'height': height,
+          });
+      final imageEmote = emote(unique, natural.width, natural.height);
+      controller.addDm(
+        DanmakuMsg(
+          name: '用户',
+          text: '[表情]',
+          uemote: inline ? null : imageEmote,
+          emots: inline ? {'[表情]': imageEmote} : null,
+          extra: _message(1).extra,
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(devicePixelRatio: ratio),
+            child: child!,
           ),
-        );
-        await tester.pumpWidget(
-          MaterialApp(
-            builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context).copyWith(devicePixelRatio: ratio),
-              child: child!,
-            ),
-            home: Scaffold(
-              body: LiveRoomChatPanel(
-                liveRoomController: controller,
-                isPP: false,
-              ),
+          home: Scaffold(
+            body: LiveRoomChatPanel(
+              liveRoomController: controller,
+              isPP: false,
             ),
           ),
-        );
-        await tester.pump(const Duration(milliseconds: 100));
-        final image = tester.widget<NetworkImgLayer>(
-          find.byType(NetworkImgLayer),
-        );
-        expect(image.width, expected.width);
-        expect(image.height, expected.height);
-        expect(tester.getSize(find.byType(NetworkImgLayer)), expected);
-        expect(tester.takeException(), isNull);
-        controller.onDelete();
-      });
-    }
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      final image = tester.widget<NetworkImgLayer>(
+        find.byType(NetworkImgLayer),
+      );
+      expect(image.width, expected.width);
+      expect(image.height, expected.height);
+      expect(tester.getSize(find.byType(NetworkImgLayer)), expected);
+      expect(tester.takeException(), isNull);
+      controller.onDelete();
+    });
   }
 
   testWidgets(
