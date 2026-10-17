@@ -9,6 +9,7 @@ $Workspace = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $Workspace
 
 $ciTests = @(
+    "test/app/desktop_playback_launch_test.dart",
     "test/architecture/dependency_policy_test.dart",
     "test/architecture/internal_dependencies_test.dart",
     "test/common/widgets/debounced_state_test.dart",
