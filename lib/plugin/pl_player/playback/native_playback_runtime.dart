@@ -926,6 +926,18 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         await output.invalidateOutputGeneration(pending.token);
         return;
       }
+      _diagnostics?.event(
+        'media.output.preloaded',
+        details: {
+          'loadId': pending.context.loadId,
+          'strategy': prepared.strategy.name,
+          'evidence': prepared.evidence.name,
+          'trackId': allowedTrackId,
+          'trackCount': tracks.length,
+          if (tracks.length == 1)
+            'selectedBeforeDecode': tracks.single.selected,
+        },
+      );
       pending.selection = prepared;
       if (prepared.outputEpoch != pending.token.outputEpoch) {
         pending.selection = null;
@@ -1749,6 +1761,25 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   );
 
   Future<PlaybackShutdownResult> _shutdown() async {
+    final watch = Stopwatch()..start();
+    var previousStageUs = 0;
+    void recordStage(String stage) {
+      if (_player == null) return;
+      final elapsed = watch.elapsedMicroseconds;
+      Diagnostics.instance.playerLog(
+        DiagnosticLogLevel.info,
+        'player',
+        'runtime.shutdown.$stage',
+        details: {
+          'runtimeId': runtimeId,
+          'durationUs': elapsed,
+          'stageDurationUs': elapsed - previousStageUs,
+        },
+      );
+      previousStageUs = elapsed;
+    }
+
+    recordStage('begin');
     _shutdownRequested = true;
     _healthExpiry?.cancel();
     try {
@@ -1780,6 +1811,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         _activeBinding = null;
       }
 
+      recordStage('file-retired');
       _diagnostics?.dispose();
       _diagnostics = null;
       for (final subscription in _subscriptions) {
@@ -1788,10 +1820,14 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       _subscriptions.clear();
       await _hookRegistration?.dispose();
       _hookRegistration = null;
+      recordStage('subscriptions-released');
       await _videoController?.releaseOutput();
+      recordStage('output-released');
       try {
         await player.dispose();
+        recordStage('player-disposed');
         await player.released;
+        recordStage('released');
       } catch (error) {
         return PlaybackShutdownResult.cleanupIncomplete(
           _failure(PlaybackFailureCategory.disposal, 'player-dispose', error),
