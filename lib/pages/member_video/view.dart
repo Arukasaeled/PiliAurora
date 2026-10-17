@@ -64,8 +64,8 @@ class _MemberVideoState extends State<MemberVideo>
       if (state != null && state.mounted) {
         state.innerNestedPositions.first.localJumpTo(scrollOffset);
       }
-    } catch (e) {
-      logger.d('jump error: $e');
+    } catch (e, stackTrace) {
+      logger.w('jump error: $e', error: e, stackTrace: stackTrace);
     }
   }
 

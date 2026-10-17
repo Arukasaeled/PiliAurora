@@ -24,8 +24,12 @@ abstract final class NumUtils {
       var number = double.parse(match.group(1)!);
       number *= _getUnit(match.group(2));
       return number.toInt();
-    } catch (e) {
-      logger.d('parse failed: "$numberStr" : $e');
+    } catch (e, stackTrace) {
+      logger.w(
+        'parse failed: "$numberStr" : $e',
+        error: e,
+        stackTrace: stackTrace,
+      );
       return 0;
     }
   }

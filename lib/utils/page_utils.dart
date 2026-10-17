@@ -706,10 +706,10 @@ abstract final class PageUtils {
       } else {
         res.toast();
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       SmartDialog.dismiss();
       SmartDialog.showToast('$e');
-      logger.d('$e');
+      logger.w('$e', error: e, stackTrace: stackTrace);
     }
   }
 

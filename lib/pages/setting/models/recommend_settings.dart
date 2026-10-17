@@ -27,8 +27,8 @@ List<SettingsModel> get recommendSettings => [
         Get.find<RcmdController>()
           ..enableSaveLastData = value
           ..lastRefreshAt = null;
-      } catch (e) {
-        logger.d('$e');
+      } catch (e, stackTrace) {
+        logger.w('$e', error: e, stackTrace: stackTrace);
       }
     },
   ),
@@ -43,8 +43,8 @@ List<SettingsModel> get recommendSettings => [
         Get.find<RcmdController>()
           ..savedRcmdTip = value
           ..lastRefreshAt = null;
-      } catch (e) {
-        logger.d('$e');
+      } catch (e, stackTrace) {
+        logger.w('$e', error: e, stackTrace: stackTrace);
       }
     },
   ),

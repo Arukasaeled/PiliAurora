@@ -600,8 +600,8 @@ class VideoDetailController extends GetxController
                         ugcIntroController.videoDetail.value.pages![item];
                     ugcIntroController.onChangeEpisode(part);
                     SmartDialog.showToast('已跳至第${item + 1}P');
-                  } catch (e) {
-                    logger.d('$e');
+                  } catch (e, stackTrace) {
+                    logger.w('$e', error: e, stackTrace: stackTrace);
                     SmartDialog.showToast('跳转失败');
                   }
                   onRemoveItem(listData.indexOf(item), item);
@@ -1559,10 +1559,10 @@ class VideoDetailController extends GetxController
         return;
       }
       dmTrend.value = const Error(null);
-    } catch (e) {
+    } catch (e, stackTrace) {
       if (!isCurrent()) return;
       dmTrend.value = const Error(null);
-      logger.d('_getDmTrend: $e');
+      logger.w('_getDmTrend: $e', error: e, stackTrace: stackTrace);
     }
   }
 

@@ -1932,8 +1932,8 @@ class PlPlayerController
           FlutterVolumeController.updateShowSystemUI(false);
           await FlutterVolumeController.setVolume(volume);
         }
-      } catch (err) {
-        logger.d(err.toString());
+      } catch (err, stackTrace) {
+        logger.w(err.toString(), error: err, stackTrace: stackTrace);
       }
       _audioRecovery?.onPlaybackChanged();
     }

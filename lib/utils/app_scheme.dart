@@ -368,8 +368,12 @@ abstract final class PiliScheme {
               if (tab != null) {
                 try {
                   index = FavTabType.values.byName(tab).index;
-                } catch (e) {
-                  logger.d('favorite jump: $e');
+                } catch (e, stackTrace) {
+                  logger.w(
+                    'favorite jump: $e',
+                    error: e,
+                    stackTrace: stackTrace,
+                  );
                 }
               }
               Get.toNamed('/fav', arguments: index);

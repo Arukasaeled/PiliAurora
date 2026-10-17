@@ -145,8 +145,8 @@ class _CdnSelectDialogState extends State<CdnSelectDialog> {
     try {
       final videoItem = widget.sample ?? await _getSampleUrl();
       await _testAllCdnServices(videoItem);
-    } catch (e) {
-      logger.d('CDN speed test failed: $e');
+    } catch (e, stackTrace) {
+      logger.w('CDN speed test failed: $e', error: e, stackTrace: stackTrace);
     }
   }
 

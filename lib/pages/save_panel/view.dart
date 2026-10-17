@@ -328,8 +328,8 @@ class _SavePanelState extends State<SavePanel> {
           }
         }
       }
-    } catch (e) {
-      logger.d('on save/share reply: $e');
+    } catch (e, stackTrace) {
+      logger.w('on save/share reply: $e', error: e, stackTrace: stackTrace);
       SmartDialog.dismiss();
     }
   }

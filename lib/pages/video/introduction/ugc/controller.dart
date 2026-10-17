@@ -558,8 +558,8 @@ class UgcIntroController extends CommonIntroController with ReloadMixin {
       this.cid.value = cid;
       queryOnlineTotal();
       return true;
-    } catch (e) {
-      logger.d('ugc onChangeEpisode: $e');
+    } catch (e, stackTrace) {
+      logger.w('ugc onChangeEpisode: $e', error: e, stackTrace: stackTrace);
       return false;
     }
   }

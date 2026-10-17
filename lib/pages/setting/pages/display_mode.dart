@@ -44,8 +44,8 @@ class _SetDisplayModeState extends State<SetDisplayMode> {
   Future<void> init() async {
     try {
       modes = await FlutterDisplayMode.supported;
-    } on PlatformException catch (e) {
-      logger.d(e.toString());
+    } on PlatformException catch (e, stackTrace) {
+      logger.w(e.toString(), error: e, stackTrace: stackTrace);
     }
 
     final value = setting.get(SettingBoxKey.displayMode);

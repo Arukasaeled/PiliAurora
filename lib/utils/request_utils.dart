@@ -259,8 +259,8 @@ abstract final class RequestUtils {
           }
           ctr.loadingState.value = Success([e.response]);
         }
-      } catch (e) {
-        logger.d('create dyn $e');
+      } catch (e, stackTrace) {
+        logger.w('create dyn $e', error: e, stackTrace: stackTrace);
       }
     }
   }
@@ -345,8 +345,8 @@ abstract final class RequestUtils {
             },
           );
         }
-      } catch (e) {
-        logger.d('check dyn error: $e');
+      } catch (e, stackTrace) {
+        logger.w('check dyn error: $e', error: e, stackTrace: stackTrace);
       }
     }
   }

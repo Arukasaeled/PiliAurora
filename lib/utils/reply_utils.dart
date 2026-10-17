@@ -87,8 +87,8 @@ abstract final class ReplyUtils {
           mid,
           cookieString,
         );
-      } catch (e) {
-        logger.d('biliSendCommAntifraud: $e');
+      } catch (e, stackTrace) {
+        logger.w('biliSendCommAntifraud: $e', error: e, stackTrace: stackTrace);
       }
       return;
     }

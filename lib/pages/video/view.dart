@@ -262,8 +262,8 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
           videoDetailController.refreshPage();
         }
       }
-    } catch (e) {
-      logger.d('handle player status: $e');
+    } catch (e, stackTrace) {
+      logger.w('handle player status: $e', error: e, stackTrace: stackTrace);
     }
 
     if (status.isCompleted) {
@@ -1552,8 +1552,12 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
                     ),
                   ),
                 );
-              } catch (e) {
-                logger.d('build stein edges: $e');
+              } catch (e, stackTrace) {
+                logger.w(
+                  'build stein edges: $e',
+                  error: e,
+                  stackTrace: stackTrace,
+                );
                 return const SizedBox.shrink();
               }
             }
