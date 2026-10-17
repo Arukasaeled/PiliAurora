@@ -90,6 +90,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       'previewCacheBytes': previewCache.sizeBytes,
       'previewCacheLimitBytes': previewCache.maxBytes,
       'live': isLive,
+      'appLifecycle': WidgetsBinding.instance.lifecycleState?.name,
       ..._runtime.videoFrameDiagnostics,
       if (danmakuController case final controller?)
         'danmakuScheduler': controller.schedulerDiagnostics,
