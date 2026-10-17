@@ -954,7 +954,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     List<BottomControlType> userSpecifyItemLeft = [
       .playOrPause,
       .time,
-      .volume,
+      if (PlatformUtils.isDesktop) .volume,
       if (!isNotFileSource || anySeason) ...[.pre, .next],
     ];
 
