@@ -38,8 +38,6 @@ import 'package:pili_aurora/pages/video/post_panel/popup_menu_text.dart';
 import 'package:pili_aurora/pages/video/post_panel/view.dart';
 import 'package:pili_aurora/pages/video/widgets/header_control.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
-import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
-import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/super_resolution_policy.dart';
 import 'package:pili_aurora/plugin/pl_player/models/bottom_control_type.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/desktop_volume_control.dart';
@@ -72,7 +70,6 @@ import 'package:pili_aurora/utils/extension/theme_ext.dart';
 import 'package:pili_aurora/utils/feed_back.dart';
 import 'package:pili_aurora/utils/id_utils.dart';
 import 'package:pili_aurora/utils/image_utils.dart';
-import 'package:pili_aurora/utils/mobile_observer.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -143,7 +140,7 @@ class PLVideoPlayer extends StatefulWidget {
 }
 
 class _PLVideoPlayerState extends State<PLVideoPlayer>
-    with WidgetsBindingObserver, TickerProviderStateMixin {
+    with TickerProviderStateMixin {
   // Android 与 Windows 在媒体加载时按设备像素上限确定输出；页面布局由 Flutter 处理。
   bool get _limitWindowsVideoOutput => Platform.isWindows;
 
@@ -169,19 +166,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   GestureType? _gestureType;
   Offset? _initialFocalPoint;
-
-  PlaybackOwner? _backgroundOwner;
-  PlaybackInhibitorToken? _backgroundToken;
-
-  void _releaseBackgroundInhibitor() {
-    final owner = _backgroundOwner;
-    final token = _backgroundToken;
-    _backgroundOwner = null;
-    _backgroundToken = null;
-    if (owner != null && token != null) {
-      unawaited(owner.releaseInhibitor(token));
-    }
-  }
 
   StreamSubscription? _brightnessListener;
   StreamSubscription? _videoSizeListener;
@@ -277,7 +261,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   @override
   void initState() {
     super.initState();
-    addObserverMobile(this);
 
     _controlsListener = plPlayerController.showControls.listen(
       _onControlChanged,
@@ -406,23 +389,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     );
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!plPlayerController.continuePlayInBackground.value) {
-      if (const <AppLifecycleState>[.paused, .detached].contains(state)) {
-        final owner = plPlayerController.activePlaybackOwner;
-        if (plPlayerController.playerStatus.isPlaying && owner != null) {
-          _backgroundOwner = owner;
-          _backgroundToken ??= owner.acquireInhibitor(
-            PlaybackInhibitorSource.backgroundPolicy,
-          );
-        }
-      } else if (state == AppLifecycleState.resumed) {
-        _releaseBackgroundInhibitor();
-      }
-    }
-  }
-
   Future<void> setBrightness(double value) async {
     _brightnessValue.value = value;
     try {
@@ -448,8 +414,6 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   @override
   void dispose() {
-    _releaseBackgroundInhibitor();
-    removeObserverMobile(this);
     _unregisterVideoDiagnostics?.call();
     _danmakuListener?.cancel();
     _tapGestureRecognizer.dispose();

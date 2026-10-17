@@ -40,6 +40,7 @@ import 'package:pili_aurora/plugin/pl_player/playback/super_resolution_policy.da
 import 'package:pili_aurora/services/android_video_output_limit.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/network_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/audio_recovery.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/background_policy.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/playback_network_recovery.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/services/desktop_playback_windows.dart';
@@ -596,6 +597,13 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   // 添加一个私有构造函数
   PlPlayerController._() {
     if (PlatformUtils.isMobile) {
+      _backgroundPolicy = PlaybackBackgroundPolicy(
+        session: _session,
+        continuePlaying: continuePlayInBackground.value,
+      );
+      _backgroundPolicySubscription = continuePlayInBackground.listen(
+        (value) => _backgroundPolicy?.continuePlaying = value,
+      );
       _orientationListener = NativeDeviceOrientationPlatform.instance
           .onOrientationChanged(
             checkIsAutoRotate: checkIsAutoRotate,
@@ -638,6 +646,8 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   late final PlaybackSession _session = PlaybackSession(runtime: _runtime);
   PlaybackNetworkRecovery? _networkRecovery;
   PlaybackAudioRecovery? _audioRecovery;
+  PlaybackBackgroundPolicy? _backgroundPolicy;
+  StreamSubscription<bool>? _backgroundPolicySubscription;
   bool _audioSeekInProgress = false;
   PlaybackOwner? _activeOwner;
   StreamSubscription<PlaybackSnapshot>? _snapshotSubscription;
@@ -702,6 +712,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   void _disposeFacadeAfterRelease() {
     if (_facadeDisposed) return;
     _facadeDisposed = true;
+    _backgroundPolicy?.dispose();
+    _backgroundPolicy = null;
+    unawaited(_backgroundPolicySubscription?.cancel());
+    _backgroundPolicySubscription = null;
     final ownsFacade = identical(_instance, this);
     _snapshotSubscription?.cancel();
     _snapshotSubscription = null;

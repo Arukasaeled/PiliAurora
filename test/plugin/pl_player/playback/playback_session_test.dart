@@ -1,11 +1,58 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/background_policy.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('加载期间进入后台抑制后续播放，切换 owner 后仍保持策略', () async {
+    final binding = TestWidgetsFlutterBinding.instance;
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final policy = PlaybackBackgroundPolicy(
+      session: session,
+      continuePlaying: false,
+    );
+    addTearDown(() {
+      policy.dispose();
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    });
+    final first = session.attach();
+    final pending = Completer<PlaybackPlan?>();
+    final result = first.query(
+      (_) => pending.future,
+      start: PlaybackStartPolicy.play,
+    );
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    pending.complete(_plan('first'));
+    expect((await result).outcome, LoadOutcome.ready);
+    expect(runtime.playCalls, [false]);
+    final second = session.attach();
+    await second.load(_plan('second'), start: PlaybackStartPolicy.play);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.inhibitors, hasLength(1));
+    policy.continuePlaying = true;
+    await _until(() => runtime.playCalls.last);
+    expect(runtime.playCalls.last, isTrue);
+    expect(session.currentSnapshot.inhibitors, isEmpty);
+    policy.continuePlaying = false;
+    await _until(() => !runtime.playCalls.last);
+    expect(runtime.playCalls.last, isFalse);
+    await second.setPlaying(false);
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await Future<void>.delayed(Duration.zero);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.inhibitors, isEmpty);
+    first.close();
+    second.close();
+    await runtime.released;
+  });
+
   test('直播候选确认无视频轨后立即尝试下一源，保留请求和播放意图', () async {
     final runtime = _FakeRuntime();
     final session = PlaybackSession(runtime: runtime);
