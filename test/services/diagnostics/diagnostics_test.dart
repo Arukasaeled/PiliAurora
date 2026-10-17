@@ -367,6 +367,42 @@ void main() {
     },
   );
 
+  test('clearing records resets pause drops and forwarding failures', () async {
+    diagnostics
+      ..forwardRecord = ((_) => false)
+      ..log(DiagnosticLogLevel.error, 'app', 'forward failed');
+    await diagnostics.pauseWrites();
+    for (var i = 0; i < 401; i++) {
+      diagnostics.log(DiagnosticLogLevel.error, 'app', 'buffered $i');
+    }
+    expect(diagnostics.forwardingFailures, 1);
+    expect(diagnostics.droppedRecords, greaterThan(0));
+    await diagnostics.clearPausedRecords();
+    diagnostics.resumeWrites();
+    expect(diagnostics.forwardingFailures, 0);
+    expect(diagnostics.droppedRecords, 0);
+    expect((diagnostics.storageStatus['pausedBuffer'] as Map)['dropped'], 0);
+  });
+
+  test('pause flush failure immediately restores writes', () async {
+    final failing = _FailingPauseDiagnostics();
+    final target = Directory('${directory.path}/pause-failure');
+    await failing.initialize(directory: target);
+    failing.failNextFlush = true;
+    try {
+      await expectLater(failing.exportArchive(), throwsStateError);
+      failing.log(DiagnosticLogLevel.error, 'app', 'after failed pause');
+      await failing.flush().timeout(const Duration(seconds: 1));
+      expect(
+        await File('${target.path}/runtime.jsonl').readAsString(),
+        contains('after failed pause'),
+      );
+    } finally {
+      failing.dispose();
+      await failing.flushLocal();
+    }
+  });
+
   test('levels change immediately and recent logs stay bounded', () async {
     diagnostics.log(DiagnosticLogLevel.debug, 'test', 'hidden');
     expect(diagnostics.recentLogs, isEmpty);
@@ -539,4 +575,16 @@ void main() {
       }
     },
   );
+}
+
+class _FailingPauseDiagnostics extends Diagnostics {
+  bool failNextFlush = false;
+  @override
+  Future<void> flushLocal() {
+    if (failNextFlush) {
+      failNextFlush = false;
+      return Future<void>.error(StateError('pause flush failed'));
+    }
+    return super.flushLocal();
+  }
 }

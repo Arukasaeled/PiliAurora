@@ -472,8 +472,8 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<T> _maintain<T>(Future<T> Function() action) {
     final result = _maintenanceTail.then((_) async {
-      await pauseWrites();
       try {
+        await pauseWrites();
         await pauseChildren?.call();
         return await action();
       } finally {
@@ -801,6 +801,8 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     for (final file in await _childFiles()) {
       if (file.existsSync()) await file.delete();
     }
+    _deferredDrops = 0;
+    forwardingFailures = 0;
     _recent.clear();
     latest = null;
     notifyListeners();

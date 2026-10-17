@@ -2,6 +2,7 @@
 import 'dart:io';
 
 import 'package:pili_aurora/http/api.dart';
+import 'package:pili_aurora/http/request_failure_policy.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/models/common/account_type.dart';
 import 'package:pili_aurora/utils/accounts.dart';
@@ -159,24 +160,9 @@ class AccountManager extends Interceptor {
   }
 
   static void toast(DioException err) {
-    const skipShow = [
-      'heartbeat',
-      'history/report',
-      'roomEntryAction',
-      'seg.so',
-      'online/total',
-      'github',
-      'hdslb.com',
-      'biliimg.com',
-      'site/getCoin',
-    ];
-    String url = err.requestOptions.uri.toString();
-    if (skipShow.any(url.contains) ||
-        (url.contains('skipSegments') && err.requestOptions.method == 'GET')) {
-      // skip
-    } else {
-      dioError(err).then((res) => SmartDialog.showToast(res + url));
-    }
+    if (isExpectedHttpFailure(err)) return;
+    final url = err.requestOptions.uri.toString();
+    dioError(err).then((res) => SmartDialog.showToast(res + url));
   }
 
   static Future<void> _saveCookies(Account account, Response response) async {

@@ -65,8 +65,9 @@ void main() {
   test(
     'toast layer does not duplicate an interceptor failure record',
     () async {
+      await diagnostics.configure(level: DiagnosticLogLevel.debug);
       final before = Diagnostics.instance.recentLogs.length;
-      final dio = Dio()..httpClientAdapter = _TestHttpAdapter();
+      final dio = Dio()..httpClientAdapter = _FailureAdapter();
       dio.interceptors.addAll([
         DiagnosticHttpInterceptor(diagnostics: diagnostics),
         InterceptorsWrapper(
@@ -78,7 +79,9 @@ void main() {
       ]);
       try {
         await expectLater(
-          dio.get<Object?>('https://heartbeat.test/failure'),
+          dio.get<Object?>(
+            'https://api.bilibili.com/x/click-interface/web/heartbeat',
+          ),
           throwsA(isA<DioException>()),
         );
         expect(diagnostics.recentLogs, hasLength(1));
@@ -98,6 +101,14 @@ void main() {
         'https://api.bilibili.com/x/click-interface/web/heartbeat',
         'https://api.bilibili.com/x/player/online/total',
         'https://account.bilibili.com/site/getCoin',
+        'https://api.bilibili.com/x/v2/history/report',
+        'https://api.bilibili.com/x/v2/dm/web/seg.so',
+        'https://api.live.bilibili.com/xlive/web-room/v1/index/roomEntryAction',
+        'https://api.github.com/repos/test/project',
+        'https://raw.githubusercontent.com/test/project/file',
+        'https://i0.hdslb.com/test.jpg',
+        'https://test.biliimg.com/test.jpg',
+        'https://custom.example/api/skipSegments',
       ];
       try {
         for (final url in expected) {
@@ -121,13 +132,13 @@ void main() {
         }
         expect(
           diagnostics.recentLogs.where((r) => r['level'] == 'debug'),
-          hasLength(3),
+          hasLength(expected.length),
         );
         if (tracing) {
           diagnostics.capture();
           final stats =
               (diagnostics.latest!['operations'] as Map)['http'] as Map;
-          expect(stats['errors'], 7);
+          expect(stats['errors'], expected.length * 2 + 1);
         }
       } finally {
         dio.close(force: true);

@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:pili_aurora/http/request_failure_policy.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 
 class DiagnosticHttpInterceptor extends Interceptor {
@@ -7,19 +8,6 @@ class DiagnosticHttpInterceptor extends Interceptor {
 
   final Diagnostics _diagnostics;
   static const _key = 'piliDiagnosticOperation';
-
-  static DiagnosticLogLevel _failureLevel(DioException error) {
-    if (error.type == DioExceptionType.cancel) return DiagnosticLogLevel.debug;
-    final uri = error.requestOptions.uri;
-    final expected =
-        (uri.host == 'api.bilibili.com' &&
-            const {
-              '/x/click-interface/web/heartbeat',
-              '/x/player/online/total',
-            }.contains(uri.path)) ||
-        (uri.host == 'account.bilibili.com' && uri.path == '/site/getCoin');
-    return expected ? DiagnosticLogLevel.debug : DiagnosticLogLevel.error;
-  }
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
@@ -58,7 +46,9 @@ class DiagnosticHttpInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
-    final level = _failureLevel(err);
+    final level = isExpectedHttpFailure(err)
+        ? DiagnosticLogLevel.debug
+        : DiagnosticLogLevel.error;
     final operation = err.requestOptions.extra.remove(_key) as TraceOperation?;
     operation?.finish(
       errorLevel: level,
