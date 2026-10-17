@@ -351,6 +351,7 @@ class PlaybackQuery {
   final bool Function() _isCurrent;
   final void Function(void Function() cancel) _registerCancel;
 
+  /// 成功加载后仍可用于当前媒体的页面、字幕等回写；新请求或 owner 失效后结束。
   bool get isCurrent => _isCurrent();
 
   void registerCancel(void Function() cancel) => _registerCancel(cancel);

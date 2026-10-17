@@ -6,6 +6,34 @@ import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 
 void main() {
+  test('查询成功后业务回写仍属于当前媒体，下一次加载使其失效', () async {
+    var now = Duration.zero;
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime, monotonicNow: () => now);
+    final owner = session.attach();
+    late PlaybackQuery query;
+    final loaded = await owner.query((accepted) async {
+      query = accepted;
+      return _plan('online-video');
+    }, start: PlaybackStartPolicy.play);
+    expect(loaded.outcome, LoadOutcome.ready);
+    expect(query.isCurrent, isTrue, reason: '页面在 ready 后才挂载视频和字幕');
+    now = const Duration(minutes: 1);
+    expect(query.isCurrent, isTrue, reason: '成功加载后的回写不再受加载 deadline 限制');
+    await owner.load(_plan('next-video'));
+    expect(query.isCurrent, isFalse);
+    late PlaybackQuery current;
+    await owner.query((accepted) async {
+      current = accepted;
+      return _plan('next-video');
+    });
+    expect(current.isCurrent, isTrue);
+    owner.invalidateRequests();
+    expect(current.isCurrent, isFalse);
+    owner.close();
+    await session.shutdown();
+  });
+
   test('新加载立即结算旧请求，但等旧原生调用排空后才执行新加载', () async {
     final runtime = _FakeRuntime();
     final session = PlaybackSession(runtime: runtime);

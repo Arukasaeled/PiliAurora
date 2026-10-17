@@ -276,9 +276,14 @@ class PlaybackSession {
       return Future.value(_closedOrInactive(owner));
     }
     _publish();
+    final ownerGeneration = owner._generation;
     final query = PlaybackQuery(
       requestId: request.id,
-      isCurrent: () => _isRequestCurrent(request),
+      isCurrent: () =>
+          owner._generation == ownerGeneration &&
+          (_isRequestCurrent(request) ||
+              request.loaded &&
+                  _isCommandCurrent(owner, request.id, request.loadId!)),
       registerCancel: (cancel) {
         if (_isRequestCurrent(request)) {
           request.cancelCallbacks.add(cancel);
@@ -1478,6 +1483,7 @@ class PlaybackSession {
   }
 
   void _finishRequest(_AcceptedRequest request, LoadResult result) {
+    request.loaded = result.outcome == LoadOutcome.ready;
     request.timer?.cancel();
     request.timer = null;
     request.cancelCallbacks.clear();
@@ -2140,6 +2146,7 @@ class _AcceptedRequest {
   Timer? timer;
   int? loadId;
   PlaybackPlan? finalPlan;
+  bool loaded = false;
   bool recovery = false;
 
   void registerCancel(void Function() cancel) {
