@@ -27,7 +27,7 @@ class FakePlayer {
 }
 class FakeController {
   FakeController(VideoOutputSize size)
-    : configuration = VideoControllerConfiguration(width: size.width, height: size.height),
+    : configuration = const VideoControllerConfiguration(),
       rect = ValueNotifier(ui.Rect.fromLTWH(0, 0, size.width.toDouble(), size.height.toDouble()));
   final VideoControllerConfiguration configuration;
   final player = FakePlayer();

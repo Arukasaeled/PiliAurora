@@ -11,6 +11,7 @@ import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_playback_runtime.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
+import 'package:pili_aurora/services/windows_video_output_limit.dart';
 import 'package:window_manager/window_manager.dart';
 
 /// 本地样片的生产会话设备验收；报告不保存地址、账号或原生日志。
@@ -34,6 +35,7 @@ Future<void> main() async {
   final skipRapid = config['skipRapid'] == true;
   final rapidOnly = config['rapidOnly'] == true;
   final diagnosticReplayOnly = config['diagnosticReplayOnly'] == true;
+  final startupOnly = config['startupOnly'] == true;
   final switchSources = (config['switchSources'] as List?)?.cast<String>();
   final switchOnly = switchSources != null;
   final mountAfterLoad = config['mountAfterLoad'] == true;
@@ -124,6 +126,9 @@ Future<void> main() async {
     String name,
     Future<Map<String, Object?>> Function() body,
   ) async {
+    if (startupOnly && name != 'paused-load' && name != 'shutdown-released') {
+      return;
+    }
     if (switchOnly &&
         name != 'paused-load' &&
         name != 'shutdown-released' &&
@@ -268,6 +273,27 @@ Future<void> main() async {
       check(result.outcome == LoadOutcome.ready, 'load failed');
       canMount = true;
       check(!runtime.player!.state.playing, 'pause intent lost');
+      if (Platform.isWindows) {
+        final expected = VideoOutputSizePolicy.fitWithinLimit(
+          source: VideoOutputSizePolicy.videoDisplaySize(
+            runtime.player!.state.videoParams,
+          ),
+          limit: WindowsVideoOutputLimit.detected,
+        );
+        final rect = runtime.videoController!.rect.value;
+        report['initialOutput'] = {
+          'expectedWidth': expected?.width,
+          'expectedHeight': expected?.height,
+          'actualWidth': rect?.width,
+          'actualHeight': rect?.height,
+        };
+        check(
+          expected != null &&
+              rect?.width == expected.width &&
+              rect?.height == expected.height,
+          'ready output still needs a visible startup resize',
+        );
+      }
       return {
         'outcome': result.outcome.name,
         'output': session.currentSnapshot.presentation.outputStrategy.name,

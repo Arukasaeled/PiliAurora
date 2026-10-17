@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:get/get.dart';
 import 'package:media_kit/media_kit.dart';
@@ -20,6 +20,8 @@ import 'package:pili_aurora/pages/video/controller.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/live_room/view.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/desktop_playback_menu.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/video_output_handoff.dart';
 import 'package:pili_aurora/services/desktop_playback_request.dart';
 import 'package:pili_aurora/services/desktop_playback_windows.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
@@ -47,7 +49,9 @@ Future<void> main(List<String> arguments) async {
     }
     final report = <String, Object?>{};
     try {
+      final startup = _observeStartup();
       await Future<void>.delayed(const Duration(seconds: 12));
+      report['startup'] = await startup;
       final player = PlPlayerController.instance;
       if (player != null) {
         final snapshot = player.currentPlaybackSnapshot;
@@ -86,6 +90,7 @@ Future<void> main(List<String> arguments) async {
         'beforePixels': before,
         'afterPixels': after,
         'passed':
+            (report['startup'] as Map)['passed'] == true &&
             before['range'] != null &&
             (before['range']! as int) > 40 &&
             (after['range']! as int) > 40 &&
@@ -229,8 +234,113 @@ Future<void> main(List<String> arguments) async {
   await reportFile.writeAsString(
     const JsonEncoder.withIndent('  ').convert(report),
   );
+  if (options['captureMenus'] == true) {
+    final boundary = GlobalKey();
+    for (final brightness in Brightness.values) {
+      runApp(
+        RepaintBoundary(
+          key: boundary,
+          child: MaterialApp(
+            key: ValueKey(brightness),
+            theme: ThemeData(brightness: brightness),
+            localizationsDelegates: GlobalMaterialLocalizations.delegates,
+            locale: const Locale('zh', 'CN'),
+            supportedLocales: const [Locale('zh', 'CN')],
+            home: Scaffold(
+              backgroundColor: const Color(0xFF405A48),
+              body: Center(
+                child: DesktopPlaybackMenu(
+                  controller: PlPlayerController.getInstance(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      void openMenu(Element element) {
+        if (element.widget is PopupMenuButton<String> &&
+            element is StatefulElement) {
+          (element.state as PopupMenuButtonState<String>).showButtonMenu();
+        } else {
+          element.visitChildren(openMenu);
+        }
+      }
+
+      WidgetsBinding.instance.rootElement!.visitChildren(openMenu);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      int? foreground;
+      void inspectText(Element element) {
+        if (element.widget case Text(data: '弹出为独立小窗')) {
+          foreground = DefaultTextStyle.of(element).style.color?.toARGB32();
+        }
+        element.visitChildren(inspectText);
+      }
+
+      WidgetsBinding.instance.rootElement!.visitChildren(inspectText);
+      report['menuText-${brightness.name}'] = foreground;
+      report['passed'] = report['passed'] == true && foreground != null;
+      final render =
+          boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final image = await render.toImage();
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      await File('$output.menu-${brightness.name}.png')
+          .writeAsBytes(data!.buffer.asUint8List());
+      image.dispose();
+    }
+    await reportFile.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(report),
+    );
+  }
   await GStorage.close();
   await windowManager.destroy();
+}
+
+Future<Map<String, Object?>> _observeStartup() async {
+  final watch = Stopwatch()..start();
+  final geometry = <String>[];
+  var visibleWithoutTexture = 0, handoffSamples = 0;
+  int? firstTextureMs;
+  while (watch.elapsed < const Duration(seconds: 6)) {
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    var count = 0;
+    void visit(RenderObject object) {
+      if (object is TextureBox) count++;
+      object.visitChildren(visit);
+    }
+
+    for (final view in RendererBinding.instance.renderViews) {
+      visit(view);
+    }
+    if (count == 0 && await windowManager.isVisible()) visibleWithoutTexture++;
+    final player = PlPlayerController.instance;
+    if (count > 0 && player?.currentPlaybackSnapshot.actual.playing == true) {
+      firstTextureMs ??= watch.elapsedMilliseconds;
+      final rect = player!.videoController?.rect.value;
+      final size = '${rect?.width}x${rect?.height}';
+      if (geometry.isEmpty || geometry.last != size) geometry.add(size);
+      void inspect(Element element) {
+        final widget = element.widget;
+        if (widget is VideoOutputHandoffView && widget.handoff.image != null) {
+          handoffSamples++;
+        }
+        element.visitChildren(inspect);
+      }
+
+      WidgetsBinding.instance.rootElement?.visitChildren(inspect);
+    }
+  }
+  return {
+    'firstTextureMs': firstTextureMs,
+    'visibleWithoutTextureSamples': visibleWithoutTexture,
+    'geometryWhilePlaying': geometry,
+    'handoffSamples': handoffSamples,
+    'passed':
+        firstTextureMs != null &&
+        visibleWithoutTexture == 0 &&
+        geometry.length == 1 &&
+        handoffSamples == 0,
+  };
 }
 
 Future<Map<String, Object?>> _texturePixels() async {
