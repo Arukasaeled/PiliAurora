@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/services/diagnostics/http_diagnostics.dart';
+import 'package:pili_aurora/utils/accounts/account_manager/account_mgr.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -60,6 +61,33 @@ void main() {
       dio.close(force: true);
     }
   });
+
+  test(
+    'toast layer does not duplicate an interceptor failure record',
+    () async {
+      final before = Diagnostics.instance.recentLogs.length;
+      final dio = Dio()..httpClientAdapter = _TestHttpAdapter();
+      dio.interceptors.addAll([
+        DiagnosticHttpInterceptor(diagnostics: diagnostics),
+        InterceptorsWrapper(
+          onError: (error, handler) {
+            AccountManager.toast(error);
+            handler.next(error);
+          },
+        ),
+      ]);
+      try {
+        await expectLater(
+          dio.get<Object?>('https://heartbeat.test/failure'),
+          throwsA(isA<DioException>()),
+        );
+        expect(diagnostics.recentLogs, hasLength(1));
+        expect(Diagnostics.instance.recentLogs.length, before);
+      } finally {
+        dio.close(force: true);
+      }
+    },
+  );
 
   test('HTTP retries do not leave an active operation behind', () async {
     await diagnostics.configure(tracing: true);

@@ -45,6 +45,7 @@ class DiagnosticHttpInterceptor extends Interceptor {
     final operation = err.requestOptions.extra.remove(_key) as TraceOperation?;
     operation?.finish(
       error: err.type.name,
+      stack: err.stackTrace,
       details: {'status': err.response?.statusCode},
     );
     if (operation == null) {
@@ -52,6 +53,7 @@ class DiagnosticHttpInterceptor extends Interceptor {
         DiagnosticLogLevel.error,
         'http',
         '请求失败',
+        stack: err.stackTrace,
         details: {
           'host': err.requestOptions.uri.host,
           'path': err.requestOptions.uri.path,

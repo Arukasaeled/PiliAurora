@@ -1,4 +1,3 @@
-import 'dart:async' show unawaited;
 import 'dart:io';
 
 import 'package:pili_aurora/app/app.dart';
@@ -57,7 +56,11 @@ Future<void> _bootstrapApplication(List<String> arguments) async {
         : null,
   );
   if (!playerWindow) {
-    Diagnostics.instance.onSettingsChanged = windows.syncDiagnosticSettings;
+    Diagnostics.instance
+      ..onSettingsChanged = windows.syncDiagnosticSettings
+      ..pauseChildren = windows.pauseWindowDiagnostics
+      ..clearChildren = windows.clearWindowDiagnostics
+      ..resumeChildren = windows.resumeWindowDiagnostics;
   }
   final initialization = playerWindow ? await windows.connectPlayer() : null;
   if (playerWindow) {
@@ -150,28 +153,14 @@ Future<void> _bootstrapApplication(List<String> arguments) async {
 
       if (shutdown?.outcome == PlaybackShutdownOutcome.cleanupIncomplete) {
         logger.w('播放器在关闭时未能于预算内完成清理', error: shutdown?.failure);
-        unawaited(
-          controller!.playbackReleased.then<void>(
-            (_) async {
-              try {
-                await cleanupWindowResources();
-              } catch (error, stackTrace) {
-                logger.e(
-                  '播放器释放后的窗口资源清理失败',
-                  error: error,
-                  stackTrace: stackTrace,
-                );
-              }
-            },
-            onError: (Object error, StackTrace stackTrace) {
-              logger.e(
-                '播放器资源未确认释放，跳过依赖资源清理',
-                error: error,
-                stackTrace: stackTrace,
-              );
-            },
-          ),
-        );
+        try {
+          await controller!.playbackReleased.timeout(
+            const Duration(seconds: 3),
+          );
+          await cleanupWindowResources();
+        } catch (error, stackTrace) {
+          logger.e('播放器延迟清理未完成，窗口结束清理等待', error: error, stackTrace: stackTrace);
+        }
         return;
       }
       if (controller != null) await controller.playbackReleased;

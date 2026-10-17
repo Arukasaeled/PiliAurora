@@ -2,7 +2,6 @@
 import 'dart:io';
 
 import 'package:pili_aurora/http/api.dart';
-import 'package:pili_aurora/services/logger.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/models/common/account_type.dart';
 import 'package:pili_aurora/utils/accounts.dart';
@@ -172,9 +171,6 @@ class AccountManager extends Interceptor {
       'site/getCoin',
     ];
     String url = err.requestOptions.uri.toString();
-    logger
-        .scoped('http')
-        .w('网络请求失败: $url', error: err, stackTrace: err.stackTrace);
     if (skipShow.any(url.contains) ||
         (url.contains('skipSegments') && err.requestOptions.method == 'GET')) {
       // skip

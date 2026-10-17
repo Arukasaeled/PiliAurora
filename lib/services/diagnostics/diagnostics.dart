@@ -54,6 +54,17 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   bool Function(Map<String, Object?>)? forwardRecord;
   int forwardingFailures = 0;
   Future<void> Function()? forwardFlush;
+  Future<void> Function()? pauseChildren;
+  Future<void> Function()? resumeChildren;
+  Future<void> Function()? clearChildren;
+  Future<void> _maintenanceTail = Future.value();
+  bool _writesPaused = false;
+  Completer<void>? _writesResumed;
+  Timer? _pauseTimeout;
+  final _deferred =
+      Queue<(DiagnosticRecordStore?, Map<String, Object?>, bool)>();
+  int _deferredDrops = 0;
+  final _deferredTrace = Queue<Map<String, Object?>>();
   VoidCallback? onSettingsChanged;
   Directory? _directory;
   bool _childProcess = false;
@@ -126,6 +137,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       _recent.values.expand((queue) => queue).toList()
         ..sort((a, b) => _compareRecords(b, a));
   int get droppedRecords =>
+      _deferredDrops +
       (_logs?.dropped ?? 0) +
       (_trace?.dropped ?? 0) +
       (_playerLogs?.dropped ?? 0);
@@ -333,15 +345,78 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
         ),
       if (_tracing) 'session': _session,
     };
+    final accepted = _persist(store, record, forward: true);
+    return DiagnosticLogResult(record: record, queued: accepted);
+  }
+
+  bool _persist(
+    DiagnosticRecordStore? store,
+    Map<String, Object?> record, {
+    bool forward = false,
+  }) {
+    if (_writesPaused) {
+      if (_deferred.length + _deferredTrace.length >= 400) {
+        _deferredDrops++;
+        return false;
+      }
+      _deferred.add((store, record, forward));
+      return false;
+    }
     _remember(record);
     final accepted = store?.add(record) ?? false;
-    try {
-      if (forwardRecord?.call(record) == false) forwardingFailures++;
-    } catch (_) {
-      forwardingFailures++;
+    if (forward) {
+      try {
+        if (forwardRecord?.call(record) == false) forwardingFailures++;
+      } catch (_) {
+        forwardingFailures++;
+      }
     }
     _notifySoon();
-    return DiagnosticLogResult(record: record, queued: accepted);
+    return accepted;
+  }
+
+  Future<void> pauseWrites() async {
+    _writesResumed ??= Completer<void>();
+    _writesPaused = true;
+    _pauseTimeout?.cancel();
+    // 主窗口异常退出时，子窗口会自行恢复日志保存。
+    _pauseTimeout = Timer(const Duration(seconds: 60), resumeWrites);
+    await flushLocal();
+  }
+
+  void resumeWrites() {
+    _pauseTimeout?.cancel();
+    _writesPaused = false;
+    while (_deferred.isNotEmpty) {
+      final (store, record, forward) = _deferred.removeFirst();
+      _persist(store, record, forward: forward);
+    }
+    while (_deferredTrace.isNotEmpty) {
+      _trace?.add(_deferredTrace.removeFirst());
+    }
+    _writesResumed?.complete();
+    _writesResumed = null;
+  }
+
+  Future<T> _maintain<T>(Future<T> Function() action) {
+    final result = _maintenanceTail.then((_) async {
+      await pauseWrites();
+      try {
+        await pauseChildren?.call();
+        return await action();
+      } finally {
+        try {
+          await resumeChildren?.call();
+        } finally {
+          resumeWrites();
+        }
+      }
+    });
+    _maintenanceTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
   }
 
   void _remember(Map<String, Object?> record) {
@@ -362,9 +437,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
         maxStringLength: 65536,
       ) as Map,
     )..['windowId'] = windowId;
-    _remember(safe);
-    (player ? _playerLogs : _logs)?.add(safe);
-    _notifySoon();
+    _persist(player ? _playerLogs : _logs, safe);
   }
 
   VoidCallback register(String name, Map<String, Object?> Function() reader) {
@@ -411,6 +484,18 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  void _writeTrace(Map<String, Object?> record) {
+    if (_writesPaused) {
+      if (_deferred.length + _deferredTrace.length >= 400) {
+        _deferredDrops++;
+      } else {
+        _deferredTrace.add(record);
+      }
+      return;
+    }
+    _trace?.add(record);
+  }
+
   void _start() {
     _processMetrics.reset();
     unawaited(_gpuMetrics.start());
@@ -425,7 +510,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       ..start();
     _frames.take();
     SchedulerBinding.instance.addTimingsCallback(_onFrames);
-    _trace?.add({
+    _writeTrace({
       'type': 'session',
       'session': _session,
       'platform': Platform.operatingSystem,
@@ -447,7 +532,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void capture() {
-    if (!_tracing) return;
+    if (!_tracing || _writesPaused) return;
     final cache = PaintingBinding.instance.imageCache;
     final sources = <String, Object?>{};
     for (final entry in _sources.entries.toList()) {
@@ -506,7 +591,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     if (Platform.isWindows) {
       latest!['gpu'] = DiagnosticRedactor.clean(_gpuMetrics.sample());
     }
-    _trace?.add(latest!);
+    _writeTrace(latest!);
     _notifySoon();
   }
 
@@ -518,7 +603,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     _timer = null;
     _elapsed.stop();
     SchedulerBinding.instance.removeTimingsCallback(_onFrames);
-    _trace?.add({
+    _writeTrace({
       'type': 'stop',
       'session': _session,
       'time': DateTime.now().toUtc().toIso8601String(),
@@ -548,13 +633,26 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       }
       await for (final file in entry.list(followLinks: false)) {
         if (file is File &&
-            RegExp(r'^(runtime|player|performance)\.jsonl(\.[0-9]+)?$')
-                .hasMatch(file.uri.pathSegments.last)) {
+            RegExp(
+              r'^(?:(runtime|player|performance)\.jsonl(\.[0-9]+)?|status\.json)$',
+            ).hasMatch(file.uri.pathSegments.last)) {
           files.add(file);
         }
       }
     }
     return files;
+  }
+
+  Future<List<Object?>> _childStatuses() async {
+    final statuses = <Object?>[];
+    for (final file in await _childFiles()) {
+      if (file.uri.pathSegments.last == 'status.json') {
+        statuses.add(
+          DiagnosticRedactor.clean(jsonDecode(await file.readAsString())),
+        );
+      }
+    }
+    return statuses;
   }
 
   Future<List<String>> _childSnapshots(Directory destination) async {
@@ -565,7 +663,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       try {
         paths.add((await file.copy('${destination.path}/$name')).path);
       } on FileSystemException {
-        // 子窗口可能正轮转此文件，跳过已被替换的快照。
+        if (file.existsSync()) rethrow;
       }
     }
     return paths;
@@ -578,15 +676,49 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
     ...?await _trace?.files(),
     ...?await _legacyReports?.files(),
   ];
-  Future<void> flush() async {
+  Future<void> flushLocal() async {
     await _logs?.flush();
     await _playerLogs?.flush();
     await _trace?.flush();
+    if (_childProcess && _directory != null) {
+      await _directory!.create(recursive: true);
+      await File('${_directory!.path}/status.json').writeAsString(
+        jsonEncode(
+          DiagnosticRedactor.clean({
+            'time': DateTime.now().toUtc().toIso8601String(),
+            'runId': _runId,
+            'processId': pid,
+            'windowId': _windowId,
+            'storage': storageStatus,
+            'droppedRecords': droppedRecords,
+          }),
+        ),
+      );
+    }
+  }
+
+  Future<void> flush() async {
+    await _writesResumed?.future;
+    await flushLocal();
     await forwardFlush?.call();
   }
 
   Future<void> clear() async {
-    if (_tracing) await configure(tracing: false);
+    await _maintain(() async {
+      if (_tracing) await configure(tracing: false);
+      await clearChildren?.call();
+      await _clear();
+    });
+  }
+
+  Future<void> clearPausedRecords() {
+    if (!_writesPaused) throw StateError('清除子窗口日志前须暂停写入');
+    return _clear();
+  }
+
+  Future<void> _clear() async {
+    _deferred.clear();
+    _deferredTrace.clear();
     await _logs?.clear();
     await _playerLogs?.clear();
     await _trace?.clear();
@@ -605,30 +737,34 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
       'pili-diagnostics-',
     );
     try {
-      final paths = [
-        ...?await _logs?.snapshot(directory),
-        ...?await _playerLogs?.snapshot(directory),
-        ...?await _trace?.snapshot(directory),
-        ...await _legacySnapshots(directory),
-        ...await _childSnapshots(directory),
-      ];
-      final manifest = File('${directory.path}/manifest.json');
-      await manifest.writeAsString(
-        jsonEncode({
-          'schema': 2,
-          'runId': _runId,
-          'storage': storageStatus,
-          'platform': Platform.operatingSystem,
-          'created': DateTime.now().toUtc().toIso8601String(),
-          'level': _level.name,
-          'playerLevel': _playerLevel.name,
-          'intervalMs': _intervalMs,
-          'droppedRecords': droppedRecords,
-          'app': DiagnosticRedactor.clean(_sources['app']?.call()),
-          'notes': '每条 sample 为一个采样周期。RSS/私有提交/缓存值不可相加；null 表示未提供。无 GPU、Dart 堆和各模块独占内存数据。',
-        }),
-      );
-      paths.add(manifest.path);
+      final paths = await _maintain(() async {
+        final paths = [
+          ...?await _logs?.snapshot(directory),
+          ...?await _playerLogs?.snapshot(directory),
+          ...?await _trace?.snapshot(directory),
+          ...await _legacySnapshots(directory),
+          ...await _childSnapshots(directory),
+        ];
+        final manifest = File('${directory.path}/manifest.json');
+        await manifest.writeAsString(
+          jsonEncode({
+            'schema': 2,
+            'runId': _runId,
+            'storage': storageStatus,
+            'children': await _childStatuses(),
+            'platform': Platform.operatingSystem,
+            'created': DateTime.now().toUtc().toIso8601String(),
+            'level': _level.name,
+            'playerLevel': _playerLevel.name,
+            'intervalMs': _intervalMs,
+            'droppedRecords': droppedRecords,
+            'app': DiagnosticRedactor.clean(_sources['app']?.call()),
+            'notes': '每条 sample 为一个采样周期。RSS/私有提交/缓存值不可相加；null 表示未提供。无 GPU、Dart 堆和各模块独占内存数据。',
+          }),
+        );
+        paths.add(manifest.path);
+        return paths;
+      });
       final output = '${directory.path}/diagnostics.zip';
       await compute(_zip, (paths, output));
       return File(output);
@@ -690,6 +826,7 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     if (_tracing) _stop();
     _notification?.cancel();
+    _pauseTimeout?.cancel();
     if (_observingLifecycle) WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -711,7 +848,11 @@ class TraceOperation {
   final _watch = Stopwatch()..start();
   bool _done = false;
 
-  void finish({Object? error, Map<String, Object?>? details}) {
+  void finish({
+    Object? error,
+    StackTrace? stack,
+    Map<String, Object?>? details,
+  }) {
     if (_done) return;
     _done = true;
     final milliseconds = _watch.elapsedMicroseconds / 1000;
@@ -725,6 +866,7 @@ class TraceOperation {
       error == null ? DiagnosticLogLevel.debug : DiagnosticLogLevel.error,
       _category,
       _action,
+      stack: stack,
       details: {
         ...?_details,
         ...?details,
