@@ -18,6 +18,7 @@ final logger = AppLogger(
 
 abstract final class LoggerUtils {
   static Future<void> initialize() async {
+    Diagnostics.instance.observeLifecycle();
     Diagnostics.instance.register(
       'app',
       () => {
@@ -25,27 +26,40 @@ abstract final class LoggerUtils {
         'commit': BuildConfig.commitHash,
       },
     );
-    await Diagnostics.instance.initialize(
-      directory: Directory(p.join(appSupportDirPath, 'diagnostics')),
+    await Diagnostics.instance.configure(
       level: DiagnosticLogLevel.parse(Pref.diagnosticLogLevel),
-      legacyReports: File(
-        p.join(
-          (await getApplicationDocumentsDirectory()).path,
-          '.pili_logs.json',
-        ),
-      ),
       playerLevel: DiagnosticLogLevel.parse(Pref.playerDiagnosticLogLevel),
       tracing: Pref.performanceTracing,
       intervalMs: Pref.performanceIntervalMs,
-      saveSettings: (settings) => GStorage.setting.putAll({
-        SettingBoxKey.diagnosticLogLevel: settings['level'],
-        SettingBoxKey.playerDiagnosticLogLevel: settings['playerLevel'],
-        // 保持旧开关与等级一致，兼容已有备份。
-        SettingBoxKey.enableLog:
-            settings['level'] != DiagnosticLogLevel.off.name,
-        SettingBoxKey.performanceTracing: settings['tracing'],
-        SettingBoxKey.performanceIntervalMs: settings['intervalMs'],
-      }),
     );
+    Diagnostics.instance.saveSettings = (settings) => GStorage.setting.putAll({
+      SettingBoxKey.diagnosticLogLevel: settings['level'],
+      SettingBoxKey.playerDiagnosticLogLevel: settings['playerLevel'],
+      SettingBoxKey.enableLog: settings['level'] != DiagnosticLogLevel.off.name,
+      SettingBoxKey.performanceTracing: settings['tracing'],
+      SettingBoxKey.performanceIntervalMs: settings['intervalMs'],
+    });
   }
+
+  /// 本地设置读取失败时，也能保存启动错误。
+  static Future<void> prepare({int? windowId}) async =>
+      Diagnostics.instance.initialize(
+        directory: Directory(
+          p.join(
+            appSupportDirPath,
+            'diagnostics',
+            windowId == null ? '' : 'window-$windowId',
+          ),
+        ),
+        childProcess: windowId != null,
+        windowId: windowId,
+        legacyReports: windowId != null
+            ? null
+            : File(
+                p.join(
+                  (await getApplicationDocumentsDirectory()).path,
+                  '.pili_logs.json',
+                ),
+              ),
+      );
 }

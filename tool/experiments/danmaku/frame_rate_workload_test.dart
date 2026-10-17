@@ -28,7 +28,6 @@ void main() {
           await tester.pump();
           final slotMicros = (1000000 / hz).ceil();
           for (var slot = 1; slot <= hz * 4; slot++) {
-            // 下一次 vsync 的绝对时刻固定，弹幕计算占用当前周期的一部分。
             await tester.binding.delayed(
               Duration(microseconds: origin + slot * slotMicros - now()),
             );
@@ -46,7 +45,6 @@ void main() {
           }
           ticker.stop();
           final stoppedTicks = ticks.length;
-          // 处理已请求的引擎帧，之后停止回调和新帧请求。
           await tester.pump();
           await tester.binding.delayed(const Duration(seconds: 1));
           expect(ticks.length, stoppedTicks);

@@ -10,6 +10,8 @@ import 'dart:isolate';
 
 import 'package:media_kit/ffi/ffi.dart';
 import 'package:media_kit/generated/libmpv/bindings.dart';
+import 'package:media_kit/src/player/native/core/native_destroy.dart';
+import 'package:media_kit/src/player/native/core/native_library.dart';
 
 import 'event_loop_session.dart';
 import 'native_event_loop_api.dart';
@@ -38,12 +40,22 @@ abstract class InitializerNativeEventLoop {
     return api;
   }
 
-  static Pointer<mpv_handle> create(
+  static Future<Pointer<mpv_handle>> create(
     MPV mpv,
     FutureOr<void> Function(Pointer<mpv_event>)? callback,
-    Map<String, String> options,
-  ) {
+    Map<String, String> options, {
+    FutureOr<void> Function(int batchId)? onBatchDrained,
+    bool requireBatchDrain = false,
+  }) async {
     final api = callback == null ? null : _api;
+    if (requireBatchDrain && api?.abi == NativeEventLoopAbi.registeredEvents) {
+      // This ABI waits for one acknowledgement per event and does not post the
+      // NONE boundary. Use the in-package single-reader isolate adapter for
+      // lifecycle hooks which need a confirmed drain point.
+      throw UnsupportedError(
+        'Native event-loop ABI does not expose an event-batch drain boundary',
+      );
+    }
     final handle = mpv.mpv_create();
     if (handle == nullptr) throw StateError('mpv_create returned null');
     try {
@@ -61,6 +73,7 @@ abstract class InitializerNativeEventLoop {
       if (status < 0) throw StateError('mpv_initialize failed ($status)');
       if (callback != null) {
         late final EventLoopSession<Pointer<mpv_event>?> session;
+        var batchId = 0;
         session = EventLoopSession(
           onEvent: (event) async {
             if (event != null) {
@@ -74,8 +87,10 @@ abstract class InitializerNativeEventLoop {
                 if (next.ref.event_id == mpv_event_id.MPV_EVENT_NONE) break;
                 await callback(next);
               }
+              session.drain(++batchId);
             }
           },
+          onBatchDrained: onBatchDrained ?? (_) {},
           acknowledge: () => api!.acknowledge(handle.address),
           shutdown: () => api!.dispose(mpv, handle),
           onError: (error, stack) =>
@@ -90,10 +105,19 @@ abstract class InitializerNativeEventLoop {
         );
       }
       return handle;
-    } catch (_) {
-      _sessions.remove(handle.address);
-      mpv.mpv_terminate_destroy(handle);
-      rethrow;
+    } catch (error, stack) {
+      try {
+        final session = _sessions[handle.address];
+        if (session != null) await session.stop();
+        _sessions.remove(handle.address);
+        await terminateMpvOnWorker(handle.address, NativeLibrary.path);
+      } catch (cleanupError) {
+        throw NativeHandleCleanupFailure(
+          cause: error,
+          cleanupError: cleanupError,
+        );
+      }
+      Error.throwWithStackTrace(error, stack);
     }
   }
 

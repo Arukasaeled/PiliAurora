@@ -152,9 +152,9 @@ class AudioController extends GetxController
 
   void syncVolume([_]) {
     final volume = desktopVolume.value;
-    PlPlayerController.instance
-      ?..volume.value = volume
-      ..videoPlayerController?.setVolume(volumePercent(volume));
+    PlPlayerController.instance?.setPlayerVolumePercent(
+      volumePercent(volume),
+    );
     GStorage.setting.put(SettingBoxKey.desktopVolume, roundVolumeRatio(volume));
   }
 

@@ -114,6 +114,23 @@ void main() {
     },
   );
 
+  test('console uses the current record even when remote clocks are ahead', () {
+    diagnostics.receiveRecord({
+      'time': '2100-01-01T00:00:00.000Z',
+      'level': 'error',
+      'channel': 'runtime',
+      'message': 'remote clock',
+    }, windowId: 1);
+    logger.w('current message');
+    expect(console.single, contains('current message'));
+    expect(console.single, isNot(contains('remote clock')));
+  });
+
+  test('scoped logger preserves its module category', () {
+    logger.scoped('network').w('request failed');
+    expect(diagnostics.recentLogs.single['category'], 'network');
+  });
+
   test('release-style logger stores errors without a console', () {
     AppLogger(diagnostics: diagnostics)
         .w('request failed', error: 'socket closed');

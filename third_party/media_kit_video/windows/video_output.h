@@ -11,6 +11,13 @@
 
 #include <optional>
 #include <atomic>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <client.h>
 #include <render.h>
@@ -24,6 +31,7 @@
 #include <flutter/standard_method_codec.h>
 
 #include "angle_surface_manager.h"
+#include "output_operation_token.h"
 #include "thread_pool.h"
 
 typedef struct _VideoOutputConfiguration {
@@ -68,7 +76,12 @@ class VideoOutput {
   VideoOutput(int64_t handle,
               VideoOutputConfiguration configuration,
               flutter::PluginRegistrarWindows* registrar,
-              ThreadPool* thread_pool_ref);
+              ThreadPool* thread_pool_ref,
+              std::function<void(const OutputOperationToken&, int64_t, int64_t,
+                                 int64_t)>
+                  output_attached_callback,
+              std::function<void(const OutputOperationToken&, int64_t)>
+                  frame_consumed_callback);
 
   ~VideoOutput();
 
@@ -78,9 +91,23 @@ class VideoOutput {
   void SetSize(std::optional<int64_t> width, std::optional<int64_t> height,
                std::function<void(bool)> on_frame_ready);
 
-  void SetSourceSize(int64_t width, int64_t height);
+  void SetSourceSize(int64_t width,
+                     int64_t height,
+                     std::optional<OutputOperationToken> token);
 
   void ResetRenderer(std::function<void(bool)> on_ready);
+
+  void BeginOutputForLoad(OutputOperationToken token,
+                          std::function<void(bool)> on_complete);
+
+  void PrepareForLoad(OutputOperationToken token,
+                      std::string track_id,
+                      int64_t width,
+                      int64_t height,
+                      std::function<void(bool, int64_t, int64_t)> on_complete);
+
+  void InvalidateOutputGeneration(OutputOperationToken token,
+                                  std::function<void(bool)> on_complete);
 
  private:
   bool CreateRenderContext(int64_t width, int64_t height);
@@ -93,11 +120,28 @@ class VideoOutput {
 
   void NotifyTextureUpdate(int64_t id, int64_t width, int64_t height);
 
+  void NotifyFrameConsumed(int64_t texture_id);
+
   bool Render();
 
   void CheckAndResize();
 
-  void Resize(int64_t required_width, int64_t required_height);
+  void Resize(int64_t required_width,
+              int64_t required_height,
+              std::function<void(bool)> on_complete = {});
+
+  bool ApplyResize(int64_t required_width, int64_t required_height);
+
+  void FinishResize(int64_t required_width,
+                    int64_t required_height,
+                    bool success);
+
+  void UnregisterTexture(int64_t id,
+                         std::function<void()> on_unregistered = {});
+
+  bool IsCurrentToken(const OutputOperationToken& token) const;
+
+  void ResetRendererAfterTextureRelease(std::function<void(bool)> on_ready);
 
   int64_t GetVideoWidth();
 
@@ -119,13 +163,21 @@ class VideoOutput {
   // For preventing any asynchronous operations (primarily texture objects
   // deletion after unregister in |Resize|) access this object after
   // destruction.
-  bool destroyed_ = false;
+  std::atomic<bool> destroyed_ = false;
+
+  std::mutex render_callback_mutex_ = std::mutex();
+  std::atomic<bool> render_pending_ = false;
+  std::atomic<bool> render_dirty_ = false;
 
   std::mutex textures_mutex_ = std::mutex();
   std::mutex callback_mutex_ = std::mutex();
+  std::mutex texture_unregistrations_mutex_ = std::mutex();
+  std::condition_variable texture_unregistrations_cv_;
+  size_t pending_texture_unregistrations_ = 0;
 
   std::unordered_map<int64_t, std::unique_ptr<flutter::TextureVariant>>
       texture_variants_ = {};
+  std::unordered_map<int64_t, OutputOperationToken> texture_frame_tokens_ = {};
 
   // H/W rendering.
 
@@ -144,6 +196,28 @@ class VideoOutput {
   // ID is changed. Only happens when video output resolution changes.
   std::function<void(int64_t, int64_t, int64_t)> texture_update_callback_ =
       [](int64_t, int64_t, int64_t) {};
+
+  std::function<void(const OutputOperationToken&, int64_t, int64_t, int64_t)>
+      output_attached_callback_ = [](const OutputOperationToken&, int64_t,
+                                     int64_t, int64_t) {};
+  std::function<void(const OutputOperationToken&, int64_t)>
+      frame_consumed_callback_ = [](const OutputOperationToken&, int64_t) {};
+
+  std::optional<OutputOperationToken> high_water_token_ = std::nullopt;
+  std::optional<OutputOperationToken> active_token_ = std::nullopt;
+  bool active_token_invalidated_ = false;
+  bool output_prepared_ = false;
+  std::string active_track_id_;
+  std::optional<OutputOperationToken> frame_seen_token_ = std::nullopt;
+  std::optional<OutputOperationToken> rendered_frame_token_ = std::nullopt;
+  std::optional<OutputOperationToken> attached_token_notified_ = std::nullopt;
+
+  bool resize_in_progress_ = false;
+  std::optional<std::pair<int64_t, int64_t>> queued_resize_ = std::nullopt;
+  std::vector<std::function<void(bool)>> resize_completions_;
+  std::vector<std::function<void(bool)>> queued_resize_completions_;
+  int64_t renderer_reset_width_ = 1;
+  int64_t renderer_reset_height_ = 1;
 };
 
 #endif  // VIDEO_OUTPUT_H_

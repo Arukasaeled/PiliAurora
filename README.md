@@ -7,7 +7,7 @@ PiliAurora 是面向 Android 和 Windows x64 的 Bilibili 第三方客户端，�
 
 在保留上游浏览、播放、互动和多账号功能的基础上，PiliAurora 集中优化播放时的资源占用，重做 Windows 弹幕渲染与视频输出，并加入视频和直播独立窗口、弹幕合并与帧率调节、原生表情包管理等功能。
 
-[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.4.5.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
+[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.5.0.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
 
 ## 相较于 PiliPlus 2.1.5 的改进
 
@@ -27,7 +27,7 @@ Windows 弹幕渲染复用文字布局、轨迹和栅格图片，减少逐帧重
 
 ### 播放稳定性修复
 
-读取中断时根据媒体和缓冲状态尝试恢复，可按需启用备用 CDN；按页面与请求代次隔离播放会话，避免旧请求影响当前播放。硬件解码失败时会尝试其他路径。Android 另有按屏幕分辨率缩放输出的实验选项，默认关闭。输出尺寸限制减少的是渲染开销，源视频仍按原分辨率解码；实际资源占用和流畅度随设备、驱动、编码、清晰度、弹幕设置及窗口数量变化。
+视频与直播统一使用页面 owner、播放会话和原生运行时：请求、播放意图、配置与原生输出按代次隔离，快速切源时复用播放器资源。Android 在解码前准备视频 Surface，Windows 独立窗口在稳定纹理出现后再交接，避免旧回调或未就绪输出覆盖当前画面。读取中断时根据媒体和缓冲状态尝试恢复，可按需启用备用 CDN；硬件解码失败时会尝试其他路径。Android 另有按屏幕分辨率缩放输出的实验选项，默认关闭。输出尺寸限制减少的是渲染开销，源视频仍按原分辨率解码；实际资源占用和流畅度随设备、驱动、编码、清晰度、弹幕设置及窗口数量变化。
 
 ### 消息与私信重构
 

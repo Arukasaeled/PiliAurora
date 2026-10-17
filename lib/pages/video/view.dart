@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 import 'dart:math';
 
@@ -46,25 +47,27 @@ import 'package:pili_aurora/pages/video/reply/controller.dart';
 import 'package:pili_aurora/pages/video/reply/view.dart';
 import 'package:pili_aurora/pages/video/view_point/view.dart';
 import 'package:pili_aurora/pages/video/widgets/header_control.dart';
+import 'package:pili_aurora/pages/video/widgets/more_settings_sheet.dart';
 import 'package:pili_aurora/pages/video/widgets/detail_panels.dart';
 import 'package:pili_aurora/pages/video/widgets/intro_layout.dart';
 import 'package:pili_aurora/pages/video/widgets/player_focus.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/models/data_status.dart';
 import 'package:pili_aurora/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/fullscreen.dart';
 import 'package:pili_aurora/plugin/pl_player/view/view.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/player_loading.dart';
+import 'package:pili_aurora/plugin/pl_player/widgets/desktop_window_controls.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/services/desktop_playback_request.dart';
 import 'package:pili_aurora/models/common/video/source_type.dart';
 import 'package:pili_aurora/services/shutdown_timer_service.dart'
     show shutdownTimerService;
-import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/android/bindings.g.dart';
 import 'package:pili_aurora/utils/extension/scroll_controller_ext.dart';
 import 'package:pili_aurora/utils/extension/theme_ext.dart';
-import 'package:pili_aurora/utils/image_utils.dart';
 import 'package:pili_aurora/utils/max_screen_size.dart';
 import 'package:pili_aurora/utils/mobile_observer.dart';
 import 'package:pili_aurora/utils/num_utils.dart';
@@ -79,6 +82,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
 
 class VideoDetailPageV extends StatefulWidget {
@@ -144,8 +148,11 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
   void initState() {
     super.initState();
 
-    PlPlayerController.setPlayCallBack(playCallBack);
     videoDetailController = Get.put(VideoDetailController(), tag: heroTag);
+    PlPlayerController.setPlayCallBack(
+      playCallBack,
+      owner: this,
+    );
     videoDetailController.plPlayerController.desktopPlaybackRequest = () =>
         DesktopPlaybackRequest.video({
           'aid': videoDetailController.aid,
@@ -259,8 +266,8 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
           videoDetailController.refreshPage();
         }
       }
-    } catch (e) {
-      logger.d('handle player status: $e');
+    } catch (e, stackTrace) {
+      logger.w('handle player status: $e', error: e, stackTrace: stackTrace);
     }
 
     if (status.isCompleted) {
@@ -352,6 +359,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
   @override
   void dispose() {
+    PlPlayerController.setPlayCallBack(null, owner: this);
     plPlayerController
       ?..removeStatusLister(playerListener)
       ..removeCoarsePositionListener(positionListener);
@@ -376,12 +384,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
     if (!videoDetailController.plPlayerController.isCloseAll) {
       videoPlayerServiceHandler?.onVideoDetailDispose(heroTag);
-      if (plPlayerController != null) {
-        videoDetailController.makeHeartBeat();
-        plPlayerController!.dispose();
-      } else {
-        PlPlayerController.updatePlayCount();
-      }
+      videoDetailController.makeHeartBeat();
     }
     removeObserverMobile(this);
 
@@ -403,6 +406,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     introController.cancelTimer();
 
     videoDetailController
+      ..holdPlaybackForRoute()
       ..videoState.value = false
       ..cancelBlockListener()
       ..playerStatus = plPlayerController?.playerStatus
@@ -411,18 +415,18 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
       videoDetailController.makeHeartBeat();
       plPlayerController!
         ..removeStatusLister(playerListener)
-        ..removeCoarsePositionListener(positionListener)
-        ..pause();
+        ..removeCoarsePositionListener(positionListener);
     }
   }
 
   @override
   // 返回当前页面时
-  void didPopNext() {
-    videoDetailController.playbackOwner.activate();
+  Future<void> didPopNext() async {
+    final restore = videoDetailController.restorePlaybackAfterRoute();
     super.didPopNext();
 
     if (videoDetailController.plPlayerController.isCloseAll) {
+      await restore;
       return;
     }
 
@@ -431,12 +435,10 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     addObserverMobile(this);
 
     plPlayerController?.isLive = false;
-    if (videoDetailController.plPlayerController.playerStatus.isPlaying &&
-        videoDetailController.playerStatus != PlayerStatus.playing) {
-      videoDetailController.plPlayerController.pause();
-    }
-
-    PlPlayerController.setPlayCallBack(playCallBack);
+    PlPlayerController.setPlayCallBack(
+      playCallBack,
+      owner: this,
+    );
 
     introController.startTimer();
 
@@ -461,15 +463,11 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     plPlayerController
       ?..addStatusLister(playerListener)
       ..addCoarsePositionListener(positionListener);
-    if (videoDetailController.autoPlay) {
-      videoDetailController.playerInit(
-        autoplay: videoDetailController.playerStatus?.isPlaying ?? false,
-      );
-    } else if (videoDetailController.plPlayerController.preInitPlayer &&
-        !videoDetailController.isQuerying &&
-        videoDetailController.videoUrl != null) {
-      videoDetailController.playerInit();
+    if (plPlayerController?.playerStatus.isPlaying == true) {
+      playerListener(PlayerStatus.playing);
     }
+    await restore;
+    if (!mounted) return;
   }
 
   @override
@@ -704,27 +702,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
               Center(child: playBtn),
               Align(
                 alignment: .centerRight,
-                child: videoDetailController.playedTime == null
-                    ? _moreBtn(colorScheme.onSurface)
-                    : SizedBox(
-                        width: 42,
-                        height: 34,
-                        child: IconButton(
-                          tooltip: "更多设置",
-                          style: const ButtonStyle(
-                            padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                          ),
-                          onPressed: () =>
-                              (videoDetailController.headerCtrKey.currentState
-                                      as HeaderControlState?)
-                                  ?.showSettingSheet(),
-                          icon: Icon(
-                            Icons.more_vert_outlined,
-                            size: 19,
-                            color: colorScheme.onSurface,
-                          ),
-                        ),
-                      ),
+                child: _moreBtn(colorScheme.onSurface),
               ),
             ],
           ),
@@ -1156,50 +1134,25 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     return const SizedBox.shrink();
   });
 
-  Widget _moreBtn(Color color, {List<Shadow>? shadows}) => PopupMenuButton(
-    icon: Icon(
-      size: 22,
-      Icons.more_vert,
-      color: color,
-      shadows: shadows,
-    ),
-    itemBuilder: (BuildContext context) => <PopupMenuEntry>[
-      PopupMenuItem(
-        onTap: introController.viewLater,
-        child: const Text('稍后再看'),
-      ),
-      if (videoDetailController.epId == null)
-        PopupMenuItem(
-          onTap: () => videoDetailController.showNoteList(context),
-          child: const Text('查看笔记'),
+  void _showMoreSettings() {
+    final header = videoDetailController.headerCtrKey.currentState;
+    if (header is HeaderControlState) {
+      header.showSettingSheet();
+    } else {
+      unawaited(
+        showVideoMoreSettings(
+          context,
+          controller: videoDetailController,
+          introController: introController,
         ),
-      if (!videoDetailController.isFileSource)
-        PopupMenuItem(
-          onTap: () => videoDetailController.onDownload(this.context),
-          child: const Text('缓存视频'),
-        ),
-      if (videoDetailController.cover.value.isNotEmpty)
-        PopupMenuItem(
-          onTap: () =>
-              ImageUtils.downloadImg([videoDetailController.cover.value]),
-          child: const Text('保存封面'),
-        ),
-      if (!videoDetailController.isFileSource && videoDetailController.isUgc)
-        PopupMenuItem(
-          onTap: videoDetailController.toAudioPage,
-          child: const Text('听音频'),
-        ),
-      PopupMenuItem(
-        onTap: () {
-          if (!Accounts.main.isLogin) {
-            SmartDialog.showToast('账号未登录');
-          } else {
-            PageUtils.reportVideo(videoDetailController.aid);
-          }
-        },
-        child: const Text('举报'),
-      ),
-    ],
+      );
+    }
+  }
+
+  Widget _moreBtn(Color color, {List<Shadow>? shadows}) => IconButton(
+    tooltip: '更多设置',
+    onPressed: _showMoreSettings,
+    icon: Icon(size: 22, Icons.more_vert, color: color, shadows: shadows),
   );
 
   Widget plPlayer({
@@ -1215,11 +1168,35 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     onPopInvokedWithResult:
         videoDetailController.plPlayerController.onPopInvokedWithResult,
     child: Obx(
-      () =>
-          !videoDetailController.videoState.value ||
-              !videoDetailController.autoPlay ||
-              plPlayerController?.videoController == null
+      () => !videoDetailController.autoPlay
           ? const SizedBox.shrink()
+          : !videoDetailController.videoState.value ||
+                plPlayerController?.videoController == null
+          ? SizedBox(
+              width: width,
+              height: height,
+              child: PlayerLoadingPanel(
+                headerControl:
+                    videoDetailController.plPlayerController.isDesktopPip
+                    ? GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onPanStart: (_) => windowManager.startDragging(),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            DesktopWindowControls(
+                              controller:
+                                  videoDetailController.plPlayerController,
+                            ),
+                          ],
+                        ),
+                      )
+                    : null,
+                failed:
+                    videoDetailController.plPlayerController.dataStatus.error,
+                onRetry: () => videoDetailController.queryVideoUrl(),
+              ),
+            )
           : PLVideoPlayer(
               maxWidth: width,
               maxHeight: height,
@@ -1454,6 +1431,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
   Widget videoPlayer({required double width, required double height}) {
     final isFullScreen = this.isFullScreen;
     return Stack(
+      key: videoDetailController.moreSettingsAnchorKey,
       clipBehavior: Clip.none,
       children: [
         const Positioned.fill(
@@ -1602,8 +1580,12 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
                     ),
                   ),
                 );
-              } catch (e) {
-                logger.d('build stein edges: $e');
+              } catch (e, stackTrace) {
+                logger.w(
+                  'build stein edges: $e',
+                  error: e,
+                  stackTrace: stackTrace,
+                );
                 return const SizedBox.shrink();
               }
             }

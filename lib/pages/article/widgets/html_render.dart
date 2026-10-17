@@ -71,8 +71,10 @@ Widget htmlRender({
               ),
             ),
           );
-        } catch (err) {
-          logger.d('错误的HTML: $element');
+        } catch (err, stackTrace) {
+          logger
+              .scoped('article')
+              .w('解析文章 HTML 失败', error: err, stackTrace: stackTrace);
           return const SizedBox.shrink();
         }
       },

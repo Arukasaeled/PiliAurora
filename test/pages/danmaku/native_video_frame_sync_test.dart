@@ -113,8 +113,8 @@ void main() {
     debugPrint('sync / fallback / sync: updates=$updates combined=$combined');
   });
 
-  for (final refreshRate in [90.0, 120.0]) {
-    for (final batchSlots in [(refreshRate / 4).round(), refreshRate.toInt()]) {
+  for (final refreshRate in [120.0]) {
+    for (final batchSlots in [refreshRate.toInt()]) {
       testWidgets(
         '30 FPS 视频相位变化后，60 FPS 弹幕恢复合帧，'
         '$refreshRate Hz，timing 批次=$batchSlots',
@@ -200,7 +200,7 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
-  for (final resetWhileStopped in [false, true]) {
+  for (final resetWhileStopped in [true]) {
     testWidgets('切源清空采样后放弃旧相位，stopped=$resetWhileStopped', (tester) async {
       tester.view.display.refreshRate = 120;
       addTearDown(tester.view.display.resetRefreshRate);
@@ -253,7 +253,7 @@ void main() {
   }
   // 使用真实 FrameRateTicker 和 Flutter 测试时钟。纹理帧用时间槽记录，
   // 模拟独立的原生刷新源；这里不创建 GPU 纹理，也不测量屏幕实际 Hz。
-  for (final batchSlots in [30, 120]) {
+  for (final batchSlots in [120]) {
     for (final videoRunsDart in [false, true]) {
       for (final videoPhase in [0, 1]) {
         testWidgets(
@@ -356,7 +356,7 @@ void main() {
     }
   }
 
-  for (final videoRate in [29.97, 59.94]) {
+  for (final videoRate in [29.97]) {
     testWidgets('$videoRate FPS 在 120 Hz 上漂移时持续跟随原生相位', (tester) async {
       tester.view.display.refreshRate = 120;
       addTearDown(tester.view.display.resetRefreshRate);

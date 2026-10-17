@@ -325,8 +325,8 @@ class _ReplyPageState extends CommonRichTextPubPageState<ReplyPage> {
                     ' ${DurationUtils.formatDuration((plPlayerController.playedTime ?? Duration.zero).inSeconds)} ',
                     RichTextType.common,
                   );
-                } catch (e) {
-                  logger.d(e.toString());
+                } catch (e, stackTrace) {
+                  logger.w(e.toString(), error: e, stackTrace: stackTrace);
                 }
               },
               icon: Icon(Icons.my_location, size: 28, color: color),
@@ -359,8 +359,8 @@ class _ReplyPageState extends CommonRichTextPubPageState<ReplyPage> {
                     } else {
                       logger.d('null screenshot');
                     }
-                  } catch (e) {
-                    logger.d(e.toString());
+                  } catch (e, stackTrace) {
+                    logger.w(e.toString(), error: e, stackTrace: stackTrace);
                   }
                 },
                 icon: Icon(

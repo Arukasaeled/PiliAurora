@@ -102,13 +102,13 @@ class _GeetestWebviewDialogState extends State<GeetestWebviewDialog> {
                       return;
                     }
                   }
-                  logger.d('geetest invalid result: $args');
+                  logger.scoped('geetest').w('验证码返回无效结果');
                 },
               )
               ..addJavaScriptHandler(
                 handlerName: 'error',
                 callback: (args) {
-                  logger.d('geetest error: $args');
+                  logger.scoped('geetest').w('验证码组件报告错误');
                 },
               )
               ..addJavaScriptHandler(

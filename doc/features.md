@@ -41,6 +41,12 @@ flowchart TD
 
 箭头表示功能间常见入口和关联。
 
+## 通用菜单与选择字段
+
+- 设置页的选择字段使用 `lib/common/widgets/app_select_field.dart`，菜单表面、圆角、边框、阴影和选中态由 `lib/common/widgets/app_menu_theme.dart` 统一提供。
+- 全局 `popupMenuTheme` 和 `menuTheme` 已接入同一套参数，新增 `PopupMenuButton`、`showMenu` 或 `MenuAnchor` 会继承统一表面；需要当前值标题、选中勾和长列表滚动的设置项优先使用 `AppSelectField`。
+- 组件行为测试见 `test/common/widgets/app_select_field_test.dart`。
+
 ## 首页与内容发现
 
 - 页面：`lib/pages/main/`、`home/`、`rcmd/`、`hot/`、`rank/`、`popular_*`、`search*`。
@@ -57,6 +63,14 @@ flowchart TD
 - 播放：`lib/plugin/pl_player/`；播放诊断见 `lib/services/diagnostics/player_diagnostics.dart`。
 - 模型：`lib/models/remote/video/`、`pgc/` 及顶层视频模型。
 - 修改前确认详情、播放地址和弹幕使用的资源标识（aid、bvid、cid），再调整页面。
+
+### 播放器统一架构
+
+- 页面通过 `PlaybackOwner` 提交查询、加载和控制命令；点播与直播使用同一套代次、播放意图和故障切换协议。
+- 规范状态在 `lib/plugin/pl_player/playback/playback_contracts.dart`，请求与命令调度在 `playback_session.dart`，原生资源和输出在 `native_playback_runtime.dart`，控件投影仍在 `controller.dart`。
+- 修改播放页面时先确认 `contentKey`、来源候选、起播策略和页面副作用；不要通过 URL 判断媒体身份，也不要在页面直接调用 Player 打开媒体。
+- 修改平台输出时分别检查 Android Surface 预挂载、Windows 纹理交接、输出代次与释放回执。架构约束见[架构概览](architecture.md#播放统一架构)，时序见[播放器切源与网络恢复](runtime-flows.md#播放器切源与网络恢复)。
+- 回归入口为 `test/plugin/pl_player/playback/` 与 `test/plugin/pl_player/android/`；设备行为使用 `tool/probes/playback/` 下的探针确认。
 
 ### 播放性能与资源控制
 

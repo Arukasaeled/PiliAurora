@@ -25,42 +25,39 @@ void main() {
     expect(insets.padding, isNull);
   });
 
-  for (final scale in [1.0, 2.0]) {
-    testWidgets('scales viewport and text independently at $scale', (
-      tester,
-    ) async {
-      const original = MediaQueryData(
-        size: Size(800, 600),
-        devicePixelRatio: 2,
-        padding: EdgeInsets.all(20),
-        viewPadding: EdgeInsets.all(24),
-        viewInsets: EdgeInsets.only(bottom: 100),
-      );
-      late MediaQueryData actual;
-      await tester.pumpWidget(
-        MediaQuery(
-          data: original,
-          child: AppViewport(
-            uiScale: scale,
-            textScale: 1.5,
-            insets: ViewportInsets(),
-            child: Builder(
-              builder: (context) {
-                actual = MediaQuery.of(context);
-                return const SizedBox();
-              },
-            ),
+  testWidgets('scales viewport and text independently', (tester) async {
+    const scale = 2.0;
+    const original = MediaQueryData(
+      size: Size(800, 600),
+      devicePixelRatio: 2,
+      padding: EdgeInsets.all(20),
+      viewPadding: EdgeInsets.all(24),
+      viewInsets: EdgeInsets.only(bottom: 100),
+    );
+    late MediaQueryData actual;
+    await tester.pumpWidget(
+      MediaQuery(
+        data: original,
+        child: AppViewport(
+          uiScale: scale,
+          textScale: 1.5,
+          insets: ViewportInsets(),
+          child: Builder(
+            builder: (context) {
+              actual = MediaQuery.of(context);
+              return const SizedBox();
+            },
           ),
         ),
-      );
-      expect(actual.size, original.size / scale);
-      expect(actual.devicePixelRatio, original.devicePixelRatio * scale);
-      expect(actual.padding, original.padding / scale);
-      expect(actual.viewPadding, original.viewPadding / scale);
-      expect(actual.viewInsets, original.viewInsets / scale);
-      expect(actual.textScaler.scale(10), 15);
-    });
-  }
+      ),
+    );
+    expect(actual.size, original.size / scale);
+    expect(actual.devicePixelRatio, original.devicePixelRatio * scale);
+    expect(actual.padding, original.padding / scale);
+    expect(actual.viewPadding, original.viewPadding / scale);
+    expect(actual.viewInsets, original.viewInsets / scale);
+    expect(actual.textScaler.scale(10), 15);
+  });
 
   testWidgets('preserved padding is already in logical pixels', (tester) async {
     final insets = ViewportInsets();

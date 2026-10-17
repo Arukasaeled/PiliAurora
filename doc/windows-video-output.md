@@ -15,11 +15,13 @@ GL 纹理状态。真实直播的首次播放、刷新与纹理像素验证见
 
 输出尺寸策略和截图交接位于 [`view.dart`](../lib/plugin/pl_player/view/view.dart) 与 [`video_output_resizer.dart`](../lib/plugin/pl_player/utils/video_output_resizer.dart)。Windows 首次检测 Flutter 窗口所在显示器的物理尺寸并缓存上限，窗口布局变化由 Flutter 缩放。输出限幅降低渲染目标的开销，媒体解码仍使用源分辨率。
 
+截图交接在收到对应 Flutter 帧的 raster 回执后才提交原生 resize。等待回执超过 3 秒时取消本次调整、撤掉截图并继续显示原生纹理；原生 resize 已提交后的截图仍保留到新输出确认，或恢复旧几何完成。
+
 ## 超分切换
 
 视频尺寸超过当前屏幕、或尺寸尚未确认时，播放器超分入口置灰并禁用菜单；悬停或长按保留原因提示，点击灰色入口显示提示，不发起切换。显式选择请求在修改档位、保存设置和进入 shader 队列前再次检查；重复选择当前档位也直接返回，保留连续播放。媒体加载时的默认档位仍随源尺寸核对，必要时清除上一媒体的滤镜。
 
-[`PlPlayerController.setShader`](../lib/plugin/pl_player/controller.dart) 使用独立的 `PlaybackLoadQueue` 串行处理 shader 更新，尚未开始的旧请求可被新请求取代。当前 Windows 播放器已有视频尺寸和输出控制器时，调用 [`applyShaderList`](../lib/plugin/pl_player/playback/shader_updates.dart)：
+页面将超分模式解析为 shader 路径后，通过 `PlaybackOwner.setShader` 提交配置命令。`PlaybackSession` 将其放入 shader 配置槽，与加载、播放意图和其他原生写入协调；加载 ready 后，控制器按已保存档位计算目标路径，并与规范快照中的期望路径比较，避免重复提交相同 shader。Windows 当前输出已有视频尺寸时，`NativePlaybackRuntime` 调用 [`applyShaderList`](../lib/plugin/pl_player/playback/shader_updates.dart)：
 
 1. 将 mpv 的 `vo` 切到 `null`，解除视频输出对 render context 的使用。
 2. 调用 `resetRenderer()`，在原生输出线程释放并重建 render context 与 ANGLE 设备。
@@ -28,7 +30,7 @@ GL 纹理状态。真实直播的首次播放、刷新与纹理像素验证见
 
 切换 `vo` 会同时重建 mpv 的视频解码链。固定原生库通过 `vo-reinit-seek.patch` 在重建后、返回播放循环前完成补偿 seek，使缓存读取位置和解码状态先恢复到关键帧。否则缓存中的非关键包可能耗尽解码器的 96 包等待额度，产生 AV1 参考帧错误并触发硬解回退。
 
-该过程保留 Player 和媒体。Android、未就绪的 Windows 输出直接更新 shader；软件输出跳过原生重建。控制器退出时，使 shader 队列失效并等待当前操作结束，再销毁播放器。
+该过程保留 Player 和媒体。Android、未就绪的 Windows 输出直接更新 shader；软件输出跳过原生重建。owner 关闭后，会话不再接受它的配置命令；运行时在等待已发出的 shader 更新和媒体卸载后释放输出，再销毁 Player。跨控制器资源槽等到 `Player.released` 才允许创建下一实例。
 
 ## 原生库与验证
 

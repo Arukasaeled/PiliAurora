@@ -28,6 +28,381 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  test('player traffic preserves runtime warnings and route context', () {
+    diagnostics
+      ..routeChanged('/video?token=fixture')
+      ..log(DiagnosticLogLevel.warning, 'app', 'keep warning');
+    for (var i = 0; i < 250; i++) {
+      diagnostics.playerLog(DiagnosticLogLevel.info, 'mpv', 'frame $i');
+    }
+    expect(diagnostics.recentLogs, hasLength(201));
+    final warning = diagnostics.recentLogs.last;
+    expect(warning['message'], 'keep warning');
+    expect(warning['route'], '/video');
+    expect(warning['processId'], pid);
+  });
+
+  test('pre-initialization records are persisted on initialization', () async {
+    final early = Diagnostics()
+      ..log(DiagnosticLogLevel.error, 'bootstrap', 'startup failed');
+    final target = Directory('${directory.path}/early');
+    await early.initialize(directory: target);
+    await early.flush();
+    expect(
+      await File('${target.path}/runtime.jsonl').readAsString(),
+      contains('startup failed'),
+    );
+    expect(early.recentLogs, hasLength(1));
+    early.dispose();
+  });
+
+  test('forwarded records retain origin and redact private data', () async {
+    diagnostics.receiveRecord({
+      'channel': 'player',
+      'level': 'error',
+      'processId': 123,
+      'route': '/video',
+      'message': 'decoder failed',
+      'details': {'deviceId': 'fixture-device', 'token': 'fixture-token'},
+    }, windowId: 4);
+    await diagnostics.flush();
+    final record = diagnostics.recentLogs.single;
+    expect(record['processId'], 123);
+    expect(record['windowId'], 4);
+    final text = await File('${directory.path}/player.jsonl').readAsString();
+    expect(text, isNot(contains('fixture-device')));
+    expect(text, isNot(contains('fixture-token')));
+  });
+
+  test('flush awaits the forwarding acknowledgement', () async {
+    var acknowledged = false;
+    diagnostics.forwardFlush = () async {
+      await Future<void>.delayed(Duration.zero);
+      acknowledged = true;
+    };
+    await diagnostics.flush();
+    expect(acknowledged, isTrue);
+  });
+
+  test('delayed forwarded records are displayed by origin time', () {
+    diagnostics
+      ..log(DiagnosticLogLevel.error, 'app', 'newer')
+      ..receiveRecord({
+        'time': '2000-01-01T00:00:00.000Z',
+        'channel': 'runtime',
+        'level': 'error',
+        'message': 'older',
+      }, windowId: 2);
+    expect(diagnostics.recentLogs.map((record) => record['message']), [
+      'newer',
+      'older',
+    ]);
+  });
+
+  test(
+    'forwarding failure preserves local logs and child performance export',
+    () async {
+      final child = Diagnostics(processReader: () => {'rssBytes': 42});
+      await child.initialize(
+        directory: Directory('${directory.path}/window-2'),
+        childProcess: true,
+      );
+      child
+        ..forwardRecord = ((_) => false)
+        ..log(DiagnosticLogLevel.error, 'app', 'offline failure');
+      await child.configure(tracing: true);
+      child.capture();
+      await child.configure(tracing: false);
+      await child.flush();
+      expect(child.forwardingFailures, 1);
+      expect(child.droppedRecords, 0);
+      expect(
+        await File('${directory.path}/window-2/runtime.jsonl').readAsString(),
+        contains('offline failure'),
+      );
+      expect(
+        await File('${directory.path}/window-2/performance.jsonl')
+            .readAsString(),
+        contains('rssBytes'),
+      );
+      final archive = await diagnostics.exportArchive();
+      try {
+        final zip = ZipDecoder().decodeBytes(await archive.readAsBytes());
+        expect(
+          zip.files.map((file) => file.name),
+          containsAll(['window-2-runtime.jsonl', 'window-2-performance.jsonl']),
+        );
+      } finally {
+        await archive.parent.delete(recursive: true);
+        child.dispose();
+      }
+      await diagnostics.clear();
+      expect(
+        File('${directory.path}/window-2/runtime.jsonl').existsSync(),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'settings changes notify once and expose effective configuration',
+    () async {
+      var changes = 0;
+      diagnostics.onSettingsChanged = () => changes++;
+      await diagnostics.configure(
+        level: DiagnosticLogLevel.debug,
+        playerLevel: DiagnosticLogLevel.error,
+        intervalMs: 250,
+      );
+      expect(changes, 1);
+      expect(diagnostics.settings, {
+        'level': 'debug',
+        'playerLevel': 'error',
+        'intervalMs': 250,
+        'tracing': false,
+      });
+    },
+  );
+
+  test(
+    'export coordinates child flush and includes its forwarding status',
+    () async {
+      final child = Diagnostics();
+      await child.initialize(
+        directory: Directory('${directory.path}/window-3'),
+        childProcess: true,
+        windowId: 3,
+      );
+      child
+        ..forwardRecord = ((_) => false)
+        ..log(DiagnosticLogLevel.error, 'app', 'queued before snapshot');
+      diagnostics
+        ..pauseChildren = () async {
+          await child.pauseWrites();
+          child.log(DiagnosticLogLevel.error, 'app', 'during snapshot');
+        }
+        ..resumeChildren = (() => Future<void>.sync(child.resumeWrites));
+      final archive = await diagnostics.exportArchive();
+      try {
+        final zip = ZipDecoder().decodeBytes(await archive.readAsBytes());
+        final text = utf8.decode(
+          zip.files
+                  .firstWhere((f) => f.name == 'window-3-runtime.jsonl')
+                  .content
+              as List<int>,
+        );
+        expect(text, contains('queued before snapshot'));
+        expect(text, isNot(contains('during snapshot')));
+        final manifest = jsonDecode(
+          utf8.decode(
+            zip.files.firstWhere((f) => f.name == 'manifest.json').content
+                as List<int>,
+          ),
+        ) as Map;
+        final status = (manifest['children'] as List).single as Map;
+        expect((status['storage'] as Map)['forwardingFailures'], 1);
+        await child.flushLocal();
+        expect(
+          await File('${directory.path}/window-3/runtime.jsonl').readAsString(),
+          contains('during snapshot'),
+        );
+      } finally {
+        child.dispose();
+        await child.flushLocal();
+        await archive.parent.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'clear coordinates child queues and retains records created afterward',
+    () async {
+      final child = Diagnostics();
+      await child.initialize(
+        directory: Directory('${directory.path}/window-4'),
+        childProcess: true,
+      );
+      child.log(DiagnosticLogLevel.error, 'app', 'old record');
+      diagnostics
+        ..pauseChildren = child.pauseWrites
+        ..clearChildren = () async {
+          child.log(DiagnosticLogLevel.error, 'app', 'stale deferred record');
+          await child.clearPausedRecords();
+          child.log(DiagnosticLogLevel.error, 'app', 'after clear');
+        }
+        ..resumeChildren = (() => Future<void>.sync(child.resumeWrites));
+      await diagnostics.clear();
+      await child.flushLocal();
+      final text = await File('${directory.path}/window-4/runtime.jsonl')
+          .readAsString();
+      expect(text, contains('after clear'));
+      expect(text, isNot(contains('old record')));
+      expect(text, isNot(contains('stale deferred record')));
+      child.dispose();
+    },
+  );
+
+  test('failed child coordination resumes writes and permits retry', () async {
+    var resumes = 0;
+    diagnostics
+      ..pauseChildren = (() => Future<void>.error(StateError('not connected')))
+      ..resumeChildren = () async {
+        resumes++;
+      };
+    await expectLater(diagnostics.exportArchive(), throwsStateError);
+    expect(resumes, 1);
+    diagnostics.log(DiagnosticLogLevel.error, 'app', 'after failure');
+    await diagnostics.flushLocal();
+    expect(
+      await File('${directory.path}/runtime.jsonl').readAsString(),
+      contains('after failure'),
+    );
+    diagnostics.pauseChildren = null;
+    final archive = await diagnostics.exportArchive();
+    await archive.parent.delete(recursive: true);
+  });
+
+  test(
+    'closing flush waits for paused records to resume and persist',
+    () async {
+      await diagnostics.pauseWrites();
+      diagnostics.log(DiagnosticLogLevel.error, 'window', 'late cleanup error');
+      var flushed = false;
+      final flush = diagnostics.flush().then((_) {
+        flushed = true;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(flushed, isFalse);
+      diagnostics.resumeWrites();
+      await flush;
+      expect(
+        await File('${directory.path}/runtime.jsonl').readAsString(),
+        contains('late cleanup error'),
+      );
+    },
+  );
+
+  test('paused buffer is byte bounded and prioritizes errors', () async {
+    await diagnostics.pauseWrites();
+    final chunk = 'x' * 65000;
+    for (var i = 0; i < 40; i++) {
+      diagnostics.playerLog(
+        DiagnosticLogLevel.info,
+        'mpv',
+        chunk,
+        details: {'a': chunk, 'b': chunk, 'c': chunk, 'd': chunk},
+      );
+    }
+    diagnostics.playerLog(DiagnosticLogLevel.error, 'mpv', 'critical failure');
+    final status = diagnostics.storageStatus['pausedBuffer'] as Map;
+    expect(
+      status['pendingBytes'],
+      lessThanOrEqualTo(Diagnostics.maxDeferredBytes),
+    );
+    expect(status['pendingRecords'], lessThan(40));
+    expect(diagnostics.droppedRecords, greaterThan(0));
+    diagnostics.resumeWrites();
+    await diagnostics.flush();
+    expect(
+      await File('${directory.path}/player.jsonl').readAsString(),
+      contains('critical failure'),
+    );
+  });
+
+  test('full paused queue evicts debug records for errors', () async {
+    await diagnostics.configure(level: DiagnosticLogLevel.debug);
+    await diagnostics.pauseWrites();
+    final first = diagnostics.log(
+      DiagnosticLogLevel.debug,
+      'app',
+      'old debug',
+    )!;
+    for (var i = 1; i < 400; i++) {
+      diagnostics.log(DiagnosticLogLevel.debug, 'app', 'debug $i');
+    }
+    final error = diagnostics.log(
+      DiagnosticLogLevel.error,
+      'app',
+      'keep error',
+    )!;
+    expect(await first.accepted, isFalse);
+    expect(diagnostics.droppedRecords, 1);
+    diagnostics.resumeWrites();
+    expect(await error.accepted, isTrue);
+    await diagnostics.flush();
+    final text = await File('${directory.path}/runtime.jsonl').readAsString();
+    expect(text, contains('keep error'));
+    expect(text, isNot(contains('old debug')));
+  });
+
+  test(
+    'uncoordinated child files are preserved and marked in export',
+    () async {
+      final childDirectory = Directory('${directory.path}/window-9');
+      await childDirectory.create();
+      final file = File('${childDirectory.path}/runtime.jsonl');
+      await file.writeAsString('offline record');
+      diagnostics.pauseChildren = () async {
+        diagnostics.skippedChildWindows.add(9);
+      };
+      final archive = await diagnostics.exportArchive();
+      try {
+        final zip = ZipDecoder().decodeBytes(await archive.readAsBytes());
+        expect(
+          zip.files.map((file) => file.name),
+          isNot(contains('window-9-runtime.jsonl')),
+        );
+        final manifest = jsonDecode(
+          utf8.decode(
+            zip.files.firstWhere((file) => file.name == 'manifest.json').content
+                as List<int>,
+          ),
+        ) as Map;
+        expect((manifest['storage'] as Map)['skippedChildWindows'], [9]);
+        await diagnostics.clear();
+        expect(await file.readAsString(), 'offline record');
+      } finally {
+        await archive.parent.delete(recursive: true);
+      }
+    },
+  );
+
+  test('clearing records resets pause drops and forwarding failures', () async {
+    diagnostics
+      ..forwardRecord = ((_) => false)
+      ..log(DiagnosticLogLevel.error, 'app', 'forward failed');
+    await diagnostics.pauseWrites();
+    for (var i = 0; i < 401; i++) {
+      diagnostics.log(DiagnosticLogLevel.error, 'app', 'buffered $i');
+    }
+    expect(diagnostics.forwardingFailures, 1);
+    expect(diagnostics.droppedRecords, greaterThan(0));
+    await diagnostics.clearPausedRecords();
+    diagnostics.resumeWrites();
+    expect(diagnostics.forwardingFailures, 0);
+    expect(diagnostics.droppedRecords, 0);
+    expect((diagnostics.storageStatus['pausedBuffer'] as Map)['dropped'], 0);
+  });
+
+  test('pause flush failure immediately restores writes', () async {
+    final failing = _FailingPauseDiagnostics();
+    final target = Directory('${directory.path}/pause-failure');
+    await failing.initialize(directory: target);
+    failing.failNextFlush = true;
+    try {
+      await expectLater(failing.exportArchive(), throwsStateError);
+      failing.log(DiagnosticLogLevel.error, 'app', 'after failed pause');
+      await failing.flush().timeout(const Duration(seconds: 1));
+      expect(
+        await File('${target.path}/runtime.jsonl').readAsString(),
+        contains('after failed pause'),
+      );
+    } finally {
+      failing.dispose();
+      await failing.flushLocal();
+    }
+  });
+
   test('levels change immediately and recent logs stay bounded', () async {
     diagnostics.log(DiagnosticLogLevel.debug, 'test', 'hidden');
     expect(diagnostics.recentLogs, isEmpty);
@@ -200,4 +575,16 @@ void main() {
       }
     },
   );
+}
+
+class _FailingPauseDiagnostics extends Diagnostics {
+  bool failNextFlush = false;
+  @override
+  Future<void> flushLocal() {
+    if (failNextFlush) {
+      failNextFlush = false;
+      return Future<void>.error(StateError('pause flush failed'));
+    }
+    return super.flushLocal();
+  }
 }

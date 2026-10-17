@@ -52,14 +52,24 @@ class BottomControl extends StatelessWidget {
         : colorScheme.primary;
     final thumbGlowColor = primary.withAlpha(80);
     final bufferedBarColor = primary.withValues(alpha: 0.4);
+    // 非全屏播放器已由页面约束到屏幕宽度，额外水平内边距会让底栏缩进。
+    final horizontalPadding = isFullScreen ? 10.0 : 0.0;
 
     return Padding(
-      padding: const .symmetric(horizontal: 10, vertical: 12),
+      padding: EdgeInsets.symmetric(
+        horizontal: horizontalPadding,
+        vertical: 12,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 7),
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              0,
+              horizontalPadding,
+              7,
+            ),
             child: Obx(
               () => Offstage(
                 offstage: !controller.showControls.value,

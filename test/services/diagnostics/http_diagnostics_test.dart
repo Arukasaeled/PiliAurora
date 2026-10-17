@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/services/diagnostics/http_diagnostics.dart';
+import 'package:pili_aurora/utils/accounts/account_manager/account_mgr.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -61,6 +62,90 @@ void main() {
     }
   });
 
+  test(
+    'toast layer does not duplicate an interceptor failure record',
+    () async {
+      await diagnostics.configure(level: DiagnosticLogLevel.debug);
+      final before = Diagnostics.instance.recentLogs.length;
+      final dio = Dio()..httpClientAdapter = _FailureAdapter();
+      dio.interceptors.addAll([
+        DiagnosticHttpInterceptor(diagnostics: diagnostics),
+        InterceptorsWrapper(
+          onError: (error, handler) {
+            AccountManager.toast(error);
+            handler.next(error);
+          },
+        ),
+      ]);
+      try {
+        await expectLater(
+          dio.get<Object?>(
+            'https://api.bilibili.com/x/click-interface/web/heartbeat',
+          ),
+          throwsA(isA<DioException>()),
+        );
+        expect(diagnostics.recentLogs, hasLength(1));
+        expect(Diagnostics.instance.recentLogs.length, before);
+      } finally {
+        dio.close(force: true);
+      }
+    },
+  );
+
+  for (final tracing in [false, true]) {
+    test('expected HTTP failures use debug with tracing=$tracing', () async {
+      await diagnostics.configure(tracing: tracing);
+      final dio = Dio()..httpClientAdapter = _FailureAdapter();
+      dio.interceptors.add(DiagnosticHttpInterceptor(diagnostics: diagnostics));
+      const expected = [
+        'https://api.bilibili.com/x/click-interface/web/heartbeat',
+        'https://api.bilibili.com/x/player/online/total',
+        'https://account.bilibili.com/site/getCoin',
+        'https://api.bilibili.com/x/v2/history/report',
+        'https://api.bilibili.com/x/v2/dm/web/seg.so',
+        'https://api.live.bilibili.com/xlive/web-room/v1/index/roomEntryAction',
+        'https://api.github.com/repos/test/project',
+        'https://raw.githubusercontent.com/test/project/file',
+        'https://i0.hdslb.com/test.jpg',
+        'https://test.biliimg.com/test.jpg',
+        'https://custom.example/api/skipSegments',
+      ];
+      try {
+        for (final url in expected) {
+          await expectLater(
+            dio.get<Object?>(url),
+            throwsA(isA<DioException>()),
+          );
+        }
+        expect(diagnostics.recentLogs, isEmpty);
+        await expectLater(
+          dio.get<Object?>('https://example.test/x/player/online/total'),
+          throwsA(isA<DioException>()),
+        );
+        expect(diagnostics.recentLogs.single['level'], 'error');
+        await diagnostics.configure(level: DiagnosticLogLevel.debug);
+        for (final url in expected) {
+          await expectLater(
+            dio.get<Object?>(url),
+            throwsA(isA<DioException>()),
+          );
+        }
+        expect(
+          diagnostics.recentLogs.where((r) => r['level'] == 'debug'),
+          hasLength(expected.length),
+        );
+        if (tracing) {
+          diagnostics.capture();
+          final stats =
+              (diagnostics.latest!['operations'] as Map)['http'] as Map;
+          expect(stats['errors'], expected.length * 2 + 1);
+        }
+      } finally {
+        dio.close(force: true);
+      }
+    });
+  }
+
   test('HTTP retries do not leave an active operation behind', () async {
     await diagnostics.configure(tracing: true);
     final interceptor = DiagnosticHttpInterceptor(diagnostics: diagnostics);
@@ -104,4 +189,20 @@ class _TestHttpAdapter implements HttpClientAdapter {
 
   @override
   void close({bool force = false}) {}
+}
+
+class _FailureAdapter extends _TestHttpAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) {
+    return Future<ResponseBody>.error(
+      DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionTimeout,
+      ),
+    );
+  }
 }

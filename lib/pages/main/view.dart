@@ -14,6 +14,8 @@ import 'package:pili_aurora/models/common/nav_bar_config.dart';
 import 'package:pili_aurora/pages/home/view.dart';
 import 'package:pili_aurora/pages/main/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/utils/android/android_helper.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/device_utils.dart';
@@ -51,6 +53,8 @@ class _MainAppState extends PopScopeState<MainApp>
   tray.MenuItem? _trayShowItem;
   tray.MenuItem? _trayExitItem;
   bool _isClosing = false;
+  PlaybackOwner? _minimizeOwner;
+  PlaybackInhibitorToken? _minimizeToken;
 
   @override
   bool get initCanPop => false;
@@ -174,7 +178,7 @@ class _MainAppState extends PopScopeState<MainApp>
     _disposeTray();
     await GStorage.compact();
     await GStorage.close();
-    DeviceUtils.exitApp();
+    await DeviceUtils.exitApp();
   }
 
   @override
@@ -188,10 +192,17 @@ class _MainAppState extends PopScopeState<MainApp>
   }
 
   void _onHideWindow() {
-    if (_mainController.pauseOnMinimize) {
+    if (PlPlayerController.instance?.pauseOnMinimize.value ??
+        _mainController.pauseOnMinimize) {
       if (PlPlayerController.instance case final player?) {
-        if (_mainController.isPlaying = player.playerStatus.isPlaying) {
-          player.pause();
+        final owner = player.activePlaybackOwner;
+        final isPlaying = player.playerStatus.isPlaying && owner != null;
+        _mainController.isPlaying = isPlaying;
+        if (isPlaying) {
+          _minimizeOwner = owner;
+          _minimizeToken ??= owner.acquireInhibitor(
+            PlaybackInhibitorSource.system,
+          );
         }
       } else {
         _mainController.isPlaying = false;
@@ -200,9 +211,14 @@ class _MainAppState extends PopScopeState<MainApp>
   }
 
   void _onShowWindow() {
-    if (_mainController.pauseOnMinimize && _mainController.isPlaying) {
-      PlPlayerController.instance?.play();
+    final owner = _minimizeOwner;
+    final token = _minimizeToken;
+    _minimizeOwner = null;
+    _minimizeToken = null;
+    if (owner != null && token != null) {
+      unawaited(owner.releaseInhibitor(token));
     }
+    _mainController.isPlaying = false;
   }
 
   double? _opacity;

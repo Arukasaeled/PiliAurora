@@ -379,8 +379,8 @@ TextSpan? richNode(
         style: const TextStyle(height: 1.65),
       );
     }
-  } catch (err) {
-    logger.d('❌rich_node_panel err: $err');
+  } catch (err, stackTrace) {
+    logger.w('❌rich_node_panel err: $err', error: err, stackTrace: stackTrace);
     return null;
   }
 }

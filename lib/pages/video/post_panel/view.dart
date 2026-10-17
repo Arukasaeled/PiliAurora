@@ -216,8 +216,8 @@ class PostPanel extends CommonSlidePage {
                       );
                       (context as Element).markNeedsBuild();
                     }
-                  } catch (e) {
-                    logger.d(e.toString());
+                  } catch (e, stackTrace) {
+                    logger.w(e.toString(), error: e, stackTrace: stackTrace);
                   }
                 }
               },
@@ -525,14 +525,14 @@ class _PostPanelState extends State<PostPanel>
                 if (start <= 0) {
                   seekTo();
                   if (!player.state.playing) {
-                    await player.play();
+                    await plPlayerController.play();
                   }
                   return;
                 }
                 final seek = max(0, start - 2000);
                 await plPlayerController.seek(Duration(milliseconds: seek));
                 if (!player.state.playing) {
-                  await player.play();
+                  await plPlayerController.play();
                 }
                 if (start > seek) {
                   final posSub = player.stream.position.listen(

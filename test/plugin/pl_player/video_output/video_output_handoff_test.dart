@@ -17,6 +17,34 @@ void main() {
   });
   tearDown(() => fixture.dispose());
 
+  testWidgets('缺少 raster 回执时撤掉未提交的保护图并保留原生输出', (tester) async {
+    final barrier = VideoOutputPaintBarrier(frameNumber: () => 40);
+    final handoff = VideoOutputHandoff(
+      waitForProtectedFrame: barrier.wait,
+      capture: () async => fixture.clone(),
+      waitForPaint: () async {},
+    );
+    addTearDown(barrier.dispose);
+    addTearDown(handoff.dispose);
+    var submitted = false;
+    bool? outcome;
+    final run = handoff.run(
+      isCurrent: () => true,
+      canStart: () => true,
+      submit: (_) async {
+        submitted = true;
+        return true;
+      },
+    ).then((value) => outcome = value);
+    await tester.pump();
+    expect(handoff.image, isNotNull);
+    await tester.pump(const Duration(seconds: 3));
+    expect(outcome, isFalse);
+    await run;
+    expect(submitted, isFalse);
+    expect(handoff.image, isNull);
+  });
+
   testWidgets(
     'bridge is painted before native resize and held until acquired frame',
     (tester) async {
@@ -281,7 +309,7 @@ void main() {
       );
       await tester.pump();
       playing = false;
-      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 4));
       expect(handoff.image, isNotNull);
       // Resume produces the receipt; paused frames retain the protective image.
       playing = true;

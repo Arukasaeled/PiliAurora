@@ -38,8 +38,11 @@ $sources = @(
     (Join-Path $productionRoot 'VideoSurfaceTexture.java')
     (Join-Path $productionRoot 'VideoFrameSamples.java')
     (Join-Path $productionRoot 'SurfaceFrameFence.java')
+    (Join-Path $productionRoot 'OutputOperationToken.java')
+    (Join-Path $productionRoot 'OutputOperationGate.java')
     (Join-Path $probeRoot 'VideoFrameSamplesProbe.java')
     (Join-Path $probeRoot 'SurfaceFrameFenceProbe.java')
+    (Join-Path $probeRoot 'OutputOperationGateProbe.java')
     $wrapperSource
 )
 
@@ -47,8 +50,10 @@ Write-Host "Checking Android host probes with Flutter $actualVersion..."
 & $javacPath -d $outputPath @sources
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-foreach ($probe in @('SurfaceFrameFenceProbe', 'VideoFrameSamplesProbe', 'VideoSurfaceTextureProbe', 'VideoSurfaceTextureRequestProbe', 'VideoSurfaceTextureAcquireProbe')) {
+foreach ($probe in @('SurfaceFrameFenceProbe', 'VideoFrameSamplesProbe', 'OutputOperationGateProbe', 'VideoSurfaceTextureProbe', 'VideoSurfaceTextureRequestProbe', 'VideoSurfaceTextureAcquireProbe')) {
     & $javaPath -cp $outputPath "com.alexmercerind.media_kit_video.$probe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
-Write-Host 'Android host probes completed successfully (5 probes).'
+& python (Join-Path $probeRoot 'video_output_release_probe.py')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host 'Android host probes completed successfully (7 probes).'

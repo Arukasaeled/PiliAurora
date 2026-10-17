@@ -107,11 +107,15 @@ Future<void> main() async {
       readStarted.complete();
       await eventGate.future;
     },
+    onBatchDrained: (batchId) => events.add('drain:$batchId'),
     acknowledge: () => events.add('ack'),
     shutdown: () => events.add('join'),
     onError: (_, _) => events.add('error'),
   );
   session.add(1);
+  // The single reader posts a drain marker only after its NONE return. The
+  // session must serialize that marker behind every borrowed event callback.
+  session.drain(7);
   await readStarted.future;
   final closing = session.stop();
   await Future<void>.delayed(Duration.zero);
@@ -122,28 +126,30 @@ Future<void> main() async {
   eventGate.complete();
   await closing;
   check(
-    events.join(',') == 'read,ack,join',
-    'read finishes before ack and reader join',
+    events.join(',') == 'read,ack,drain:7,join',
+    'NONE boundary follows borrowed-event acknowledgement and precedes reader join',
   );
   session.add(2);
   await session.stop();
   check(
-    events.length == 3,
+    events.length == 4,
     'late event and repeated stop cannot touch a stopped reader',
   );
 
   final failed = <String>[];
   final broken = EventLoopSession<int>(
     onEvent: (_) => throw StateError('mock parser failure'),
+    onBatchDrained: (batchId) => failed.add('drain:$batchId'),
     acknowledge: () => failed.add('ack'),
     shutdown: () => failed.add('join'),
     onError: (_, _) => failed.add('error'),
   );
   broken.add(1);
+  broken.drain(8);
   await Future<void>.delayed(Duration.zero);
   await broken.stop();
   check(
-    failed.join(',') == 'error,ack,join',
-    'parse failure still acknowledges and releases reader',
+    failed.join(',') == 'error,ack,drain:8,join',
+    'parse failure still acknowledges, delivers NONE, and releases reader',
   );
 }

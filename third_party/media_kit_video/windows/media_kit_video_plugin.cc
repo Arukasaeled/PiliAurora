@@ -10,7 +10,45 @@
 
 #include <Windows.h>
 
+#include <mutex>
+#include <optional>
+#include <vector>
+
 namespace media_kit_video {
+namespace {
+
+struct FrameProgressBatch {
+  std::mutex mutex;
+  std::optional<OutputOperationToken> token;
+  std::vector<int64_t> timestamps;
+  bool flush_scheduled = false;
+};
+
+OutputOperationToken ReadOutputOperationToken(
+    const flutter::EncodableMap& values) {
+  const auto read = [&values](const char* key) {
+    return std::stoll(std::get<std::string>(
+        values.at(flutter::EncodableValue(key))));
+  };
+  return OutputOperationToken{read("runtimeId"), read("loadId"),
+                              read("outputEpoch"), read("configRevision")};
+}
+
+flutter::EncodableMap EncodeOutputOperationToken(
+    const OutputOperationToken& token) {
+  return flutter::EncodableMap{
+      {flutter::EncodableValue("runtimeId"),
+       flutter::EncodableValue(std::to_string(token.runtime_id))},
+      {flutter::EncodableValue("loadId"),
+       flutter::EncodableValue(std::to_string(token.load_id))},
+      {flutter::EncodableValue("outputEpoch"),
+       flutter::EncodableValue(std::to_string(token.output_epoch))},
+      {flutter::EncodableValue("configRevision"),
+       flutter::EncodableValue(std::to_string(token.config_revision))},
+  };
+}
+
+}  // namespace
 
 void MediaKitVideoPlugin::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows* registrar) {
@@ -107,15 +145,160 @@ void MediaKitVideoPlugin::HandleMethodCall(
                 }),
                 nullptr);
           });
+        },
+        [channel_ptr = channel_, post = platform_dispatcher_->post(),
+         handle = handle_value](const auto& token, auto id, auto width,
+                                auto height) {
+          post([channel_ptr, handle, token, id, width, height]() {
+            channel_ptr->InvokeMethod(
+                "VideoOutput.Attach",
+                std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+                    {flutter::EncodableValue("handle"),
+                     flutter::EncodableValue(handle)},
+                    {flutter::EncodableValue("id"), flutter::EncodableValue(id)},
+                    {flutter::EncodableValue("rect"),
+                     flutter::EncodableValue(flutter::EncodableMap{
+                         {flutter::EncodableValue("width"),
+                          flutter::EncodableValue(width)},
+                         {flutter::EncodableValue("height"),
+                          flutter::EncodableValue(height)},
+                     })},
+                    {flutter::EncodableValue("token"),
+                     flutter::EncodableValue(EncodeOutputOperationToken(token))},
+                }),
+                nullptr);
+          });
+        },
+        [channel_ptr = channel_, post = platform_dispatcher_->post(),
+         handle = handle_value,
+         batch = std::make_shared<FrameProgressBatch>()](const auto& token,
+                                                         auto timestamp_us) {
+          bool should_schedule = false;
+          {
+            std::lock_guard<std::mutex> lock(batch->mutex);
+            if (!batch->token.has_value() || !(*batch->token == token)) {
+              batch->token = token;
+              batch->timestamps.clear();
+            }
+            if (batch->timestamps.size() < 64) {
+              batch->timestamps.push_back(timestamp_us);
+            } else {
+              batch->timestamps.back() = timestamp_us;
+            }
+            if (!batch->flush_scheduled) {
+              batch->flush_scheduled = true;
+              should_schedule = true;
+            }
+          }
+          if (!should_schedule) return;
+          post([channel_ptr, handle, batch]() {
+            std::optional<OutputOperationToken> token;
+            std::vector<int64_t> timestamps;
+            {
+              std::lock_guard<std::mutex> lock(batch->mutex);
+              token = batch->token;
+              timestamps = std::move(batch->timestamps);
+              batch->timestamps.clear();
+              batch->flush_scheduled = false;
+            }
+            if (!token.has_value() || timestamps.empty()) return;
+            flutter::EncodableList encoded_timestamps;
+            encoded_timestamps.reserve(timestamps.size());
+            for (const auto timestamp : timestamps) {
+              encoded_timestamps.emplace_back(timestamp);
+            }
+            channel_ptr->InvokeMethod(
+                "VideoOutput.Progress",
+                std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+                    {flutter::EncodableValue("handle"),
+                     flutter::EncodableValue(handle)},
+                    {flutter::EncodableValue("token"),
+                     flutter::EncodableValue(EncodeOutputOperationToken(*token))},
+                    {flutter::EncodableValue("consumedAtMonotonicUs"),
+                     flutter::EncodableValue(encoded_timestamps)},
+                }),
+                nullptr);
+          });
         });
     result->Success(flutter::EncodableValue(std::monostate{}));
+  } else if (method_call.method_name() ==
+             "VideoOutputManager.BeginOutputForLoad") {
+    const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
+    const auto handle = std::stoll(std::get<std::string>(
+        arguments.at(flutter::EncodableValue("handle"))));
+    const auto token = ReadOutputOperationToken(
+        std::get<flutter::EncodableMap>(
+            arguments.at(flutter::EncodableValue("token"))));
+    auto completion = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+        std::move(result));
+    video_output_manager_->BeginOutputForLoad(
+        handle, token,
+        [completion, post = platform_dispatcher_->post()](bool accepted) {
+          post([completion, accepted]() {
+            completion->Success(flutter::EncodableValue(accepted));
+          });
+        });
+  } else if (method_call.method_name() ==
+             "VideoOutputManager.PrepareForLoad") {
+    const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
+    const auto handle = std::stoll(std::get<std::string>(
+        arguments.at(flutter::EncodableValue("handle"))));
+    const auto token = ReadOutputOperationToken(
+        std::get<flutter::EncodableMap>(
+            arguments.at(flutter::EncodableValue("token"))));
+    const auto track_id = std::get<std::string>(
+        arguments.at(flutter::EncodableValue("trackId")));
+    const auto width = arguments.at(flutter::EncodableValue("width")).LongValue();
+    const auto height = arguments.at(flutter::EncodableValue("height")).LongValue();
+    auto completion = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+        std::move(result));
+    video_output_manager_->PrepareForLoad(
+        handle, token, track_id, width, height,
+        [completion, post = platform_dispatcher_->post()](bool accepted,
+                                                          int64_t output_width,
+                                                          int64_t output_height) {
+          post([completion, accepted, output_width, output_height]() {
+            completion->Success(flutter::EncodableValue(flutter::EncodableMap{
+                {flutter::EncodableValue("accepted"),
+                 flutter::EncodableValue(accepted)},
+                {flutter::EncodableValue("width"),
+                 flutter::EncodableValue(output_width)},
+                {flutter::EncodableValue("height"),
+                 flutter::EncodableValue(output_height)},
+            }));
+          });
+        });
+  } else if (method_call.method_name() ==
+             "VideoOutputManager.InvalidateOutputGeneration") {
+    const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
+    const auto handle = std::stoll(std::get<std::string>(
+        arguments.at(flutter::EncodableValue("handle"))));
+    const auto token = ReadOutputOperationToken(
+        std::get<flutter::EncodableMap>(
+            arguments.at(flutter::EncodableValue("token"))));
+    auto completion = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+        std::move(result));
+    video_output_manager_->InvalidateOutputGeneration(
+        handle, token,
+        [completion, post = platform_dispatcher_->post()](bool acknowledged) {
+          post([completion, acknowledged]() {
+            completion->Success(flutter::EncodableValue(acknowledged));
+          });
+        });
   } else if (method_call.method_name().compare("VideoOutputManager.SetSourceSize") == 0) {
     const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
     const auto handle = std::get<std::string>(arguments.at(flutter::EncodableValue("handle")));
     // Dart 通道按数值范围编码 int32/int64，普通视频尺寸会走 int32。
     const auto width = arguments.at(flutter::EncodableValue("width")).LongValue();
     const auto height = arguments.at(flutter::EncodableValue("height")).LongValue();
-    video_output_manager_->SetSourceSize(std::stoll(handle), width, height);
+    std::optional<OutputOperationToken> token;
+    const auto token_value = arguments.find(flutter::EncodableValue("token"));
+    if (token_value != arguments.end()) {
+      token = ReadOutputOperationToken(
+          std::get<flutter::EncodableMap>(token_value->second));
+    }
+    video_output_manager_->SetSourceSize(std::stoll(handle), width, height,
+                                         token);
     result->Success(flutter::EncodableValue(std::monostate{}));
   } else if (method_call.method_name().compare("VideoOutputManager.Dispose") ==
              0) {
@@ -123,8 +306,15 @@ void MediaKitVideoPlugin::HandleMethodCall(
     auto handle =
         std::get<std::string>(arguments[flutter::EncodableValue("handle")]);
     auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
-    video_output_manager_->Dispose(handle_value);
-    result->Success(flutter::EncodableValue(std::monostate{}));
+    auto completion = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+        std::move(result));
+    video_output_manager_->Dispose(
+        handle_value,
+        [completion, post = platform_dispatcher_->post()]() {
+          post([completion]() {
+            completion->Success(flutter::EncodableValue(std::monostate{}));
+          });
+        });
   } else if (method_call.method_name() == "VideoOutputManager.ResetRenderer") {
     const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
     const auto handle = std::get<std::string>(

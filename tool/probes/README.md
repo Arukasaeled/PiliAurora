@@ -6,7 +6,7 @@
 | --- | --- |
 | `android/` | 暂停旋转测试入口、画面检查脚本和 Java 帧栅栏检查。 |
 | `windows/` | 窗口回调、尺寸通道、纹理首帧和输出确认探针。 |
-| `playback/` | 媒体加载烟测、跳转命令、断流恢复与 Windows 超分切换。 |
+| `playback/` | 媒体加载烟测、跳转命令、会话验收与 Windows 超分切换。 |
 | `event_loop/` | 事件循环生命周期、ABI 检查与配套 C++ mock。 |
 
 运行前查看脚本参数和源码，确认目标平台、输入文件及输出目录。工具结果只覆盖它实际检查的内容；应用行为还要按[构建与测试说明](../../doc/build-and-test.md)在目标平台验证。
@@ -68,19 +68,22 @@ uv run --locked python tool/probes/android/paused_rotation_probe.py --adb <adb�
 
 ## Android 主机帧调度探针
 
-准备项目依赖和 PATH 中的 JDK 25 后运行：
+准备项目依赖、PATH 中的 JDK 25 与 Python 3 后运行：
 
 ```powershell
 pwsh -NoProfile -File tool/run-native-probes.ps1
 ```
 
-入口从项目依赖配置定位 `.fvmrc` 固定版本的 Flutter SDK，编译其真实 `SurfaceTextureWrapper.java`，依次执行五个主机 JVM 探针：
+入口从项目依赖配置定位 `.fvmrc` 固定版本的 Flutter SDK，编译其真实 `SurfaceTextureWrapper.java`，依次执行六个主机 JVM 探针：
 
 - `SurfaceFrameFenceProbe`：生产帧栅栏的时间戳、尺寸和 Surface 代次条件。
 - `VideoFrameSamplesProbe`：请求时间缓冲的 32 个样本上限、微秒转换、批次提取和 Surface 重置清理。
+- `OutputOperationGateProbe`：生产输出代次门控的永久撤销、迟到等待/开始拒绝和代次高水位。
 - `VideoSurfaceTextureProbe`：生产 listener 完成后采样、回调转发、Handler、注销和消费确认。
 - `VideoSurfaceTextureRequestProbe`：真实 Flutter wrapper 的 monitor 竞争，交替 0/9ms 取图锁等待计入请求样本。
 - `VideoSurfaceTextureAcquireProbe`：30 FPS 视频叠加 120 FPS 重绘时取图 30 次，并检查暂停恢复、通知合并、异常重试、关闭采样和上下文重建；请求探针另检查取图期间的新通知不会丢失。
+
+入口随后运行 `android/video_output_release_probe.py`：从生产 `VideoOutput.java` 提取释放及回执方法，编译到主机 JVM 夹具，检查 JNI 删除后的即时回执、重复释放、无引用输出和 JNI 删除失败。该探针使用 Python 标准库，产物在 `build/probe-validation/android-release/`；它不执行真实 JNI 或 GPU。
 
 缺失 SDK 源码、编译或断言失败均返回非零退出码；产物留在 `build/probe-validation/android/`。Android 桩位于探针目录，不加入生产编译。探针不创建 GL、原生 Surface 或真实消息循环，也未模拟 platform/UI 合并线程的全部行为。采样顺序与 monitor 等待由主机检查，平台 API 由 Android 构建检查，实际 Scene 与呈现由目标设备检查。
 
@@ -157,16 +160,6 @@ uv run --locked python tool/probes/windows/windows_video_sampling_probe.py --vid
 
 追加 `--control-dumb-mode=auto` 可对照修复前的自动简化渲染模式。退出码 0 表示 16 个采样帧均无绿色边带且实际使用指定硬解器；检测到条带、帧不足或硬解回退会退出 1。输入需有至少 20 帧，画面底部应有正常内容，避免原片自身纯绿色边带造成误判。探针只打开本地视频，不访问网络或账号，覆盖 mpv／ANGLE 的像素输出；Flutter 合成、控件、全屏切换和长期性能在应用内实测。
 
-## 播放器断流恢复回归探针
-
-`playback_network_recovery_probe.py` 回放脱敏的 Windows curl 终止错误、Android HTTPS 提前结束和 MP4 截断错误，提取生产日志分发、播放器监听和重连方法，检查断流恢复、缓冲检查升级、错误合并、冷却窗口和媒体切换。暂停状态与 CDN 切换由 `test/plugin/pl_player/native_media_source_test.dart` 覆盖。
-
-```powershell
-uv run --locked python tool/probes/playback/playback_network_recovery_probe.py
-```
-
-通过 FVM 运行 Flutter 测试，生成文件写入 `build/playback-network-diagnosis/` 下的临时目录，运行结束后自动清理。原生播放器由状态桩替代，真实网络传输、GPU、MediaCodec 和长时间播放需要实机验证。
-
 ## Windows 直播首帧探针
 
 `playback/windows_live_startup.dart` 使用实际 Flutter、ANGLE 与 libmpv，按直播的
@@ -194,7 +187,115 @@ fvm flutter build windows --debug --no-pub --target tool/probes/playback/windows
 不记录媒体地址。像素断言会将纯黑或纯色内容判为失败，使用可见且有颜色变化的样片。
 结束后按[构建与测试](../../doc/build-and-test.md#构建)重新构建应用默认入口。
 
+## 暂停加载输出挂接探针
+
+`playback/paused_output_attach.dart` 使用当前播放器和原生视频控制器，在
+`open(play: false)` 后保持暂停，检查匹配的 `FILE_LOADED` 身份、轨道/几何快照、
+输出确认及当前 token 的 attach 回执。探针不调用 `play()`、不初始化账号；JSON
+报告不记录输入路径。Windows 使用本机可见内容的视频文件：
+
+```powershell
+fvm flutter build windows --debug --no-pub --target tool/probes/playback/paused_output_attach.dart --dart-define=PAUSED_OUTPUT_MEDIA=E:/media/fixture.mp4 --dart-define=PAUSED_OUTPUT_REPORT=build/player-refactor-validation/paused-output-windows.json
+& build/windows/x64/runner/Debug/PiliAurora.exe
+```
+
+Android 使用独立 profile 包。先将本地样片放到模拟器共享存储，再授权该探针包读取视频：
+
+```powershell
+adb push build/jank-fixture/fixture.mp4 /sdcard/Movies/paused-output-fixture.mp4
+adb shell pm grant io.github.wallpap.piliaurora.profile android.permission.READ_MEDIA_VIDEO
+fvm flutter run --profile --no-pub -d emulator-5554 -t tool/probes/playback/paused_output_attach.dart --dart-define=PAUSED_OUTPUT_MEDIA=file:///storage/emulated/0/Movies/paused-output-fixture.mp4 --dart-define=PAUSED_OUTPUT_REPORT=build/player-refactor-validation/paused-output-android.json
+```
+
+`passed` 要求文件身份和完整视频轨快照已知、输出策略为 `prepared` 或 `legacyAttached`，
+且检查时仍暂停。Android 的 `preloadedEvidence` 可显示是否在 decoder 前配置了 Surface；
+Windows 的 `nativeTextureAttachReceipt` 表示该 load token 已收到原生纹理挂接确认。
+本探针验证 paused-open 协议和原生输出回执，不判定画面像素、MediaCodec/GPU 画质或扬声器音频。
+
+## 生产会话设备验收
+
+`playback/session_device_acceptance.dart` 通过生产 `PlaybackSession` 和
+`NativePlaybackRuntime` 检查暂停加载、纹理像素、播放与音频时间推进、暂停 seek、
+独立音轨、连续加载取代、解码器与音频模式切换、短时稳定播放和真实释放。
+输入为本地样片，不读取账号；音频输出使用 `ao=null`。
+
+构建时传入 `DEVICE_MEDIA`、`DEVICE_REPORT`；可选 `DEVICE_AUDIO`（独立音轨）、
+`DEVICE_SHADER`（Windows 本地 shader）和 `DEVICE_SOAK_SECONDS`（默认 60 秒）。
+Android 可使用独立 debug 包，将样片及报告置于该包的外部私有 `files/` 目录，
+无需授予共享媒体权限；外部目录受设备限制时，可用 `run-as` 将样片及报告放到
+debug 包的内部 `cache/`，并同步修改构建参数中的路径。
+报告旁的 `<报告路径>.config.json` 支持以下运行配置，
+修改配置后重新启动探针即可复测：
+
+```json
+{"rapidOnly": true, "rapidCount": 2}
+```
+
+`rapidOnly` 运行暂停加载、加载取代、取代后的再次加载与播放、像素及释放检查；
+`rapidCount` 默认 10，`rapidIntervalMs` 默认 15，可调整间隔覆盖不同取消时机。
+模拟器缺少对应硬解器时，可设置 `"decoder": "no"` 验证软件解码的会话行为；
+这类报告不覆盖 MediaCodec/D3D11VA 或软硬解切换。
+设置 `{"skipRapid": true, "soakSeconds": 60}` 可独立验证其他场景，避免取消失败影响后续结果。
+报告记录失败阶段、命令结果、原生 playlist/idle 事实与像素范围，逐项落盘；
+最终 `passed` 要求所选场景全部通过。直播 shader 场景使用本地媒体配合直播时间线策略，
+真实直播、扬声器音频、旋转、DPI 和长期性能需分别验证。完成后恢复默认应用入口。
+
+设置 `{"diagnosticReplayOnly": true}` 可运行诊断错误回放：向播放器的诊断流注入损坏包、
+解码回退日志，检查会话仍为 ready、暂停/播放有效、时间线和纹理像素正常；随后加载一个
+不存在的本地文件，要求带文件身份的原生 end-file error 在 5 秒内返回失败，并验证再次加载可用。
+该模式回放错误通知的处理路径，网络包损坏及设备解码错误仍需相应媒体和设备复验。
+
+设置 `{"mountAfterLoad": true, "switchSources": ["http://127.0.0.1:8765/live.flv", "http://127.0.0.1:8765/live.m3u8"]}`
+可检查加载完成后才挂载视频控件、连续切换来源及 Windows 窗口大小变化。该模式使用直播时间线，
+运行初次暂停加载、清单中每一次切换和资源释放；除音视频时间推进外，还要求两次纹理采样的
+指纹不同。样片需持续运动并含音轨，静态画面不适用于运动断言。HTTP 服务由运行者准备，
+签名地址保存在本地配置中。这里的候选切换不经过直播页面的线路选择逻辑。
+
+设置 `{"startupOnly": true, "mountAfterLoad": true}` 可单独检查暂停加载与释放。
+Windows 的 ready 结果要求输出纹理已符合屏幕限幅，避免页面挂载后再次调整初始尺寸；
+报告的 `initialOutput` 保留预期尺寸与实际纹理尺寸。
+
+## Windows 独立播放窗口验收
+
+`playback/desktop_window_acceptance.dart` 使用生产 IPC、子进程启动、播放页面和原生纹理，
+检查小窗画面持续更新、启动 ready 回执，以及视频暂停后重载保持暂停。
+主进程在报告目录的 `window-host/` 创建独立空账号存储和样片副本，不读取当前应用账号。
+使用持续运动、含音轨且超过 20 秒的 MP4 样片：
+
+```powershell
+fvm flutter build windows --debug --no-pub --target tool/probes/playback/desktop_window_acceptance.dart --dart-define=WINDOW_PROBE_MEDIA=E:/media/fixture.mp4 --dart-define=WINDOW_PROBE_REPORT=E:/Code/project/PiliAurora/build/window-validation/window.json
+& build/windows/x64/runner/Debug/PiliAurora.exe
+```
+
+默认验证本地下载视频。在线视频可在 `<报告路径>.config.json` 中设置
+`{"onlineBase": "http://127.0.0.1:8765"}`，并在另一终端从报告目录启动本地 HTTP 服务：
+
+```powershell
+python -m http.server 8765 --bind 127.0.0.1 --directory build/window-validation
+```
+
+探针替换 Dio 的业务 API 响应，让生产页面查询本地 HTTP 视频；媒体下载仍由原生播放器执行。
+简单 HTTP 服务需使用 faststart MP4，可通过 FFmpeg 的 `-c copy -movflags +faststart` 准备。
+
+设置 `{"liveBase": "http://127.0.0.1:8765", "lineSwitchOnly": true}` 可验证直播页面的六次线路切换。
+服务根目录须提供 H.264/AAC `live.flv` 和 fMP4 HLS `live.m3u8` 及其分片；省略
+`lineSwitchOnly` 时交替切换 FLV/HLS。候选线路使用同一本地服务的不同查询参数，
+不覆盖远端 CDN 差异、断流或真实直播时间戳异常。
+
+报告记录会话、页面挂载、解码器和纹理像素摘要；子进程额外生成 `<报告路径>.child.json`。
+子进程在 bootstrap 后采样前 6 秒，要求开始播放后的纹理几何不再变化、不进入截图交接，
+且窗口不会在视频纹理出现前可见。采样间隔为 50ms，不覆盖小于此间隔的显示变化。
+设置 `"captureMenus": true` 会在主进程生成浅色与深色主题下的菜单预览 PNG，
+并记录菜单正文实际继承的文字颜色；预览使用独立存储和合成背景。
+这些检查不代表发布版切换耗时、扬声器声音或真实网站接口验收。完成后恢复默认应用入口。
+
 ## Windows 超分切换探针
+
+`playback/session_paused_load.dart` 通过生产 `PlaybackSession` 和
+`NativePlaybackRuntime` 验证暂停加载、同内容重载与真实资源释放。
+使用上述 `PAUSED_OUTPUT_MEDIA` 和 `PAUSED_OUTPUT_REPORT` 参数并替换 target；
+可增加 `--dart-define=SESSION_SHADER=<本地 glsl 文件绝对路径>`，检查直播时间线策略下
+shader 切换和清除均重载、保留暂停意图。输入仍是本地样片，这项检查不代表真实直播网络验收。
 
 `playback/windows_shader_switch.dart` 使用实际 Flutter、ANGLE 与 libmpv 检查 shader 切换、纹理更新、硬解、暂停状态、音频时间线和私有内存。先确认[mpv 预编译包](../../third_party/mpv/README.md)完整，并准备含音轨的本地视频，再构建专用入口：
 

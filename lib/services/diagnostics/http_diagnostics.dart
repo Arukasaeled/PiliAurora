@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:pili_aurora/http/request_failure_policy.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 
 class DiagnosticHttpInterceptor extends Interceptor {
@@ -11,7 +12,10 @@ class DiagnosticHttpInterceptor extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     // 重试可能复用 RequestOptions；先结束上一轮，避免活动请求计数泄漏。
-    (options.extra.remove(_key) as TraceOperation?)?.finish(error: 'retry');
+    (options.extra.remove(_key) as TraceOperation?)?.finish(
+      error: 'retry',
+      errorLevel: DiagnosticLogLevel.debug,
+    );
     options.extra[_key] = _diagnostics.begin(
       'http',
       options.method,
@@ -42,16 +46,22 @@ class DiagnosticHttpInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
+    final level = isExpectedHttpFailure(err)
+        ? DiagnosticLogLevel.debug
+        : DiagnosticLogLevel.error;
     final operation = err.requestOptions.extra.remove(_key) as TraceOperation?;
     operation?.finish(
+      errorLevel: level,
       error: err.type.name,
+      stack: err.stackTrace,
       details: {'status': err.response?.statusCode},
     );
     if (operation == null) {
       _diagnostics.log(
-        DiagnosticLogLevel.error,
+        level,
         'http',
         '请求失败',
+        stack: err.stackTrace,
         details: {
           'host': err.requestOptions.uri.host,
           'path': err.requestOptions.uri.path,

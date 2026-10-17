@@ -25,11 +25,22 @@ abstract class Initializer {
     MPV mpv,
     FutureOr<void> Function(Pointer<mpv_event> event)? callback, {
     Map<String, String> options = const {},
+    FutureOr<void> Function(int batchId)? onBatchDrained,
   }) {
     return _loops.create(
-      nativeCreate: () =>
-          InitializerNativeEventLoop.create(mpv, callback, options),
-      isolateCreate: () => InitializerIsolate.create(mpv, callback, options),
+      nativeCreate: () => InitializerNativeEventLoop.create(
+        mpv,
+        callback,
+        options,
+        onBatchDrained: onBatchDrained,
+        requireBatchDrain: callback != null,
+      ),
+      isolateCreate: () => InitializerIsolate.create(
+        mpv,
+        callback,
+        options,
+        onBatchDrained: onBatchDrained,
+      ),
     );
   }
 

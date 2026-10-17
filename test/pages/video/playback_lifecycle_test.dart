@@ -11,6 +11,7 @@ import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/models/common/video/video_type.dart';
 import 'package:pili_aurora/models/remote/video/video_play_info/subtitle.dart';
 import 'package:pili_aurora/pages/video/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
 
@@ -149,6 +150,41 @@ void main() {
     controller.closePlayback();
   });
 
+  test('查询被新页面取代时，返回会用保留意图重新解析', () async {
+    final controller = page();
+    final holdForRoute = controller.holdPlaybackForRoute;
+    final restoreAfterRoute = controller.restorePlaybackAfterRoute;
+    holdForRoute();
+    final restore = restoreAfterRoute();
+    final request = await adapter.next();
+    request.complete(media(1));
+    await restore;
+
+    expect(controller.loads, hasLength(1));
+    expect(controller.loads.single.autoplay, isFalse);
+    controller.closePlayback();
+  });
+
+  test('返回已有媒体时重新提交页面计划并保留上次进度', () async {
+    final controller = page();
+    final initial = controller.queryVideoUrl();
+    (await adapter.next()).complete(media(1));
+    await initial;
+    controller
+      ..playedTime = const Duration(seconds: 27)
+      ..holdPlaybackForRoute();
+    await controller.restorePlaybackAfterRoute();
+
+    expect(controller.routeLoads, hasLength(1));
+    expect(controller.routeLoads.single.start, PlaybackStartPolicy.preserve);
+    expect(controller.routeLoads.single.plan.contentKey, 'ugc:BV-test:1');
+    expect(
+      controller.routeLoads.single.plan.reloadPosition,
+      const Duration(seconds: 27),
+    );
+    controller.closePlayback();
+  });
+
   test('字幕加载期间选择关闭，以最新选择为准', () async {
     final controller = page();
     controller.subtitles.add(
@@ -208,25 +244,82 @@ class _VideoController extends VideoDetailController {
     plPlayerController.cacheVideoQa = 80;
   }
   bool closed = false;
+  int _queryGeneration = 0;
+  int _routeLoadGeneration = 0;
+  void Function()? _cancelQuery;
   final loads = <({int cid, String? source, bool autoplay})>[];
+  final routeLoads = <({PlaybackPlan plan, PlaybackStartPolicy start})>[];
   @override
   bool get isClosed => closed;
+  @override
+  Future<LoadResult> submitPlaybackQuery(
+    Future<PlaybackPlan?> Function(PlaybackQuery) resolve, {
+    required PlaybackStartPolicy start,
+  }) async {
+    _cancelQuery?.call();
+    _cancelQuery = null;
+    final generation = ++_queryGeneration;
+    bool isCurrent() => generation == _queryGeneration && !closed;
+    final query = PlaybackQuery(
+      requestId: generation,
+      isCurrent: isCurrent,
+      registerCancel: (cancel) {
+        if (isCurrent()) {
+          _cancelQuery = cancel;
+        } else {
+          cancel();
+        }
+      },
+    );
+    final plan = await resolve(query);
+    if (!isCurrent()) return const LoadResult.superseded();
+    if (plan == null) return const LoadResult.noMedia();
+    loads.add((
+      cid: cid.value,
+      source: plan.source.currentVideoSource,
+      autoplay: switch (start) {
+        PlaybackStartPolicy.play => true,
+        PlaybackStartPolicy.pause => false,
+        PlaybackStartPolicy.preserve => plPlayerController.wantsToPlay,
+      },
+    ));
+    return LoadResult.ready(generation);
+  }
+
   @override
   Future<void> playerInit({
     bool? autoplay,
     bool autoFullScreenFlag = false,
-    bool Function()? isCurrent,
   }) async {
     loads.add((
       cid: cid.value,
       source: videoUrl,
-      autoplay: autoplay ?? autoPlay,
+      autoplay: autoplay ?? plPlayerController.wantsToPlay,
     ));
   }
+
+  @override
+  Future<LoadResult> loadPlaybackPlanForRoute(
+    PlaybackPlan plan, {
+    required PlaybackStartPolicy start,
+    required void Function() onReady,
+  }) async {
+    routeLoads.add((plan: plan, start: start));
+    return LoadResult.ready(++_routeLoadGeneration);
+  }
+
+  @override
+  Future<CommandResult> applyPlaybackSubtitleTrack(
+    PlaybackSubtitleTrack? track,
+  ) async => const CommandResult.applied();
+
+  @override
+  void afterPlaybackReady(bool Function() valid) {}
 
   Future<void> initializeClosedPage() => super.playerInit();
   void closePlayback() {
     closed = true;
+    _cancelQuery?.call();
     playbackOwner.close();
   }
 }

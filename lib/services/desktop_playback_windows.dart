@@ -5,6 +5,8 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
+import 'package:pili_aurora/services/diagnostics/window_coordinator.dart';
 import 'package:pili_aurora/services/desktop_playback_layout.dart';
 import 'package:pili_aurora/services/desktop_playback_request.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -49,10 +51,26 @@ class DesktopPlaybackWindows with WindowListener {
   double? initialVolume;
   Directory? cacheDirectory;
   bool _closing = false;
+  Future<void>? _showPlayerWindow;
+  Map<String, dynamic>? _diagnosticSettings;
+  int _flushSequence = 0;
+  late final _diagnosticCoordinator = DiagnosticWindowCoordinator(
+    sockets: () => {
+      for (final window in _windows.values) window.id: window.socket,
+    },
+    onSkipped: (ids) {
+      Diagnostics.instance.skippedChildWindows
+        ..clear()
+        ..addAll(ids);
+    },
+  );
+  Completer<void>? _diagnosticsResumed;
+  final _flushRequests = <int, Completer<void>>{};
 
   Future<HttpServer> _ensureServer() => _server ??= () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
+      await _diagnosticsResumed?.future;
       final token = request.headers.value(HttpHeaders.authorizationHeader);
       final matches = _windows.values.where(
         (window) => window.token == token && window.socket == null,
@@ -96,7 +114,31 @@ class DesktopPlaybackWindows with WindowListener {
 
   void _onWindowMessage(_PlaybackWindow window, Map<String, dynamic> message) {
     switch (message['type']) {
+      case 'diagnosticControlResult':
+        _diagnosticCoordinator.receive(window.id, message);
+      case 'diagnostic':
+        Diagnostics.instance.receiveRecord(
+          Map<String, Object?>.from(message['record'] as Map),
+          windowId: window.id,
+        );
+      case 'diagnosticFlush':
+        unawaited(
+          Diagnostics.instance.flush().then((_) {
+            window.socket?.add(
+              jsonEncode({
+                'type': 'diagnosticFlushed',
+                'id': message['id'],
+              }),
+            );
+          }),
+        );
       case 'ready':
+        window.socket?.add(
+          jsonEncode({
+            'type': 'diagnosticSettings',
+            'settings': Diagnostics.instance.settings,
+          }),
+        );
         if (!window.ready.isCompleted) window.ready.complete();
       case 'bounds':
         final bounds = (message['bounds'] as List).cast<num>();
@@ -134,6 +176,7 @@ class DesktopPlaybackWindows with WindowListener {
 
   Future<void> open(DesktopPlaybackRequest request, {double? volume}) async {
     if (isPlayerWindow) throw StateError('请从主窗口打开新的播放窗口');
+    await _diagnosticsResumed?.future;
     final server = await _ensureServer();
     final snapshot = await GStorage.playbackSnapshot();
     var id = 0;
@@ -178,11 +221,13 @@ class DesktopPlaybackWindows with WindowListener {
     }, directory);
     _windows[id] = window;
     try {
+      await _diagnosticsResumed?.future;
       window.process = await Process.start(
         Platform.resolvedExecutable,
         [argument],
         workingDirectory: File(Platform.resolvedExecutable).parent.path,
         environment: {
+          'PILIAURORA_WINDOW_ID': '$id',
           'PILIAURORA_WINDOW_PORT': '${server.port}',
           'PILIAURORA_WINDOW_TOKEN': token,
         },
@@ -233,6 +278,17 @@ class DesktopPlaybackWindows with WindowListener {
           initialization.complete(message);
         } else {
           switch (message['type']) {
+            case 'diagnosticControl':
+              unawaited(_handleDiagnosticControl(message));
+            case 'diagnosticSettings':
+              unawaited(
+                applyDiagnosticSettings(
+                  Map<String, dynamic>.from(message['settings'] as Map),
+                ),
+              );
+
+            case 'diagnosticFlushed':
+              _flushRequests.remove(message['id'])?.complete();
             case 'bounds':
               final values = (message['bounds'] as List).cast<num>();
               unawaited(
@@ -294,7 +350,111 @@ class DesktopPlaybackWindows with WindowListener {
     }
   }
 
-  void playerReady() => _sendChild({'type': 'ready'});
+  Future<void> _handleDiagnosticControl(Map<String, dynamic> message) async {
+    var success = false;
+    try {
+      if (message['action'] == 'pause') {
+        await Diagnostics.instance.pauseWrites();
+      } else if (message['action'] == 'clear') {
+        await Diagnostics.instance.clearPausedRecords();
+      } else if (message['action'] == 'resume') {
+        Diagnostics.instance.resumeWrites();
+        await Diagnostics.instance.flushLocal();
+      } else {
+        throw StateError('未知诊断协调操作');
+      }
+      success = true;
+    } catch (_) {
+      // 协调失败通过应答交给主窗口展示，随后由恢复流程解除暂停。
+    } finally {
+      _sendChild({
+        'type': 'diagnosticControlResult',
+        'id': message['id'],
+        'success': success,
+      });
+    }
+  }
+
+  Future<void> pauseWindowDiagnostics() async {
+    _diagnosticsResumed = Completer<void>();
+    await _diagnosticCoordinator.pause();
+  }
+
+  Future<void> clearWindowDiagnostics() => _diagnosticCoordinator.clear();
+
+  Future<void> resumeWindowDiagnostics() async {
+    try {
+      await _diagnosticCoordinator.resume();
+    } finally {
+      _diagnosticsResumed?.complete();
+      _diagnosticsResumed = null;
+    }
+  }
+
+  void syncDiagnosticSettings() {
+    final message = jsonEncode({
+      'type': 'diagnosticSettings',
+      'settings': Diagnostics.instance.settings,
+    });
+    for (final window in _windows.values) {
+      if (window.socket?.readyState == WebSocket.open) {
+        window.socket!.add(message);
+      }
+    }
+  }
+
+  Future<void> applyDiagnosticSettings([Map<String, dynamic>? incoming]) async {
+    if (incoming != null) _diagnosticSettings = incoming;
+    final settings = _diagnosticSettings;
+    if (settings == null) return;
+    await Diagnostics.instance.configure(
+      level: DiagnosticLogLevel.parse(settings['level'] as String?),
+      playerLevel: DiagnosticLogLevel.parse(settings['playerLevel'] as String?),
+      tracing: settings['tracing'] as bool,
+      intervalMs: settings['intervalMs'] as int,
+    );
+  }
+
+  bool sendDiagnosticRecord(Map<String, Object?> record) {
+    if (_childSocket?.readyState != WebSocket.open) return false;
+    _childSocket!.add(jsonEncode({'type': 'diagnostic', 'record': record}));
+    return true;
+  }
+
+  Future<void> flushDiagnostics() async {
+    if (_childSocket?.readyState != WebSocket.open) return;
+    final id = ++_flushSequence;
+    final request = _flushRequests[id] = Completer<void>();
+    _sendChild({'type': 'diagnosticFlush', 'id': id});
+    try {
+      await request.future.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          Diagnostics.instance.log(
+            DiagnosticLogLevel.warning,
+            'window',
+            '等待主窗口确认日志写入超时',
+          );
+        },
+      );
+    } finally {
+      _flushRequests.remove(id);
+    }
+  }
+
+  Future<void> showPlayerWindow() =>
+      _showPlayerWindow ??= _presentPlayerWindow();
+
+  Future<void> _presentPlayerWindow() async {
+    await windowManager.show();
+    await windowManager.focus();
+  }
+
+  Future<void> playerReady() async {
+    await showPlayerWindow();
+    _sendChild({'type': 'ready'});
+  }
+
   void playerFailed() => _sendChild({'type': 'failed'});
   void savePlaybackProgress(int cid, int position) =>
       _sendChild({'type': 'progress', 'cid': cid, 'position': position});
@@ -392,7 +552,19 @@ class DesktopPlaybackWindows with WindowListener {
         await windowManager.isMinimized() || await windowManager.isFullScreen()
         ? null
         : await windowManager.getBounds();
-    await onPlayerClose?.call();
+    try {
+      await onPlayerClose?.call();
+    } catch (error, stackTrace) {
+      Diagnostics.instance.log(
+        DiagnosticLogLevel.error,
+        'window',
+        '关闭播放窗口时清理失败',
+        details: error,
+        stack: stackTrace,
+      );
+    } finally {
+      await Diagnostics.instance.flush();
+    }
     if (_childSocket?.readyState == WebSocket.open) {
       if (bounds != null) {
         _childSocket!.add(

@@ -14,6 +14,8 @@
 
 `lib/pages/video/` → `lib/http/video.dart` 和视频模型 → `lib/plugin/pl_player/` → `media_kit` 与平台库。排查时区分地址解析、网络、解码、渲染和窗口阶段。播放器诊断入口在 `lib/services/diagnostics/player_diagnostics.dart`；切源与网络恢复见[播放器流程图](runtime-flows.md#播放器切源与网络恢复)。
 
+排查播放状态时先记录 `PlaybackSnapshot` 的 phase、stage、requestId、loadId 和 outputEpoch，再沿 owner → session → runtime 对照日志。命令返回、原生事件和输出回执必须属于同一代次；直接读取 Player 或界面控件只能作为补充证据。Android Surface、Windows 纹理和首帧像素分别验收。
+
 Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件见[视频输出说明](windows-video-output.md)。原生库来源与构建步骤见[mpv 构建入口](../third_party/mpv/README.md)，探针命令见[平台探针](../tool/probes/README.md)。
 
 ### 视频弹幕
@@ -21,6 +23,16 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 视频详情或播放器 → 弹幕 API 与解析 → 弹幕状态和渲染。Windows 高密度场景请记录编码、分辨率、输出尺寸、弹幕密度、硬件解码状态、构建模式和复现时长。
 
 Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，播放器快照的 `danmakuScheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 是提交给引擎的帧请求数，含被合并的请求。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Windows 在 `danmaku.renderer.*` 快照的 `scheduler` 中提供相同字段。计数读取沿用现有诊断周期。
+
+播放器快照的 `appLifecycle` 记录采样时的应用生命周期。性能记录的 `route` 跟踪当前页面，弹窗和菜单沿用下方页面；旧版记录会将未命名弹窗写为 `/`，因此该值不能单独证明用户已返回首页。系统后台策略由播放会话持有，覆盖加载、切换页面和后台媒体租约存续期间。
+
+Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`consumedFrameBatches/consumedFrameSamples` 单独统计带当前输出 token 的纹理消费。弹幕相位使用请求时间，消费时间用于首帧与健康证据；两路时间不可混入同一个相位学习器。Windows 沿用输出消费批次作为调度来源。播放器 `runtime.initialize.*` 日志按资源槽等待、Player 创建和输出创建分别记录累计与分段耗时，可用于区分地址请求和本地初始化的等待。
+
+统计弹幕实际频率时，按 Player、媒体代次和 `targetFrameRate` 分组，对相邻且目标不变、active、非 muted 的采样作累计计数差分；排除暂停、缓冲与目标切换边界。`targetFrameRate=0` 表示跟随屏幕，不能与 60/90 FPS 阶段混算。`locked/independent` 切换本身不足以证明实际更新频率异常。
+
+Android `media.output.preloaded` 记录预挂载策略、证据和解码前 selected 值；mpv 在 on_preloaded 之后选轨，该阶段允许唯一候选尚未 selected，FILE_LOADED 继续核对实际选轨。`runtime.shutdown.*` 分段记录文件卸载、订阅清理、输出释放与 Player 释放；`player.disposed` 是诊断停止事件，不代表原生释放完成。Surface 释放先同步解除 VO/wid，再等待 JNI 删除回执。
+
+直播 FILE_LOADED 后缺少有效视频几何时，最多等待 5 秒，且不超过请求剩余预算；输出就绪前的 EOF/error 立即使加载失败。正常点播沿用请求预算，纯音频沿用无视频输出路径。`media.startup.failed` 记录几何等待失败，页面显示既有失败及刷新入口。加载动画的首帧可见性和驱动行为仍需设备验证。
 
 设备侧可运行[Android 帧时间采集](../tool/probes/README.md#android-帧时间采集)，明确指定设备和包名。采集结果与应用诊断分别保留时钟域，结合相同复现窗口检查；SurfaceFlinger 图层、Android gfxinfo、Flutter UI 和 Scene 使用各自统计口径。
 
@@ -52,7 +64,17 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 
 - `lib/services/diagnostics/`：播放器、HTTP、进程指标、历史读取、记录保存和脱敏。
 - `lib/services/logger.dart`：日志服务。
-- `lib/pages/setting/pages/logs.dart` 和 `lib/pages/log_table/`：设置中的日志界面。
+- `lib/pages/setting/pages/logs.dart`：日志等级与性能跟踪设置；`lib/pages/about/diagnostics_page.dart`：诊断记录查看与导出。
+- `lib/pages/log_table/`：服务端金币、经验和登录历史记录。
+
+应用日志和播放器日志分别使用独立队列保留最近 200 条，查看时按记录原始时间排序，页面摘要显示路由、进程与窗口来源。落盘记录包含路由、进程 ID 和运行 ID。Windows 播放子窗口通过现有回环 WebSocket 把脱敏记录转发给主进程，统一写入、轮转和导出；窗口 ID 标识记录来源。关闭子窗口前请求主进程确认写入，等待上限为 3 秒。每个子窗口在连接主窗口前准备独立的本地轮转文件（`diagnostics/window-窗口编号/`），断连后继续保存；转发失败次数见各子窗口 `status.json` 中的 `storage.forwardingFailures`，导出清单的 `children` 字段汇总这些状态；离线窗口的状态时间表示最近一次本地刷新时间。性能采样写入该窗口的 `performance.jsonl`。主窗口导出时先请求已连接子窗口暂停写入并刷新队列，再同时收集子窗口文件，文件名以窗口编号区分；转发成功的日志会同时存在于主进程和子窗口文件中，可按 runId、sequence 识别同一记录。子窗口单文件预算为应用日志 1 MiB、播放器及性能日志 4 MiB，分别保留 2、2、4 个文件。进程被强制终止时，仍可能丢失未落盘队列。主窗口的日志等级、性能开关和采样周期变更会通过 IPC 同步到已连接窗口。
+
+导出与清除共用串行协调流程：暂停期间新日志以编码后的字节保存在缓冲，合计上限为 400 条和 8 MiB；容量不足时优先淘汰低等级记录来保留错误。操作结束后恢复写入，溢出计入 droppedRecords；清除会同时清空子窗口旧队列，操作后的新记录仍继续保存。启动中或已断连的窗口跳过协调，其本地文件在本次导出/清除中保留，清单 `storage.skippedChildWindows` 与页面提示列明这些窗口；已连接窗口未在 3 秒内确认时操作报错。父进程意外退出时，子窗口最多暂停 60 秒后自行恢复。压缩使用已复制的快照，期间日志正常写入。
+
+
+主进程在读取设置前准备诊断存储，启动异常写入后刷新；正常退出和移动端进入后台也刷新待写队列。
+
+HTTP 请求失败由诊断拦截器统一记录，账号层负责用户提示。预期失败判定统一位于 `lib/http/request_failure_policy.dart`，同时控制日志降为 debug 和跳过 toast：覆盖主动取消、后台上报/在线人数/金币/弹幕分段、GitHub 与图片资源，以及自定义 SponsorBlock 服务器的 GET skipSegments。匹配使用 host/path 与方法，不使用整段 URL 的关键字，避免查询参数或相似域名误命中；其他请求失败保留 error，性能跟踪仍统计失败。暂停期间的异常报告会等待缓冲恢复写入的结果，被清除或淘汰的报告返回失败。播放器关闭时等待延迟释放最多 3 秒，释放失败或超时写入终态日志，再由窗口关闭流程刷新并销毁窗口。日志等级设为“关闭”时，该通道的未捕获异常也停止保存。Catcher 设备信息采用允许列表，设备唯一标识和指纹不进入新报告。Windows 多窗口转发、退出时序和 Android 后台行为仍需目标设备验证。
 - [构建与测试](build-and-test.md)：本地验证方式和平台限制。
 
 ## 问题报告

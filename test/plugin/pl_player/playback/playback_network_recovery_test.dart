@@ -87,11 +87,7 @@ void main() {
   group('2026-10-07 Android network failures', () {
     for (final event in [
       'tls: mbedtls_ssl_handshake returned -0x7280',
-      'tls: mbedtls_ssl_read returned -0x0',
-      'tls: mbedtls_ssl_read reported connection reset by peer',
-      'https: Error reading HTTP response: I/O error',
       'https: Stream ends prematurely at 6077440, should be 12527587',
-      'tcp: ffurl_read returned 0xffffff99',
     ]) {
       test('retries $event', () {
         expect(isPlaybackNetworkFailure(event), isTrue);

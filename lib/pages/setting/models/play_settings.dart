@@ -17,6 +17,7 @@ import 'package:pili_aurora/pages/setting/widgets/slider_dialog.dart';
 import 'package:pili_aurora/plugin/pl_player/models/bottom_progress_behavior.dart';
 import 'package:pili_aurora/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
+import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/services/service_locator.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
@@ -58,6 +59,7 @@ List<SettingsModel> get playSettings => [
           setKey: SettingBoxKey.pauseOnMinimize,
           defaultVal: false,
           onChanged: (value) {
+            PlPlayerController.instance?.pauseOnMinimize.value = value;
             try {
               Get.find<MainController>().pauseOnMinimize = value;
             } catch (_) {}
@@ -79,6 +81,7 @@ List<SettingsModel> get playSettings => [
           setKey: SettingBoxKey.autoPiP,
           defaultVal: false,
           onChanged: (val) {
+            PlPlayerController.instance?.setAutoPiP(val);
             if (val && !videoPlayerServiceHandler!.enableBackgroundPlay) {
               SmartDialog.showToast('建议开启后台音频服务');
             }
@@ -396,17 +399,16 @@ Future<void> showPlayerVolumeDialog(
   BuildContext context,
   VoidCallback setState, {
   ValueChanged<double>? onChanged,
+  double? value,
 }) {
   return showVolumeDialog(
     context,
     title: const Text('播放器音量'),
-    value: Pref.playerVolume,
+    value: value ?? Pref.playerVolume,
+    onChanging: onChanged,
     onChanged: (value) => GStorage.setting
         .put(SettingBoxKey.playerVolume, value.roundToDouble())
-        .whenComplete(() {
-          setState();
-          onChanged?.call(value.roundToDouble());
-        }),
+        .whenComplete(setState),
   );
 }
 
@@ -415,7 +417,9 @@ Future<void> showVolumeDialog(
   required Widget title,
   required double value,
   required ValueChanged<double> onChanged,
+  ValueChanged<double>? onChanging,
 }) async {
+  var previewed = false;
   final res = await showDialog<double>(
     context: context,
     builder: (context) => SliderDialog(
@@ -426,10 +430,16 @@ Future<void> showVolumeDialog(
       precise: 0,
       value: value,
       suffix: '%',
+      onChanged: (nextValue) {
+        previewed = true;
+        onChanging?.call(nextValue);
+      },
     ),
   );
   if (res != null) {
     onChanged(res);
+  } else if (previewed) {
+    onChanging?.call(value);
   }
 }
 

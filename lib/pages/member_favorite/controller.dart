@@ -71,8 +71,8 @@ class MemberFavoriteCtr
       subEnd.value =
           (res[1].mediaListResponse?.count ?? -1) <=
           (res[1].mediaListResponse?.list?.length ?? -1);
-    } catch (e) {
-      logger.d(e.toString());
+    } catch (e, stackTrace) {
+      logger.w(e.toString(), error: e, stackTrace: stackTrace);
     }
     loadingState.value = response;
     return true;

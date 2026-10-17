@@ -1,7 +1,7 @@
 /// 日志仅保留诊断所需信息。结构化字段和字符串都经过此入口。
 abstract final class DiagnosticRedactor {
   static final _secretKey = RegExp(
-    r'authorization|cookie|token|password|passwd|secret|credential|private.?key|api.?key|access.?key|sessdata|bili_jct|csrf|buvid|dedeuserid',
+    r'authorization|cookie|token|password|passwd|secret|credential|private.?key|api.?key|access.?key|sessdata|bili_jct|csrf|buvid|dedeuserid|identifierforvendor|android.?id|device.?id|fingerprint',
     caseSensitive: false,
   );
   static final _url = RegExp(r'https?://[^\s<>"\x27]+', caseSensitive: false);

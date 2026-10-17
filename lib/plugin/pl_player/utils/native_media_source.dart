@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:media_kit/media_kit.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 
 /// 构造原生播放器可直接加载的 [Media]。
 ///
@@ -16,12 +17,8 @@ Media nativeMediaSource({
   Duration? start,
   Map<String, String> extras = const {},
 }) {
-  final video = source is NetworkSource
-      ? source.currentVideoSource
-      : source.videoSource;
-  final audio = source is NetworkSource
-      ? source.currentAudioSource
-      : source.audioSource;
+  final video = source.videoSource;
+  final audio = source.audioSource;
   // 外部音轨选项由当前媒体源生成，重建时清除上一份媒体的地址。
   final mediaExtras = Map<String, String>.of(extras)
     ..remove('audio-files-append');
@@ -45,32 +42,33 @@ Media nativeMediaSource({
   return Media(video, start: start, extras: mediaExtras);
 }
 
-/// 重载当前媒体，保留 DASH 音轨、点播位置和用户的播放/暂停状态。
-Future<bool> reloadNativeMedia({
-  required NativePlayer player,
-  required bool isLive,
-  DataSource? source,
+/// Builds media directly from a frozen source selection; candidate indices
+/// are never reconstructed through a mutable [DataSource].
+Media nativeMediaSourceFromSnapshot({
+  required PlaybackSourceSnapshot source,
   bool audioOnly = false,
-  bool Function()? isCurrent,
-  bool Function()? shouldPlay,
-}) async {
-  if (player.disposed ||
-      player.current.isEmpty ||
-      !(isCurrent?.call() ?? true)) {
-    return false;
+  Duration? start,
+  Map<String, String> extras = const {},
+}) {
+  final video = source.currentVideoSource;
+  final audio = source.currentAudioSource;
+  final mediaExtras = Map<String, String>.of(extras)
+    ..remove('audio-files-append');
+  final hasAudio = audio != null && audio.isNotEmpty;
+  if (audioOnly && hasAudio) {
+    return Media(
+      audio,
+      start: start,
+      extras: mediaExtras.isEmpty ? null : mediaExtras,
+    );
   }
-  final current = player.current.last;
-  final media = source == null
-      ? (isLive ? current : current.copyWith(start: player.state.position))
-      : nativeMediaSource(
-          source: source,
-          audioOnly: audioOnly,
-          start: isLive ? null : player.state.position,
-          extras: current.extras ?? const {},
-        );
-  final playing = player.state.playing;
-  await player.open(media, play: false);
-  if (player.disposed || !(isCurrent?.call() ?? true)) return false;
-  if (shouldPlay?.call() ?? playing) await player.play();
-  return true;
+  if (!hasAudio || audioOnly) {
+    return Media(
+      video,
+      start: start,
+      extras: mediaExtras.isEmpty ? null : mediaExtras,
+    );
+  }
+  mediaExtras['audio-files-append'] = '%${utf8.encode(audio).length}%$audio';
+  return Media(video, start: start, extras: mediaExtras);
 }

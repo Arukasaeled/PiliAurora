@@ -85,8 +85,8 @@ class FavPgcController
             ..loadingState.refresh()
             ..allSelected.value = false;
         }
-      } catch (e) {
-        logger.d('fav pgc onUpdate: $e');
+      } catch (e, stackTrace) {
+        logger.w('fav pgc onUpdate: $e', error: e, stackTrace: stackTrace);
       }
       afterDelete(removeList);
       SmartDialog.showToast(response);
@@ -112,8 +112,8 @@ class FavPgcController
             ..loadingState.refresh()
             ..allSelected.value = false;
         }
-      } catch (e) {
-        logger.d('fav pgc pgcUpdate: $e');
+      } catch (e, stackTrace) {
+        logger.w('fav pgc pgcUpdate: $e', error: e, stackTrace: stackTrace);
       }
       SmartDialog.showToast(response);
     } else {

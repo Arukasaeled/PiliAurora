@@ -267,8 +267,12 @@ document.styleSheets[0].insertRule('#app__display-area > div.control-panel {disp
                               suggestedFilename = Uri.decodeComponent(
                                 suggestedFilename,
                               );
-                            } catch (e) {
-                              logger.d(e.toString());
+                            } catch (e, stackTrace) {
+                              logger.w(
+                                e.toString(),
+                                error: e,
+                                stackTrace: stackTrace,
+                              );
                             }
                             final url = request.url.toString();
                             return AlertDialog(

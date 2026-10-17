@@ -30,14 +30,16 @@ void main() {
     expect(events, ['set vo null', 'set vo libmpv']);
   });
 
-  test('无重建回调时直接更新 shader', () async {
+  test('加载准备时直接提交 shader 并清除上一媒体的滤镜', () async {
     final commands = <List<String>>[];
     await applyShaderList(
       'quality',
       command: (args) async => commands.add(args),
     );
+    await applyShaderList('', command: (args) async => commands.add(args));
     expect(commands, [
       ['change-list', 'glsl-shaders', 'set', 'quality'],
+      ['change-list', 'glsl-shaders', 'clr', ''],
     ]);
   });
 }

@@ -480,6 +480,8 @@ abstract final class PageUtils {
         pageBuilder: (context, animation, secondaryAnimation) {
           final isPortrait = context.isPortrait;
           return SafeArea(
+            // 竖屏面板背景铺到屏幕底边，内容在面板内部另行避让手势区。
+            bottom: !isPortrait,
             child: CustomFractionallySizedBox(
               maxWidth: maxWidth,
               widthFactor: isPortrait ? 1.0 : 0.5,
@@ -704,10 +706,10 @@ abstract final class PageUtils {
       } else {
         res.toast();
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       SmartDialog.dismiss();
       SmartDialog.showToast('$e');
-      logger.d('$e');
+      logger.w('$e', error: e, stackTrace: stackTrace);
     }
   }
 

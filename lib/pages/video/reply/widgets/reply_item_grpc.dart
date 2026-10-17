@@ -891,8 +891,12 @@ class ReplyItemGrpc extends StatelessWidget {
             isValid =
                 DurationUtils.parseDuration(matchStr) * 1000 <=
                 ctr.data.timeLength!;
-          } catch (e) {
-            logger.d('failed to validate: $e');
+          } catch (e, stackTrace) {
+            logger.w(
+              'failed to validate: $e',
+              error: e,
+              stackTrace: stackTrace,
+            );
           }
           spanChildren.add(
             TextSpan(

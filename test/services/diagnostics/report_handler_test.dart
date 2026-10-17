@@ -30,8 +30,14 @@ void main() {
         'fixture error',
         'fixture stack',
         DateTime(2026),
-        const {'token': 'fixture-secret'},
-        const {'version': '1'},
+        const {
+          'token': 'fixture-secret',
+          'id': 'fixture-id',
+          'fingerprint': 'fixture-fingerprint',
+          'identifierForVendor': 'fixture-vendor',
+          'model': 'fixture-model',
+        },
+        const {'version': '1', 'token': 'fixture-app-token'},
         const {'commit': 'fixture'},
         null,
       );
@@ -44,11 +50,66 @@ void main() {
           .readAsString();
       expect(content, contains('<redacted>'));
       expect(content, isNot(contains('fixture-secret')));
+      expect(content, isNot(contains('fixture-id')));
+      expect(content, isNot(contains('fixture-fingerprint')));
+      expect(content, isNot(contains('fixture-vendor')));
+      expect(content, isNot(contains('fixture-app-token')));
+      expect(content, contains('fixture-model'));
       await diagnostics.configure(level: DiagnosticLogLevel.off);
-      expect(await handler.handle(report), isTrue);
+      expect(await handler.handle(report), isFalse);
       expect(diagnostics.recentLogs, hasLength(1));
     },
   );
+
+  test(
+    'report without persistent storage is not reported as delivered',
+    () async {
+      final handler = DiagnosticReportHandler(diagnostics: diagnostics);
+      final report = Report(
+        'error',
+        'stack',
+        DateTime(2026),
+        const {},
+        const {},
+        const {},
+        null,
+      );
+      expect(await handler.handle(report), isFalse);
+    },
+  );
+
+  test('paused report waits for its eventual persistence result', () async {
+    await diagnostics.initialize(directory: directory);
+    await diagnostics.pauseWrites();
+    final handler = DiagnosticReportHandler(diagnostics: diagnostics);
+    final report = Report(
+      'paused error',
+      'stack',
+      DateTime(2026),
+      const {},
+      const {},
+      const {},
+      null,
+    );
+    var complete = false;
+    final result = handler.handle(report).then((value) {
+      complete = true;
+      return value;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(complete, isFalse);
+    diagnostics.resumeWrites();
+    expect(await result, isTrue);
+    expect(
+      await File('${directory.path}/runtime.jsonl').readAsString(),
+      contains('paused error'),
+    );
+    await diagnostics.pauseWrites();
+    final cleared = handler.handle(report);
+    await diagnostics.clearPausedRecords();
+    diagnostics.resumeWrites();
+    expect(await cleared, isFalse);
+  });
 
   test('legacy reports remain readable, exportable and clearable', () async {
     final legacy = File('${directory.path}/.pili_logs.json');

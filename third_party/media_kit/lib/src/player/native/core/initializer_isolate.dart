@@ -10,6 +10,7 @@ import 'dart:isolate';
 import 'package:media_kit/ffi/ffi.dart';
 import 'package:media_kit/generated/libmpv/bindings.dart';
 import 'package:media_kit/src/player/native/core/native_library.dart';
+import 'package:media_kit/src/player/native/core/native_destroy.dart';
 
 import 'event_loop_session.dart';
 
@@ -18,10 +19,11 @@ abstract class InitializerIsolate {
   static Future<Pointer<mpv_handle>> create(
     MPV mpv,
     FutureOr<void> Function(Pointer<mpv_event>)? callback,
-    Map<String, String> options,
-  ) async {
+    Map<String, String> options, {
+    FutureOr<void> Function(int batchId)? onBatchDrained,
+  }) async {
     if (callback == null) {
-      return _createHandle(mpv, options);
+      return _createHandle(mpv, options, NativeLibrary.path);
     }
     final initialized = Completer<Pointer<mpv_handle>>();
     final exited = Completer<void>();
@@ -60,6 +62,7 @@ abstract class InitializerIsolate {
         final handle = Pointer<mpv_handle>.fromAddress(message);
         session = EventLoopSession(
           onEvent: callback,
+          onBatchDrained: onBatchDrained ?? (_) {},
           acknowledge: () => worker!.send(true),
           shutdown: () async {
             worker!.send(null);
@@ -76,6 +79,10 @@ abstract class InitializerIsolate {
         initialized.complete(handle);
       } else if (message is int) {
         session?.add(Pointer<mpv_event>.fromAddress(message));
+      } else if (message is Map &&
+          message['batchDrained'] is int &&
+          initialized.isCompleted) {
+        session?.drain(message['batchDrained'] as int);
       }
     });
     try {
@@ -95,10 +102,11 @@ abstract class InitializerIsolate {
     }
   }
 
-  static Pointer<mpv_handle> _createHandle(
+  static Future<Pointer<mpv_handle>> _createHandle(
     MPV mpv,
     Map<String, String> options,
-  ) {
+    String libraryPath,
+  ) async {
     final handle = mpv.mpv_create();
     if (handle == nullptr) throw StateError('mpv_create returned null');
     try {
@@ -115,9 +123,16 @@ abstract class InitializerIsolate {
       final status = mpv.mpv_initialize(handle);
       if (status < 0) throw StateError('mpv_initialize failed ($status)');
       return handle;
-    } catch (_) {
-      mpv.mpv_terminate_destroy(handle);
-      rethrow;
+    } catch (error, stack) {
+      try {
+        await terminateMpvOnWorker(handle.address, libraryPath);
+      } catch (cleanupError) {
+        throw NativeHandleCleanupFailure(
+          cause: error,
+          cleanupError: cleanupError,
+        );
+      }
+      Error.throwWithStackTrace(error, stack);
     }
   }
 
@@ -135,6 +150,7 @@ abstract class InitializerIsolate {
     final receiver = ReceivePort();
     port.send(receiver.sendPort);
     late Map<String, String> options;
+    late String libraryPath;
     late MPV mpv;
     Completer<void>? acknowledged;
     bool disposed = false;
@@ -143,7 +159,8 @@ abstract class InitializerIsolate {
       if (message is Map<String, String>) {
         options = message;
       } else if (message is String) {
-        mpv = MPV(DynamicLibrary.open(message));
+        libraryPath = message;
+        mpv = MPV(DynamicLibrary.open(libraryPath));
         configured.complete();
       } else if (message is bool) {
         if (!(acknowledged?.isCompleted ?? true)) acknowledged!.complete();
@@ -153,19 +170,35 @@ abstract class InitializerIsolate {
       }
     });
     await configured.future;
-    final handle = _createHandle(mpv, options);
+    final handle = await _createHandle(mpv, options, libraryPath);
     port.send(handle.address);
+    var batchId = 0;
     try {
       while (!disposed) {
         // Let queued disposal messages run before entering another blocking
         // FFI wait. Never invalidate a borrowed event before Dart acknowledges it.
         await Future<void>.delayed(Duration.zero);
         if (disposed) break;
-        final event = mpv.mpv_wait_event(handle, -1);
+        var event = mpv.mpv_wait_event(handle, -1);
         if (event.ref.event_id != mpv_event_id.MPV_EVENT_NONE) {
-          acknowledged = Completer<void>();
-          port.send(event.address);
-          await acknowledged.future;
+          var batchHasEvents = false;
+          while (!disposed &&
+              event.ref.event_id != mpv_event_id.MPV_EVENT_NONE) {
+            batchHasEvents = true;
+            acknowledged = Completer<void>();
+            port.send(event.address);
+            await acknowledged.future;
+            if (disposed) break;
+            await Future<void>.delayed(Duration.zero);
+            if (disposed) break;
+            // This is still the only mpv_wait_event reader. Drain ready events
+            // with a zero timeout and publish NONE only after every pointer
+            // from this batch has been acknowledged.
+            event = mpv.mpv_wait_event(handle, 0);
+          }
+          if (batchHasEvents && !disposed) {
+            port.send({'batchDrained': ++batchId});
+          }
         }
       }
     } finally {

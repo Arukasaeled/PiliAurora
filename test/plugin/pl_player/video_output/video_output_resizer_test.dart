@@ -33,6 +33,11 @@ void main() {
     surface = null;
     resizeSurface = (_) async {};
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'VideoOutputManager.BeginOutputOperation' ||
+          call.method == 'VideoOutputManager.InvalidateOutputGeneration') {
+        return true;
+      }
+      expectSync(call.method, 'VideoOutputManager.SetSurfaceTextureSize');
       final args = call.arguments as Map;
       final size = (
         width: int.parse(args['width'] as String),

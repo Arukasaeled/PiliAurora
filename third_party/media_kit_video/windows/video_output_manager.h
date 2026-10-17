@@ -11,9 +11,13 @@
 
 #include <flutter/plugin_registrar_windows.h>
 
+#include <functional>
+#include <optional>
+#include <string>
 #include <unordered_map>
 
 #include "thread_pool.h"
+#include "output_operation_token.h"
 #include "video_output.h"
 
 // Creates & disposes |VideoOutput| instances for video embedding.
@@ -31,7 +35,27 @@ class VideoOutputManager {
   void Create(
       int64_t handle,
       VideoOutputConfiguration configuration,
-      std::function<void(int64_t, int64_t, int64_t)> texture_update_callback);
+      std::function<void(int64_t, int64_t, int64_t)> texture_update_callback,
+      std::function<void(const OutputOperationToken&, int64_t, int64_t,
+                         int64_t)>
+          output_attached_callback,
+      std::function<void(const OutputOperationToken&, int64_t)>
+          frame_consumed_callback);
+
+  void BeginOutputForLoad(int64_t handle,
+                          OutputOperationToken token,
+                          std::function<void(bool)> on_complete);
+
+  void PrepareForLoad(int64_t handle,
+                     OutputOperationToken token,
+                     std::string track_id,
+                     int64_t width,
+                     int64_t height,
+                     std::function<void(bool, int64_t, int64_t)> on_complete);
+
+  void InvalidateOutputGeneration(int64_t handle,
+                                  OutputOperationToken token,
+                                  std::function<void(bool)> on_complete);
 
   // Sets the required video output size.
   // This forces |VideoOutput| to resize the internal OpenGL surface / D3D
@@ -41,17 +65,19 @@ class VideoOutputManager {
                std::optional<int64_t> height,
                std::function<void(bool)> on_frame_ready);
 
-  void SetSourceSize(int64_t handle, int64_t width, int64_t height);
+  void SetSourceSize(int64_t handle,
+                     int64_t width,
+                     int64_t height,
+                     std::optional<OutputOperationToken> token);
 
   void ResetRenderer(int64_t handle, std::function<void(bool)> on_ready);
 
   // Destroys the |VideoOutput| with given handle.
-  void Dispose(int64_t handle);
+  void Dispose(int64_t handle, std::function<void()> on_released);
 
   ~VideoOutputManager();
 
  private:
-  std::mutex mutex_ = std::mutex();
   // All the operations involving ANGLE or EGL or libmpv must be performed on
   // same single thread to prevent any race conditions or invalid ANGLE usage.
   // Not doing so results in access violations & crashes.
@@ -82,6 +108,8 @@ class VideoOutputManager {
   // Creating a |ThreadPool| with maximum number of worker threads as 1, ensures
   // that all the posted tasks are performed on a single thread orderly. This
   // also makes usage of any |std::mutex| unnecessary (for the good).
+  std::unique_ptr<ThreadPool> control_thread_pool_ =
+      std::make_unique<ThreadPool>(1);
   std::unique_ptr<ThreadPool> thread_pool_ = std::make_unique<ThreadPool>(1);
   flutter::PluginRegistrarWindows* registrar_ = nullptr;
   std::unordered_map<int64_t, std::unique_ptr<VideoOutput>> video_outputs_ = {};

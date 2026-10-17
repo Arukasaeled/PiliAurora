@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:pili_aurora/common/widgets/app_select_field.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:share_plus/share_plus.dart';
@@ -80,6 +81,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
     File? file;
     try {
       file = await service.exportArchive();
+      final skippedWindows = service.skippedChildWindows.length;
       if (!mounted) return;
       if (PlatformUtils.isDesktop) {
         final destination = await FilePicker.saveFile(
@@ -91,10 +93,20 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
         );
         if (destination != null) {
           await file.copy(destination.toFilePath());
-          if (mounted) _message(context, '诊断包已导出');
+          if (mounted) {
+            _message(
+              context,
+              skippedWindows == 0
+                  ? '诊断包已导出'
+                  : '诊断包已导出，未包含 $skippedWindows 个未连接窗口',
+            );
+          }
         }
       } else {
         await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
+        if (mounted && skippedWindows > 0) {
+          _message(context, '诊断包未包含 $skippedWindows 个未连接窗口');
+        }
       }
     } catch (_) {
       if (mounted) _message(context, '导出失败，请检查存储空间和目标目录');
@@ -130,6 +142,12 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
     if (confirmed == true) {
       try {
         await service.clear();
+        if (mounted && service.skippedChildWindows.isNotEmpty) {
+          _message(
+            context,
+            '已清除可协调的日志，保留 ${service.skippedChildWindows.length} 个未连接窗口的本地记录',
+          );
+        }
       } catch (_) {
         if (mounted) _message(context, '清除失败');
       }
@@ -286,17 +304,23 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('采样间隔'),
-                        trailing: DropdownButton<int>(
+                        trailing: AppSelectField<int>(
                           value: service.intervalMs,
-                          onChanged: (value) => _configure(intervalMs: value),
-                          items: const [
-                            DropdownMenuItem(value: 250, child: Text('250 毫秒')),
-                            DropdownMenuItem(
-                              value: 1000,
-                              child: Text('1 秒（推荐）'),
-                            ),
-                            DropdownMenuItem(value: 5000, child: Text('5 秒')),
+                          label: '采样间隔',
+                          selectedLabel: switch (service.intervalMs) {
+                            250 => '250 毫秒',
+                            1000 => '1 秒（推荐）',
+                            5000 => '5 秒',
+                            final value => '$value 毫秒',
+                          },
+                          options: const [
+                            (250, '250 毫秒'),
+                            (1000, '1 秒（推荐）'),
+                            (5000, '5 秒'),
                           ],
+                          onSelected: (value) => _configure(intervalMs: value),
+                          width: 140,
+                          menuWidth: 200,
                         ),
                       ),
                       if (latest == null)
@@ -477,7 +501,10 @@ class _LogCardState extends State<_LogCard> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${level.label} · ${record['category']} · ${time ?? record['time']}',
+                        '${level.label} · ${record['category']} · ${time ?? record['time']}'
+                        '${record['windowId'] == null ? '' : ' · 窗口 ${record['windowId']}'}'
+                        '${record['processId'] == null ? '' : ' · 进程 ${record['processId']}'}'
+                        '${record['route'] == null ? '' : ' · ${record['route']}'}',
                         style: TextStyle(color: colors.outline, fontSize: 13),
                       ),
                     ],
