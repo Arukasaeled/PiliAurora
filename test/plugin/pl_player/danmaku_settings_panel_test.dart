@@ -74,11 +74,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(DanmakuOptions.blockTypes, contains(2));
       final fps = find.widgetWithText(ChoiceChip, '60 FPS');
+      expect(fps, findsNothing);
+      await tester.tap(find.text('运动'));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(fps);
       await tester.pumpAndSettle();
       await tester.tap(fps);
       await tester.pumpAndSettle();
       expect(Pref.danmakuFrameRate, 60);
+      await tester.tap(find.text('屏蔽'));
+      await tester.pumpAndSettle();
       final threshold = find.descendant(
         of: find.byKey(const ValueKey('danmaku-放大阈值')),
         matching: find.byType(Slider),

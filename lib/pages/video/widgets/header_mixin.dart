@@ -427,6 +427,8 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
         ];
 
         List<Widget> motion() => [
+          frameRate(),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 4,
@@ -506,7 +508,6 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
             divisions: 11,
             onChanged: updateDanmakuWeight,
           ),
-          frameRate(),
           for (final setting in danmakuMergeSettings.whereType<SwitchModel>())
             SetSwitchItem(
               title: setting.setKey == SettingBoxKey.mergeDanmaku
