@@ -28,6 +28,52 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  test('player traffic preserves runtime warnings and route context', () {
+    diagnostics
+      ..routeChanged('/video?token=fixture')
+      ..log(DiagnosticLogLevel.warning, 'app', 'keep warning');
+    for (var i = 0; i < 250; i++) {
+      diagnostics.playerLog(DiagnosticLogLevel.info, 'mpv', 'frame $i');
+    }
+    expect(diagnostics.recentLogs, hasLength(201));
+    final warning = diagnostics.recentLogs.last;
+    expect(warning['message'], 'keep warning');
+    expect(warning['route'], '/video');
+    expect(warning['processId'], pid);
+  });
+
+  test('pre-initialization records are persisted on initialization', () async {
+    final early = Diagnostics()
+      ..log(DiagnosticLogLevel.error, 'bootstrap', 'startup failed');
+    final target = Directory('${directory.path}/early');
+    await early.initialize(directory: target);
+    await early.flush();
+    expect(
+      await File('${target.path}/runtime.jsonl').readAsString(),
+      contains('startup failed'),
+    );
+    expect(early.recentLogs, hasLength(1));
+    early.dispose();
+  });
+
+  test('forwarded records retain origin and redact private data', () async {
+    diagnostics.receiveRecord({
+      'channel': 'player',
+      'level': 'error',
+      'processId': 123,
+      'route': '/video',
+      'message': 'decoder failed',
+      'details': {'deviceId': 'fixture-device', 'token': 'fixture-token'},
+    }, windowId: 4);
+    await diagnostics.flush();
+    final record = diagnostics.recentLogs.single;
+    expect(record['processId'], 123);
+    expect(record['windowId'], 4);
+    final text = await File('${directory.path}/player.jsonl').readAsString();
+    expect(text, isNot(contains('fixture-device')));
+    expect(text, isNot(contains('fixture-token')));
+  });
+
   test('levels change immediately and recent logs stay bounded', () async {
     diagnostics.log(DiagnosticLogLevel.debug, 'test', 'hidden');
     expect(diagnostics.recentLogs, isEmpty);

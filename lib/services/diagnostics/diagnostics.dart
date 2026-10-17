@@ -43,6 +43,8 @@ class Diagnostics extends ChangeNotifier {
   final _gauges = <String, num>{};
   final _recent = Queue<Map<String, Object?>>();
   final _frames = _FrameStats();
+  void Function(Map<String, Object?>)? forwardRecord;
+  Future<void> Function()? forwardFlush;
   final _elapsed = Stopwatch();
   DiagnosticRecordStore? _logs;
   DiagnosticRecordStore? _trace;
@@ -63,6 +65,9 @@ class Diagnostics extends ChangeNotifier {
   String? _session;
   Map<String, Object?>? latest;
   Future<void> Function(Map<String, Object?>)? _saveSettings;
+
+  set saveSettings(Future<void> Function(Map<String, Object?>) callback) =>
+      _saveSettings = callback;
 
   bool get tracing => _tracing;
   DiagnosticLogLevel get level => _level;
@@ -109,7 +114,13 @@ class Diagnostics extends ChangeNotifier {
     _saveSettings = saveSettings;
     _level = level;
     _intervalMs = intervals.contains(intervalMs) ? intervalMs : 1000;
+    final pending = _recent.toList();
+    _recent.clear();
     await _loadHistory();
+    for (final record in pending) {
+      _remember(record);
+      (record['channel'] == 'player' ? _playerLogs : _logs)?.add(record);
+    }
     if (tracing) _start();
   }
 
@@ -148,9 +159,8 @@ class Diagnostics extends ChangeNotifier {
               b['sequence'] as int? ?? 0,
             );
           });
-      _recent.addAll(records);
-      while (_recent.length > 200) {
-        _recent.removeFirst();
+      for (final record in records) {
+        _remember(record);
       }
     } catch (_) {
       /* 日志读取失败不影响应用启动。 */
@@ -235,13 +245,17 @@ class Diagnostics extends ChangeNotifier {
     final record = <String, Object?>{
       'time': DateTime.now().toUtc().toIso8601String(),
       'runId': _runId,
+      'processId': pid,
+      'route': _route,
       'sequence': ++_logSequence,
       'elapsedUs': _clock.elapsedMicroseconds,
       'channel': player ? 'player' : 'runtime',
       'level': level.name,
       'category': category,
       'message': DiagnosticRedactor.text(
-        message,
+        message is Map || message is Iterable
+            ? DiagnosticRedactor.clean(message)
+            : message,
         maxLength: player ? 65536 : 16384,
       ),
       if (details != null)
@@ -257,11 +271,34 @@ class Diagnostics extends ChangeNotifier {
         ),
       if (_tracing) 'session': _session,
     };
-    _recent.add(record);
-    while (_recent.length > 200) {
-      _recent.removeFirst();
-    }
+    _remember(record);
     store?.add(record);
+    forwardRecord?.call(record);
+    _notifySoon();
+  }
+
+  void _remember(Map<String, Object?> record) {
+    _recent.add(record);
+    final channel = record['channel'];
+    if (_recent.where((item) => item['channel'] == channel).length > 200) {
+      _recent.remove(_recent.firstWhere((item) => item['channel'] == channel));
+    }
+  }
+
+  /// 子进程记录保留其时钟和页面上下文，由主进程统一轮转和导出。
+  void receiveRecord(Map<String, Object?> record, {required int windowId}) {
+    final player = record['channel'] == 'player';
+    final level = DiagnosticLogLevel.parse(record['level'] as String?);
+    if (player ? !acceptsPlayer(level) : !accepts(level)) return;
+    final safe = Map<String, Object?>.from(
+      DiagnosticRedactor.clean(
+        record,
+        maxCharacters: 524288,
+        maxStringLength: 65536,
+      ) as Map,
+    )..['windowId'] = windowId;
+    _remember(safe);
+    (player ? _playerLogs : _logs)?.add(safe);
     _notifySoon();
   }
 
@@ -437,6 +474,7 @@ class Diagnostics extends ChangeNotifier {
     await _logs?.flush();
     await _playerLogs?.flush();
     await _trace?.flush();
+    await forwardFlush?.call();
   }
 
   Future<void> clear() async {

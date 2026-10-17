@@ -30,8 +30,14 @@ void main() {
         'fixture error',
         'fixture stack',
         DateTime(2026),
-        const {'token': 'fixture-secret'},
-        const {'version': '1'},
+        const {
+          'token': 'fixture-secret',
+          'id': 'fixture-id',
+          'fingerprint': 'fixture-fingerprint',
+          'identifierForVendor': 'fixture-vendor',
+          'model': 'fixture-model',
+        },
+        const {'version': '1', 'token': 'fixture-app-token'},
         const {'commit': 'fixture'},
         null,
       );
@@ -44,6 +50,11 @@ void main() {
           .readAsString();
       expect(content, contains('<redacted>'));
       expect(content, isNot(contains('fixture-secret')));
+      expect(content, isNot(contains('fixture-id')));
+      expect(content, isNot(contains('fixture-fingerprint')));
+      expect(content, isNot(contains('fixture-vendor')));
+      expect(content, isNot(contains('fixture-app-token')));
+      expect(content, contains('fixture-model'));
       await diagnostics.configure(level: DiagnosticLogLevel.off);
       expect(await handler.handle(report), isTrue);
       expect(diagnostics.recentLogs, hasLength(1));
