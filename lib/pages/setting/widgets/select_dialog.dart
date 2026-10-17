@@ -224,7 +224,7 @@ class _CdnSelectDialogState extends State<CdnSelectDialog> {
     final item = _cdnResList[index];
     if (item.value != null) return;
 
-    logger.d('CDN speed test error: $error');
+    logger.scoped('cdnProbe').w('CDN speed test error', error: error);
     if (!mounted) return;
     String message;
     if (error is DioException) {

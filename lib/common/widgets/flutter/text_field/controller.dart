@@ -1050,8 +1050,10 @@ class RichTextEditingController extends TextEditingController {
         }
       }
       return text;
-    } catch (e) {
-      logger.d('err getSelectionText: $e');
+    } catch (e, stackTrace) {
+      logger
+          .scoped('textSelection')
+          .w('读取选中文本失败', error: e, stackTrace: stackTrace);
       return null;
     }
   }
