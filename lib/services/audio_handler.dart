@@ -11,6 +11,7 @@ import 'package:pili_aurora/models/remote/video/video_detail/data.dart';
 import 'package:pili_aurora/models/remote/video/video_detail/page.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/utils/android/bindings.g.dart';
 import 'package:pili_aurora/utils/image_utils.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
@@ -44,7 +45,28 @@ typedef _StatusConfig = (
 
 class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
   static final List<MediaItem> _item = [];
-  bool enableBackgroundPlay = Pref.enableBackgroundPlay;
+  bool _enableBackgroundPlay = Pref.enableBackgroundPlay;
+  PlaybackKeepAliveLease? _playbackLease;
+
+  bool get enableBackgroundPlay => _enableBackgroundPlay;
+  set enableBackgroundPlay(bool value) {
+    _enableBackgroundPlay = value;
+    if (!value) _releasePlaybackLease();
+  }
+
+  void _retainPlaybackLease() {
+    if (_playbackLease != null || !enableBackgroundPlay) return;
+    final controller = PlPlayerController.instance;
+    final owner = controller?.activePlaybackOwner;
+    if (controller != null && owner != null) {
+      _playbackLease = controller.acquirePlaybackKeepAlive(owner);
+    }
+  }
+
+  void _releasePlaybackLease() {
+    _playbackLease?.close();
+    _playbackLease = null;
+  }
 
   Future<void>? Function()? onPlay;
   Future<void>? Function()? onPause;
@@ -73,6 +95,7 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
 
   void setMediaItem(MediaItem newMediaItem) {
     if (!enableBackgroundPlay) return;
+    _retainPlaybackLease();
     // if (kDebugMode) {
     //   debugPrint("此时调用栈为：");
     //   debugPrint(newMediaItem);
@@ -283,21 +306,29 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
     if (_item.isNotEmpty) {
       _item.removeWhere((item) => item.id.endsWith(herotag));
     }
-    if (_item.isNotEmpty) {
-      setMediaItem(_item.last);
-      playbackState.add(
-        playbackState.value.copyWith(processingState: .ready, playing: false),
-      );
+    if (_item.isEmpty) {
+      clear();
+      return;
     }
+    setMediaItem(_item.last);
+    playbackState.add(
+      playbackState.value.copyWith(processingState: .ready, playing: false),
+    );
   }
 
   void clearIfNeeded() {
-    if (!enableBackgroundPlay) return;
+    if (!enableBackgroundPlay) {
+      _releasePlaybackLease();
+      return;
+    }
     if (_item.isEmpty) clear();
   }
 
   void clear() {
-    if (!enableBackgroundPlay) return;
+    if (!enableBackgroundPlay) {
+      _releasePlaybackLease();
+      return;
+    }
     mediaItem.add(null);
     _item.clear();
     _lastPos = null;
@@ -312,5 +343,12 @@ class VideoPlayerServiceHandler extends BaseAudioHandler with SeekHandler {
       playbackState.add(PlaybackState(processingState: .completed));
     }
     playbackState.add(PlaybackState(processingState: .idle));
+    _releasePlaybackLease();
+  }
+
+  @override
+  Future<void> stop() async {
+    await pause();
+    clear();
   }
 }

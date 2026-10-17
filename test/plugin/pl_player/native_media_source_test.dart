@@ -1,9 +1,8 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_media_source.dart';
 
 void main() {
@@ -29,174 +28,6 @@ void main() {
     expect(attempted.toSet().length, 6);
     expect(attempted.length, 6);
     expect(source.advanceCandidate(), isFalse);
-  });
-
-  group('reloadNativeMedia', () {
-    test(
-      'paused DASH reload preserves position and the separate audio track',
-      () async {
-        final media = nativeMediaSource(
-          source: net(),
-          extras: {'cache': 'yes'},
-        );
-        final player = _ReloadPlayer(media)
-          ..state.position = const Duration(milliseconds: 90882);
-        expect(await reloadNativeMedia(player: player, isLive: false), isTrue);
-        expect(player.opened!.uri, media.uri);
-        expect(player.opened!.extras, media.extras);
-        expect(player.opened!.start, const Duration(milliseconds: 90882));
-        expect(player.openedPlaying, isFalse);
-      },
-    );
-
-    test('playing media continues playing and live does not seek', () async {
-      final media = nativeMediaSource(source: net());
-      final player = _ReloadPlayer(media)
-        ..state.position = const Duration(seconds: 90)
-        ..state.playing = true;
-      await reloadNativeMedia(player: player, isLive: false);
-      expect(player.openedPlaying, isFalse);
-      expect(player.resumed, isTrue);
-      expect(player.opened!.start, const Duration(seconds: 90));
-      await reloadNativeMedia(player: player, isLive: true);
-      expect(player.opened, same(media));
-      expect(player.opened!.start, isNull);
-    });
-
-    test(
-      'CDN fallback keeps position, playback state and DASH audio',
-      () async {
-        const primaryVideo = 'https://cdn-a.example/video.m4s';
-        const backupVideo = 'https://cdn-b.example/video.m4s';
-        const primaryAudio = 'https://cdn-a.example/audio.m4s';
-        const backupAudio = 'https://cdn-b.example/audio.m4s';
-        final source = NetworkSource(
-          videoSource: primaryVideo,
-          audioSource: primaryAudio,
-          videoCandidates: const [primaryVideo, backupVideo],
-          audioCandidates: const [primaryAudio, backupAudio],
-        );
-        final media = nativeMediaSource(
-          source: source,
-          extras: const {'cache': 'yes'},
-        );
-        expect(media.uri, primaryVideo);
-        while (source.currentVideoSource != backupVideo ||
-            source.currentAudioSource != backupAudio) {
-          expect(source.advanceCandidate(), isTrue);
-        }
-
-        final player = _ReloadPlayer(media)
-          ..state.position = const Duration(seconds: 42)
-          ..state.playing = true;
-        expect(
-          await reloadNativeMedia(
-            player: player,
-            isLive: false,
-            source: source,
-          ),
-          isTrue,
-        );
-        expect(player.opened!.uri, backupVideo);
-        expect(player.opened!.start, const Duration(seconds: 42));
-        expect(player.openedPlaying, isFalse);
-        expect(player.resumed, isTrue);
-        expect(player.opened!.extras!['cache'], 'yes');
-        expect(
-          player.opened!.extras!['audio-files-append'],
-          contains(backupAudio),
-        );
-        expect(source.advanceCandidate(), isFalse);
-      },
-    );
-
-    test('听视频回退清除旧音轨并保留其余配置和暂停位置', () async {
-      final source = NetworkSource(
-        videoSource: 'https://cdn.example/video.m4s',
-        videoCandidates: const ['https://cdn-backup.example/video.m4s'],
-        audioSource: 'https://cdn-a.example/audio.m4s',
-        audioCandidates: const ['https://cdn-b.example/audio.m4s'],
-      );
-      final media = nativeMediaSource(
-        source: source,
-        extras: const {'cache': 'yes', 'vid': 'no'},
-      );
-      final originalExtras = Map<String, String>.of(media.extras!);
-      expect(source.advanceCandidate(audioOnly: true), isTrue);
-      final player = _ReloadPlayer(media)
-        ..state.position = const Duration(seconds: 42);
-
-      await reloadNativeMedia(
-        player: player,
-        isLive: false,
-        source: source,
-        audioOnly: true,
-      );
-
-      expect(player.opened!.uri, 'https://cdn-b.example/audio.m4s');
-      expect(player.opened!.extras, {'cache': 'yes', 'vid': 'no'});
-      expect(player.opened!.start, const Duration(seconds: 42));
-      expect(player.openedPlaying, isFalse);
-      expect(media.extras, originalExtras);
-      expect(source.currentVideoSource, 'https://cdn.example/video.m4s');
-      expect(source.advanceCandidate(audioOnly: true), isFalse);
-    });
-
-    test('disposed, empty and stale players do not reload', () async {
-      final player = _ReloadPlayer(nativeMediaSource(source: net()));
-      expect(
-        await reloadNativeMedia(
-          player: player,
-          isLive: false,
-          isCurrent: () => false,
-        ),
-        isFalse,
-      );
-      expect(player.opened, isNull);
-      player.disposed = true;
-      expect(await reloadNativeMedia(player: player, isLive: false), isFalse);
-      player.disposed = false;
-      player.current.clear();
-      expect(await reloadNativeMedia(player: player, isLive: false), isFalse);
-      expect(player.opened, isNull);
-    });
-
-    test('重载期间暂停不恢复播放，过期重载也不能启动旧媒体', () async {
-      var current = true;
-      var playing = true;
-      final player = _ReloadPlayer(nativeMediaSource(source: net()))
-        ..state.playing = true
-        ..openCompletion = Completer<void>();
-      final reload = reloadNativeMedia(
-        player: player,
-        isLive: false,
-        isCurrent: () => current,
-        shouldPlay: () => playing,
-      );
-      playing = false;
-      player.openCompletion!.complete();
-      expect(await reload, isTrue);
-      expect(player.resumed, isFalse);
-      player.openCompletion = Completer<void>();
-      final stale = reloadNativeMedia(
-        player: player,
-        isLive: false,
-        isCurrent: () => current,
-      );
-      current = false;
-      player.openCompletion!.complete();
-      expect(await stale, isFalse);
-      expect(player.resumed, isFalse);
-    });
-
-    test('open failures propagate to the recovery error handler', () async {
-      final player = _ReloadPlayer(nativeMediaSource(source: net()))
-        ..openError = StateError('load failed');
-      await expectLater(
-        reloadNativeMedia(player: player, isLive: false),
-        throwsStateError,
-      );
-    });
   });
 
   group('nativeMediaSource', () {
@@ -251,51 +82,37 @@ void main() {
       expect(extras, {'cache': 'yes'});
     });
 
-    test('reload 时 copyWith 保留已追加的外部音轨', () {
-      final media = nativeMediaSource(
-        source: net(),
-        start: const Duration(seconds: 10),
+    test('播放来源快照固定候选及音轨，后续业务切换不影响已生成计划', () {
+      const primaryVideo = 'https://cdn-a.example/video.m4s';
+      const backupVideo = 'https://cdn-b.example/video.m4s';
+      const primaryAudio = 'https://cdn-a.example/audio.m4s';
+      const backupAudio = 'https://cdn-b.example/audio.m4s';
+      final source = NetworkSource(
+        videoSource: primaryVideo,
+        audioSource: primaryAudio,
+        videoCandidates: const [primaryVideo, backupVideo],
+        audioCandidates: const [primaryAudio, backupAudio],
       );
-      final reloaded = media.copyWith(start: const Duration(seconds: 60));
-      expect(reloaded.uri, media.uri);
-      expect(reloaded.start, const Duration(seconds: 60));
-      expect(reloaded.extras, media.extras);
+      expect(source.advanceCandidate(), isTrue);
+      final snapshot = PlaybackSourceSnapshot.fromDataSource(source);
+      expect(source.advanceCandidate(), isTrue);
+
+      final media = nativeMediaSourceFromSnapshot(source: snapshot);
+      expect(media.uri, primaryVideo);
+      expect(media.extras!['audio-files-append'], contains(backupAudio));
+    });
+
+    test('快照源重建媒体时清除旧的外部音轨选项', () {
+      final snapshot = PlaybackSourceSnapshot.fromDataSource(
+        net(audio: null),
+      );
+      final media = nativeMediaSourceFromSnapshot(
+        source: snapshot,
+        extras: const {'cache': 'yes', 'audio-files-append': 'stale-audio'},
+      );
+
+      expect(media.uri, 'https://example.com/video.m4s');
+      expect(media.extras, {'cache': 'yes'});
     });
   });
-}
-
-class _ReloadPlayer implements NativePlayer {
-  _ReloadPlayer(Media media) : current = [media];
-
-  @override
-  bool disposed = false;
-  @override
-  final List<Media> current;
-  @override
-  final PlayerState state = PlayerState();
-  Media? opened;
-  bool? openedPlaying;
-  Object? openError;
-  Completer<void>? openCompletion;
-  bool resumed = false;
-
-  @override
-  Future<void> open(
-    Playable playable, {
-    bool play = true,
-    bool synchronized = true,
-  }) async {
-    if (openError case final error?) throw error;
-    opened = playable as Media;
-    openedPlaying = play;
-    await openCompletion?.future;
-  }
-
-  @override
-  Future<void> play({bool synchronized = true}) async {
-    resumed = true;
-  }
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

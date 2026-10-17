@@ -1,4 +1,4 @@
-import 'dart:async' show Timer;
+import 'dart:async' show Timer, unawaited;
 import 'dart:convert' show jsonDecode, utf8;
 import 'dart:io' show Platform, File;
 import 'dart:typed_data' show Uint8List;
@@ -480,8 +480,7 @@ class HeaderControlState extends State<HeaderControl>
                   ),
                 ),
                 if (PlatformUtils.isMobile)
-                  if (plPlayerController.videoPlayerController
-                      case final player?)
+                  if (plPlayerController.videoPlayerController != null)
                     Builder(
                       builder: (context) => ListTile(
                         dense: true,
@@ -493,7 +492,8 @@ class HeaderControlState extends State<HeaderControl>
                         onTap: () => showPlayerVolumeDialog(
                           context,
                           () => (context as Element).markNeedsBuild(),
-                          onChanged: player.setVolume,
+                          onChanged: (value) =>
+                              plPlayerController.setPlayerVolumePercent(value),
                         ),
                       ),
                     ),
@@ -571,19 +571,11 @@ class HeaderControlState extends State<HeaderControl>
                             return ActionRowLineItem(
                               iconData: Icons.headphones,
                               onTap: () {
-                                plPlayerController.onlyPlayAudio.value =
-                                    !onlyPlayAudio;
-                                final player =
-                                    plPlayerController.videoPlayerController!;
-                                if (onlyPlayAudio &&
-                                    player.state.tracks.video.length <= 2) {
-                                  videoDetailCtr.playerInit();
-                                } else {
-                                  player.setProperty(
-                                    'file-local-options/vid',
-                                    onlyPlayAudio ? 'auto' : 'no',
-                                  );
-                                }
+                                unawaited(
+                                  plPlayerController.setOnlyAudio(
+                                    !onlyPlayAudio,
+                                  ),
+                                );
                               },
                               text: " 听视频 ",
                               selectStatus: onlyPlayAudio,

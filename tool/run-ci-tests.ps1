@@ -28,6 +28,10 @@ $ciTests = @(
     "test/architecture/dependency_rules_test.dart",
     "test/architecture/release_workflow_test.dart",
     "test/pages/common/common_controller_test.dart",
+    "test/pages/live_room/controller_test.dart",
+    "test/pages/video/playback_lifecycle_test.dart",
+    "test/services/audio_session_test.dart",
+    "test/services/audio_handler_lifecycle_test.dart",
     "test/services/settings/settings_backup_test.dart",
     "test/services/settings/webdav_sync_test.dart",
     "test/services/diagnostics/diagnostics_test.dart",
@@ -47,9 +51,7 @@ $ciTests = @(
     "test/plugin/pl_player/android/android_decode_lifecycle_test.dart",
     "test/plugin/pl_player/hardware_video_configuration_test.dart",
     "test/plugin/pl_player/android/android_fixed_surface_size_test.dart",
-    "test/plugin/pl_player/playback/playback_timing_contract_test.dart",
-    "test/plugin/pl_player/playback/super_resolution_policy_test.dart",
-    "test/plugin/pl_player/playback/super_resolution_selection_test.dart",
+    "test/plugin/pl_player/playback",
     "test/plugin/pl_player/super_resolution_menu_tile_test.dart",
     "test/pages/setting/decoder_test_dialog_test.dart"
 )

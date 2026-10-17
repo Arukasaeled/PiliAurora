@@ -11,7 +11,7 @@
 | `plugin/pl_player/` | 原生媒体源、跳转、硬解配置、解码分类和预览缓存。 |
 | `plugin/pl_player/android/` | Android 解码恢复、Surface 输出与帧交接。 |
 | `plugin/pl_player/video_output/` | 跨平台尺寸策略、输出调度、截图桥和绘制确认。 |
-| `plugin/pl_player/playback/` | 页面归属、请求代次、播放加载队列、网络恢复、shader 更新与时序契约。 |
+| `plugin/pl_player/playback/` | 会话与页面归属、查询/加载代次、命令序列、资源释放、网络和音频恢复、shader 更新与时序契约。 |
 | `services/` | 下载、直播、设置同步及平台服务。 |
 | `services/messaging/` | 消息账号隔离、订阅释放、共享会话、分页竞争、发送结果与已读水位。 |
 | `services/diagnostics/` | 诊断编排、脱敏、HTTP 接线、历史读取、记录存储、日志和进程采样。 |
@@ -31,7 +31,9 @@ CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dar
 
 `pages/danmaku/frame_rate_matrix_test.dart` 检查屏幕 60/90/120/144 Hz、视频 24/30/60 FPS 与弹幕 30/60/90/120 FPS 的 48 种组合，每组覆盖 mpv 显示同步实际开启与关闭，共 96 个场景。视频按媒体周期映射到屏幕槽位，覆盖非整数比例，并在三秒后延后一个槽位。全部组合检查视频帧数、受屏幕刷新率上限约束的弹幕更新频率，以及相位变化前后的稳定更新频率；具备原生到达通知且视频周期可稳定映射到屏幕槽位的整数倍或整数分频组合，在两种 mpv 状态下都检查合计刷新次数，失配时检查退化后的目标更新频率。`frame_rate_ticker_test.dart` 另检查所属视图刷新率、屏幕降频与刷新率不可用的调度。该测试使用模拟时钟，不测量设备屏幕或 GPU 合成。
 
-`plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。super_resolution_selection_test.dart 检查不可用的显式选择保留档位和设置，并在访问原生播放器前返回。super_resolution_menu_tile_test.dart 覆盖侧边超分入口的禁用状态、原因展示、点击提示和可用档位选择。
+`plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。`super_resolution_selection_test.dart` 检查不可用的显式选择保留档位和设置。`super_resolution_menu_tile_test.dart` 覆盖侧边超分入口的禁用状态、原因展示、点击提示和可用档位选择。
+
+`pages/video/playback_lifecycle_test.dart` 覆盖点播查询与媒体标识绑定、旧响应取消、暂停期间重载意图保留和字幕迟到结果隔离。`pages/live_room/controller_test.dart` 覆盖消息连接 single-flight、token/history 代次隔离、暂停/恢复以及关闭后的迟到回调；`services/audio_session_test.dart` 覆盖音频 duck 重复开始、结束先于音量命令完成及用户新音量保护；`services/audio_handler_lifecycle_test.dart` 覆盖多页面媒体归属与最后一项释放 keepalive。播放器会话、候选恢复和命令序列回归集中在 `plugin/pl_player/playback/`。`tool/run-ci-tests.ps1` 将这些页面测试与整个 playback 目录纳入本地 CI 入口。
 
 ```powershell
 fvm flutter test test/plugin/pl_player/android/

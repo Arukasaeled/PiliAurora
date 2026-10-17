@@ -1,6 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/common/super_chat_type.dart';
 import 'package:pili_aurora/models/remote/live/live_danmaku/danmaku_msg.dart';
 import 'package:pili_aurora/models/remote/live/live_danmaku/live_emote.dart';
+import 'package:pili_aurora/models/remote/live/live_dm_info/data.dart';
+import 'package:pili_aurora/models/remote/live/live_dm_info/host_list.dart';
 import 'package:pili_aurora/models/remote/live/live_superchat/item.dart';
 import 'package:pili_aurora/models/remote/live/live_superchat/user_info.dart';
 import 'package:pili_aurora/common/widgets/image/network_img_layer.dart';
@@ -11,6 +17,8 @@ import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/live_room/superchat/superchat_panel.dart';
 import 'package:pili_aurora/pages/live_room/widgets/chat_panel.dart';
+import 'package:pili_aurora/services/live_stream/live.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
 import 'package:flutter/material.dart';
@@ -22,11 +30,66 @@ import 'package:material_ui/material_ui.dart' as ui;
 class _TestController extends LiveRoomController {
   _TestController() : super('chat-test');
 
+  final tokenRequests = <Completer<LoadingState<LiveDmInfoData>>>[];
+  final historyRequests = <Completer<LoadingState<List<DanmakuMsg>?>>>[];
+  final messageStreams = <_TestMessageStream>[];
+  final routeQueryPolicies = <PlaybackStartPolicy?>[];
+
   @override
-  Future<void> queryLiveUrl({bool autoFullScreenFlag = false}) async {}
+  Future<void> queryLiveUrl({
+    bool autoFullScreenFlag = false,
+    PlaybackStartPolicy? startPolicy,
+  }) async {
+    routeQueryPolicies.add(startPolicy);
+  }
 
   @override
   Future<void> queryLiveInfoH5() async {}
+
+  @override
+  Future<LoadingState<LiveDmInfoData>> fetchLiveMessageToken(int roomId) {
+    final request = Completer<LoadingState<LiveDmInfoData>>();
+    tokenRequests.add(request);
+    return request.future;
+  }
+
+  @override
+  Future<LoadingState<List<DanmakuMsg>?>> fetchLiveMessageHistory(
+    int roomId,
+  ) {
+    final request = Completer<LoadingState<List<DanmakuMsg>?>>();
+    historyRequests.add(request);
+    return request.future;
+  }
+
+  @override
+  LiveMessageStream createLiveMessageStream({
+    required LiveDmInfoData info,
+    required int roomId,
+  }) {
+    final stream = _TestMessageStream(roomId);
+    messageStreams.add(stream);
+    return stream;
+  }
+}
+
+class _TestMessageStream extends LiveMessageStream {
+  _TestMessageStream(int roomId)
+    : super(streamToken: '', roomId: roomId, uid: 0, servers: const []);
+
+  void Function(dynamic)? listener;
+  bool isClosed = false;
+
+  @override
+  void addEventListener(void Function(dynamic) func) => listener = func;
+
+  @override
+  Future<void> init() async {}
+
+  @override
+  void close() => isClosed = true;
+
+  void emit(dynamic value) => listener?.call(value);
 }
 
 // 本组在内存中保存设置，不依赖磁盘存储或播放器平台插件。
@@ -371,4 +434,143 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  test(
+    'repeated message starts share one token request and connection',
+    () async {
+      final controller = createController();
+      final first = controller.startLiveMsg();
+      final second = controller.startLiveMsg();
+
+      expect(controller.tokenRequests, hasLength(1));
+      expect(controller.historyRequests, hasLength(1));
+      controller.historyRequests.single.complete(const Success(null));
+      controller.tokenRequests.single.complete(
+        Success(_messageInfo('shared')),
+      );
+      await Future.wait([first, second]);
+
+      expect(controller.messageStreams, hasLength(1));
+      expect(controller.dmInfo?.token, 'shared');
+      await controller.startLiveMsg();
+      expect(controller.tokenRequests, hasLength(1));
+      expect(controller.messageStreams, hasLength(1));
+    },
+  );
+
+  test(
+    'failed token request clears the single-flight slot for retry',
+    () async {
+      final controller = createController();
+      final failedStart = controller.startLiveMsg();
+      controller.historyRequests.single.complete(const Success(null));
+      controller.tokenRequests.single.completeError(
+        StateError('network failed'),
+      );
+      await failedStart;
+
+      final retry = controller.startLiveMsg();
+      expect(controller.tokenRequests, hasLength(2));
+      controller.tokenRequests.last.complete(Success(_messageInfo('retry')));
+      await retry;
+
+      expect(controller.messageStreams, hasLength(1));
+      expect(controller.dmInfo?.token, 'retry');
+    },
+  );
+
+  test(
+    'pause invalidates late token and history results before resume',
+    () async {
+      final controller = createController();
+      final oldStart = controller.startLiveMsg();
+      final oldToken = controller.tokenRequests.single;
+      final oldHistory = controller.historyRequests.single;
+
+      controller.closeLiveMsg();
+      final currentStart = controller.startLiveMsg();
+      final currentToken = controller.tokenRequests.last;
+      final currentHistory = controller.historyRequests.last;
+      expect(controller.tokenRequests, hasLength(2));
+      expect(controller.historyRequests, hasLength(2));
+
+      oldToken.complete(Success(_messageInfo('old')));
+      oldHistory.complete(Success([_message(101)]));
+      await oldStart;
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.dmInfo, isNull);
+      expect(controller.chatBuffer.historyCount, 0);
+      expect(controller.messageStreams, isEmpty);
+
+      currentToken.complete(Success(_messageInfo('current')));
+      currentHistory.complete(const Success(null));
+      await currentStart;
+      expect(controller.dmInfo?.token, 'current');
+      expect(controller.messageStreams, hasLength(1));
+    },
+  );
+
+  test('closed stream callbacks cannot update chat after resume', () async {
+    final controller = createController();
+    final initial = controller.startLiveMsg();
+    controller.historyRequests.single.complete(const Success(null));
+    controller.tokenRequests.single.complete(Success(_messageInfo('first')));
+    await initial;
+    final oldStream = controller.messageStreams.single;
+    final emitOldStream = oldStream.emit;
+    emitOldStream(_danmakuEvent(1));
+    expect(controller.chatBuffer.historyCount, 1);
+
+    controller.closeLiveMsg();
+    await controller.startLiveMsg();
+    final currentStream = controller.messageStreams.last;
+    expect(oldStream.isClosed, isTrue);
+    emitOldStream(_danmakuEvent(2));
+    expect(controller.chatBuffer.historyCount, 1);
+    currentStream.emit(_danmakuEvent(3));
+    expect(controller.chatBuffer.historyCount, 2);
+  });
+
+  test(
+    'route return re-resolves a plan canceled before it was accepted',
+    () async {
+      final controller = createController();
+      controller.routeQueryPolicies.clear();
+
+      final holdForRoute = controller.holdPlaybackForRoute;
+      final restoreAfterRoute = controller.restorePlaybackAfterRoute;
+      holdForRoute();
+      await restoreAfterRoute();
+
+      expect(controller.routeQueryPolicies, [PlaybackStartPolicy.preserve]);
+      controller.onDelete();
+    },
+  );
+}
+
+LiveDmInfoData _messageInfo(String token) => LiveDmInfoData(
+  token: token,
+  hostList: [HostList(host: 'messages.test', wssPort: 443)],
+);
+
+Map<String, dynamic> _danmakuEvent(int id) {
+  final first = List<dynamic>.filled(16, null);
+  first[15] = {
+    'user': {
+      'uid': 42,
+      'base': {'name': '用户'},
+      'medal': null,
+    },
+    'extra': jsonEncode({
+      'id_str': '$id',
+      'dm_type': 0,
+      'mode': 1,
+      'color': 16777215,
+    }),
+  };
+  final info = List<dynamic>.filled(10, null)
+    ..[0] = first
+    ..[1] = '消息 $id'
+    ..[9] = {'ts': 1, 'ct': ''};
+  return {'cmd': 'DANMU_MSG', 'info': info};
 }

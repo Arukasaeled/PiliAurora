@@ -29,6 +29,7 @@ import 'package:pili_aurora/pages/live_room/send_danmaku/view.dart';
 import 'package:pili_aurora/pages/video/widgets/header_control.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/services/service_locator.dart';
@@ -50,7 +51,8 @@ import 'package:pili_aurora/utils/video_utils.dart';
 import 'package:pili_aurora/utils/rate_limiter.dart';
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:dio/dio.dart' show CancelToken;
-import 'package:flutter/foundation.dart' show kDebugMode, kReleaseMode;
+import 'package:flutter/foundation.dart'
+    show kDebugMode, kReleaseMode, protected;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -68,6 +70,8 @@ class LiveRoomController extends GetxController {
 
   late final PlaybackOwner playbackOwner;
   NetworkSource? _networkSource;
+  PlaybackPlan? _playbackPlan;
+  PlaybackInhibitorToken? _routeInhibitor;
 
   final isLoaded = false.obs;
   final roomInfoH5 = Rxn<RoomInfoH5Data>();
@@ -133,6 +137,13 @@ class LiveRoomController extends GetxController {
 
   bool get _followingLatest => autoScroll && !disableAutoScroll.value;
   LiveMessageStream? _msgStream;
+  bool _wantedConnected = false;
+  int _messageGeneration = 0;
+  int? _streamGeneration;
+  int? _connectingGeneration;
+  Future<void>? _connecting;
+  int? _historyPrefetchGeneration;
+  int? _superChatPrefetchGeneration;
 
   List<String> _keywordList = const [];
   Set<int> _shieldUids = const {};
@@ -150,7 +161,6 @@ class LiveRoomController extends GetxController {
   late final int mid;
 
   String? videoUrl;
-  bool? isPlaying;
   late bool isFullScreen = false;
 
   final superChatType = Pref.superChatType;
@@ -238,96 +248,112 @@ class LiveRoomController extends GetxController {
     }
   }
 
-  Future<void>? playerInit({
-    bool autoplay = true,
+  Future<void> queryLiveUrl({
     bool autoFullScreenFlag = false,
-    bool Function()? isCurrent,
-  }) {
-    if (isClosed || !playbackOwner.isActive || !(isCurrent?.call() ?? true)) {
-      return null;
-    }
-    final source = _networkSource;
-    if (source == null) {
-      return null;
-    }
-    return plPlayerController.setDataSource(
-      source,
-      owner: playbackOwner,
-      isValid: () =>
-          !isClosed &&
-          playbackOwner.isActive &&
-          identical(source, _networkSource) &&
-          (isCurrent?.call() ?? true),
-      isLive: true,
-      autoplay: autoplay,
-      isVertical: isPortrait.value,
-      autoFullScreenFlag: autoFullScreenFlag,
-    );
-  }
-
-  Future<void> queryLiveUrl({bool autoFullScreenFlag = false}) {
+    PlaybackStartPolicy? startPolicy,
+  }) async {
+    if (isClosed || !playbackOwner.isActive) return;
     final cancelToken = CancelToken();
-    final autoplay = _networkSource == null || plPlayerController.wantsToPlay;
-    return playbackOwner.query(
-      (isCurrent) =>
-          _queryLiveUrl(autoFullScreenFlag, autoplay, cancelToken, isCurrent),
-      isValid: () => !isClosed && playbackOwner.isActive,
-      cancel: cancelToken.cancel,
+    final requestedRoomId = roomId;
+    final contentKey = 'live:$requestedRoomId';
+    final start =
+        startPolicy ??
+        (plPlayerController.currentPlaybackContentKey == contentKey
+            ? PlaybackStartPolicy.preserve
+            : plPlayerController.wantsToPlay || _networkSource == null
+            ? PlaybackStartPolicy.play
+            : PlaybackStartPolicy.pause);
+    final configuration = plPlayerController.capturePlaybackConfiguration(
+      live: true,
+      audioOnly: plPlayerController.onlyPlayAudio.value,
     );
+    final result = await playbackOwner.query(
+      (query) => _queryLiveUrl(
+        requestedRoomId,
+        configuration,
+        cancelToken,
+        query,
+      ),
+      start: start,
+    );
+    if (isClosed || !playbackOwner.isActive) return;
+    if (result.outcome == LoadOutcome.ready) {
+      isLoaded.value = true;
+      _startSizeSub();
+      plPlayerController.onPlaybackQueryReady(
+        autoFullScreenFlag: autoFullScreenFlag,
+      );
+    }
   }
 
-  Future<void> _queryLiveUrl(
-    bool autoFullScreenFlag,
-    bool autoplay,
+  Future<PlaybackPlan?> _queryLiveUrl(
+    int requestedRoomId,
+    PlaybackConfiguration configuration,
     CancelToken cancelToken,
-    bool Function() isCurrent,
+    PlaybackQuery query,
   ) async {
+    query.registerCancel(cancelToken.cancel);
+    bool isCurrent() => !isClosed && playbackOwner.isActive && query.isCurrent;
     if (currentQn == null) {
       final isWiFi = await ConnectivityUtils.isWiFi;
-      if (!isCurrent()) return;
+      if (!isCurrent()) return null;
       currentQn = isWiFi ? Pref.liveQuality : Pref.liveQualityCellular;
     }
     final res = await LiveHttp.liveRoomInfo(
-      roomId: roomId,
+      roomId: requestedRoomId,
       qn: currentQn,
       onlyAudio: plPlayerController.onlyPlayAudio.value,
       cancelToken: cancelToken,
     );
-    if (!isCurrent()) return;
+    if (!isCurrent()) return null;
     if (res case Success(:final response)) {
       if (response.liveStatus != 1) {
         _showDialog('当前直播间未开播');
-        return;
+        return null;
       }
       final playurl = response.playurlInfo?.playurl;
       if (playurl == null) {
         _showDialog('无法获取播放地址');
-        return;
+        return null;
       }
       ruid = response.uid;
       if (response.roomId case final roomId?) {
-        this.roomId = roomId;
+        _updateRoomId(roomId);
       }
       liveTime.value = response.liveTime;
       startLiveTimer();
       isPortrait.value = response.isPortrait ?? false;
       stream = playurl.stream;
       _initStreamIndex();
-      await Future.wait([
-        ?initLiveUrl(
-          streamIndex: streamIndex,
-          formatIndex: formatIndex,
-          codecIndex: codecIndex,
-          liveUrlIndex: liveUrlIndex,
-          autoFullScreenFlag: autoFullScreenFlag,
-          autoplay: autoplay,
-          isCurrent: isCurrent,
-        ),
-        if (!isLoaded.value && Accounts.heartbeat.isLogin) _fetchBlockRules(),
-      ]);
-      if (isCurrent()) isLoaded.value = true;
+      _selectLiveSource(
+        streamIndex: streamIndex,
+        formatIndex: formatIndex,
+        codecIndex: codecIndex,
+        liveUrlIndex: liveUrlIndex,
+      );
+      final source = _networkSource;
+      if (source == null || !isCurrent()) return null;
+      final plan = plPlayerController.createPlaybackPlan(
+        contentKey: 'live:$roomId',
+        source: source,
+        configuration: configuration,
+        timelineKind: PlaybackTimelineKind.live,
+        seekPolicy: PlaybackSeekPolicy.disabled,
+      );
+      _playbackPlan = plan;
+      plPlayerController.preparePlaybackPlan(
+        owner: playbackOwner,
+        plan: plan,
+        live: true,
+        isVertical: isPortrait.value,
+      );
+      if (!isLoaded.value && Accounts.heartbeat.isLogin) {
+        unawaited(_fetchBlockRules());
+      }
+      return plan;
     } else {
       _showDialog(res.toString());
+      return null;
     }
   }
 
@@ -382,6 +408,59 @@ class LiveRoomController extends GetxController {
     this.codecIndex = codecIndex;
     this.liveUrlIndex = liveUrlIndex;
 
+    final source = _selectLiveSource(
+      streamIndex: streamIndex,
+      formatIndex: formatIndex,
+      codecIndex: codecIndex,
+      liveUrlIndex: liveUrlIndex,
+    );
+    if (source == null) return null;
+    final configuration = plPlayerController.capturePlaybackConfiguration(
+      live: true,
+      source: source,
+      audioOnly: plPlayerController.onlyPlayAudio.value,
+    );
+    final plan = plPlayerController.createPlaybackPlan(
+      contentKey: 'live:$roomId',
+      source: source,
+      configuration: configuration,
+      timelineKind: PlaybackTimelineKind.live,
+      seekPolicy: PlaybackSeekPolicy.disabled,
+    );
+    _playbackPlan = plan;
+    final start = autoplay == null
+        ? PlaybackStartPolicy.preserve
+        : autoplay
+        ? PlaybackStartPolicy.play
+        : PlaybackStartPolicy.pause;
+    return plPlayerController
+        .loadPlaybackPlan(
+          owner: playbackOwner,
+          plan: plan,
+          start: start,
+          live: true,
+          isVertical: isPortrait.value,
+          autoFullScreenFlag: autoFullScreenFlag,
+        )
+        .then((_) {
+          if (!isClosed &&
+              playbackOwner.isActive &&
+              identical(source, _networkSource)) {
+            _startSizeSub();
+          }
+        });
+  }
+
+  NetworkSource? _selectLiveSource({
+    required int streamIndex,
+    required int formatIndex,
+    required int codecIndex,
+    required int liveUrlIndex,
+  }) {
+    this.streamIndex = streamIndex;
+    this.formatIndex = formatIndex;
+    this.codecIndex = codecIndex;
+    this.liveUrlIndex = liveUrlIndex;
     final CodecItem item = stream
         .getOrFirst(streamIndex)
         .format
@@ -405,18 +484,66 @@ class LiveRoomController extends GetxController {
       videoCandidates: urls,
     );
     videoUrl = source.videoSource;
-    return playerInit(
-      autoplay: autoplay ?? plPlayerController.wantsToPlay,
-      autoFullScreenFlag: autoFullScreenFlag,
-      isCurrent: isCurrent,
-    )?.whenComplete(() {
-      if (!isClosed &&
-          playbackOwner.isActive &&
-          identical(source, _networkSource)) {
-        _startSizeSub();
-      }
-    });
+    return source;
   }
+
+  void holdPlaybackForRoute() {
+    final snapshot = plPlayerController.currentPlaybackSnapshot;
+    final plan = plPlayerController.currentPlaybackPlan;
+    final position = snapshot.actual.position;
+    if (plan != null &&
+        plan.contentKey == _playbackPlan?.contentKey &&
+        position != null) {
+      _playbackPlan = PlaybackPlan(
+        contentKey: plan.contentKey,
+        source: plan.source,
+        timeline: plan.timeline,
+        configuration: snapshot.configuration.desired,
+        startPosition: position,
+        reloadPosition: position,
+        metadata: plan.metadata,
+      );
+    }
+    _routeInhibitor ??= playbackOwner.acquireInhibitor(
+      PlaybackInhibitorSource.system,
+    );
+  }
+
+  Future<void> restorePlaybackAfterRoute() async {
+    plPlayerController.activatePlaybackOwner(playbackOwner);
+    final plan = _playbackPlan;
+    final token = _routeInhibitor;
+    if (plan != null && !isClosed) {
+      final result = await loadPlaybackPlanForRoute(
+        plan,
+        start: PlaybackStartPolicy.preserve,
+      );
+      if (result.outcome == LoadOutcome.ready && !isClosed) {
+        isLoaded.value = true;
+      }
+    } else if (plan == null && !isClosed) {
+      await queryLiveUrl(startPolicy: PlaybackStartPolicy.preserve);
+    }
+    if (token != null) {
+      _routeInhibitor = null;
+      await playbackOwner.releaseInhibitor(token);
+    }
+    if (!isClosed && plPlayerController.playerStatus.isPlaying) {
+      danmakuController?.resume();
+      await startLiveMsg();
+    }
+  }
+
+  Future<LoadResult> loadPlaybackPlanForRoute(
+    PlaybackPlan plan, {
+    required PlaybackStartPolicy start,
+  }) => plPlayerController.loadPlaybackPlan(
+    owner: playbackOwner,
+    plan: plan,
+    start: start,
+    live: true,
+    isVertical: isPortrait.value,
+  );
 
   Future<void> queryLiveInfoH5() async {
     final ownsPlayback = playbackOwner.guard();
@@ -494,18 +621,58 @@ class LiveRoomController extends GetxController {
     }
   }
 
-  void closeLiveMsg() {
-    _msgStream?.close();
+  void _updateRoomId(int value) {
+    if (roomId == value) return;
+    final reconnect = _wantedConnected;
+    roomId = value;
+    dmInfo = null;
+    _invalidateMessageConnection(wantedConnected: reconnect);
+    if (reconnect) unawaited(startLiveMsg());
+  }
+
+  bool _isCurrentMessageTask(int generation, int targetRoomId) =>
+      !isClosed &&
+      _wantedConnected &&
+      _messageGeneration == generation &&
+      roomId == targetRoomId;
+
+  void _invalidateMessageConnection({required bool wantedConnected}) {
+    _wantedConnected = wantedConnected;
+    _messageGeneration++;
+    final stream = _msgStream;
     _msgStream = null;
+    _streamGeneration = null;
+    _connecting = null;
+    _connectingGeneration = null;
+    _historyPrefetchGeneration = null;
+    _superChatPrefetchGeneration = null;
+    stream?.close();
+  }
+
+  void closeLiveMsg() {
+    _invalidateMessageConnection(wantedConnected: false);
   }
 
   @pragma('vm:notify-debugger-on-exception')
-  Future<void> prefetch() async {
-    final res = await LiveHttp.liveRoomDmPrefetch(roomId: roomId);
+  Future<void> prefetch() => _prefetchFor(_messageGeneration, roomId);
+
+  @protected
+  Future<LoadingState<List<DanmakuMsg>?>> fetchLiveMessageHistory(int roomId) =>
+      LiveHttp.liveRoomDmPrefetch(roomId: roomId);
+
+  Future<void> _prefetchFor(int generation, int targetRoomId) async {
+    if (!_isCurrentMessageTask(generation, targetRoomId)) return;
+    final LoadingState<List<DanmakuMsg>?> res;
+    try {
+      res = await fetchLiveMessageHistory(targetRoomId);
+    } catch (_) {
+      return;
+    }
+    if (!_isCurrentMessageTask(generation, targetRoomId)) return;
     if (res case Success(:final response)) {
       if (response != null && response.isNotEmpty) {
-        if (isClosed) return;
         for (final item in response) {
+          if (!_isCurrentMessageTask(generation, targetRoomId)) return;
           if (!isBlocked(item.text, item.extra.mid)) addDm(item);
         }
         _flushMessageRefresh();
@@ -518,10 +685,19 @@ class LiveRoomController extends GetxController {
     }
   }
 
-  Future<void> getSuperChatMsg() async {
-    final res = await LiveHttp.superChatMsg(roomId);
-    if (res.dataOrNull?.list case final list? when list.isNotEmpty) {
-      superChatMsg.addAll(list);
+  Future<void> getSuperChatMsg() =>
+      _getSuperChatMsgFor(_messageGeneration, roomId);
+
+  Future<void> _getSuperChatMsgFor(int generation, int targetRoomId) async {
+    if (!_isCurrentMessageTask(generation, targetRoomId)) return;
+    try {
+      final res = await LiveHttp.superChatMsg(targetRoomId);
+      if (!_isCurrentMessageTask(generation, targetRoomId)) return;
+      if (res.dataOrNull?.list case final list? when list.isNotEmpty) {
+        superChatMsg.addAll(list);
+      }
+    } catch (_) {
+      return;
     }
   }
 
@@ -550,25 +726,90 @@ class LiveRoomController extends GetxController {
     return _shieldUids.contains(uid) || _keywordList.any(text.contains);
   }
 
-  void startLiveMsg() {
+  Future<void> startLiveMsg() {
+    if (isClosed) return Future<void>.value();
+    _wantedConnected = true;
+    final generation = _messageGeneration;
+    final targetRoomId = roomId;
     if (chatBuffer.historyCount == 0 && chatBuffer.pendingCount == 0) {
-      prefetch();
+      if (_historyPrefetchGeneration != generation) {
+        _historyPrefetchGeneration = generation;
+        unawaited(_prefetchFor(generation, targetRoomId));
+      }
       if (showSuperChat) {
-        getSuperChatMsg();
+        if (_superChatPrefetchGeneration != generation) {
+          _superChatPrefetchGeneration = generation;
+          unawaited(_getSuperChatMsgFor(generation, targetRoomId));
+        }
       }
     }
-    if (_msgStream != null) {
-      return;
+    if (_msgStream != null && _streamGeneration == generation) {
+      return Future<void>.value();
     }
-    if (dmInfo != null) {
-      initDm(dmInfo!);
-      return;
+    if (_connecting != null && _connectingGeneration == generation) {
+      return _connecting!;
     }
-    LiveHttp.liveRoomGetDanmakuToken(roomId: roomId).then((res) {
-      if (res case Success(:final response)) {
-        initDm(dmInfo = response);
+    late final Future<void> connection;
+    connection = _establishLiveMessageConnection(generation, targetRoomId)
+        .whenComplete(() {
+          if (identical(_connecting, connection)) {
+            _connecting = null;
+            _connectingGeneration = null;
+          }
+        });
+    _connecting = connection;
+    _connectingGeneration = generation;
+    return connection;
+  }
+
+  @protected
+  Future<LoadingState<LiveDmInfoData>> fetchLiveMessageToken(int roomId) =>
+      LiveHttp.liveRoomGetDanmakuToken(roomId: roomId);
+
+  @protected
+  LiveMessageStream createLiveMessageStream({
+    required LiveDmInfoData info,
+    required int roomId,
+  }) => LiveMessageStream(
+    streamToken: info.token,
+    roomId: roomId,
+    uid: Accounts.heartbeat.mid,
+    servers: info.hostList
+        .map((host) => 'wss://${host.host}:${host.wssPort}/sub')
+        .toList(),
+  );
+
+  Future<void> _establishLiveMessageConnection(
+    int generation,
+    int targetRoomId,
+  ) async {
+    var info = dmInfo;
+    if (info == null) {
+      final LoadingState<LiveDmInfoData> result;
+      try {
+        result = await fetchLiveMessageToken(targetRoomId);
+      } catch (_) {
+        return;
       }
-    });
+      if (!_isCurrentMessageTask(generation, targetRoomId)) return;
+      if (result case Success(:final response)) {
+        info = dmInfo = response;
+      } else {
+        return;
+      }
+    }
+    final currentInfo = info;
+    if (_isCurrentMessageTask(generation, targetRoomId)) {
+      try {
+        _initDm(
+          currentInfo,
+          generation: generation,
+          targetRoomId: targetRoomId,
+        );
+      } catch (_) {
+        // 页面调用方有意不等待连接建立；同步初始化失败不能变成未处理异步错误。
+      }
+    }
   }
 
   void listener() {
@@ -594,7 +835,7 @@ class LiveRoomController extends GetxController {
 
   @override
   void onClose() {
-    playbackOwner.close();
+    plPlayerController.closePlaybackOwner(playbackOwner);
     _stopSizeSub();
     closeLiveMsg();
     cancelLikeTimer();
@@ -629,21 +870,27 @@ class LiveRoomController extends GetxController {
     return queryLiveUrl();
   }
 
-  void initDm(LiveDmInfoData info) {
-    if (info.hostList.isEmpty) {
+  void _initDm(
+    LiveDmInfoData info, {
+    required int generation,
+    required int targetRoomId,
+  }) {
+    if (info.hostList.isEmpty ||
+        !_isCurrentMessageTask(generation, targetRoomId)) {
       return;
     }
-    _msgStream =
-        LiveMessageStream(
-            streamToken: info.token,
-            roomId: roomId,
-            uid: Accounts.heartbeat.mid,
-            servers: info.hostList
-                .map((host) => 'wss://${host.host}:${host.wssPort}/sub')
-                .toList(),
-          )
-          ..addEventListener(_danmakuListener)
-          ..init();
+    final stream = createLiveMessageStream(info: info, roomId: targetRoomId);
+    _msgStream = stream;
+    _streamGeneration = generation;
+    stream
+      ..addEventListener((obj) {
+        if (!_isCurrentMessageTask(generation, targetRoomId) ||
+            !identical(_msgStream, stream)) {
+          return;
+        }
+        _danmakuListener(obj);
+      })
+      ..init();
   }
 
   void addDm(dynamic msg, [DanmakuContentItem<DanmakuExtra>? item]) {
@@ -682,8 +929,11 @@ class LiveRoomController extends GetxController {
         danmakuController == null) {
       return;
     }
+    final controller = danmakuController!;
+    final generation = _messageGeneration;
+    final targetRoomId = roomId;
     unawaited(() async {
-      final fontSize = danmakuController?.option.fontSize ?? 25.0;
+      final fontSize = controller.option.fontSize;
       final inlineImages = <DanmakuInlineImage>[];
       DanmakuContentItem<DanmakuExtra>? item;
       try {
@@ -703,6 +953,14 @@ class LiveRoomController extends GetxController {
           final width = naturalWidth * scale;
           final height = naturalHeight * scale;
           final image = await _loadDanmakuEmote(emote.url);
+          if (!_isCurrentMessageTask(generation, targetRoomId) ||
+              !identical(danmakuController, controller)) {
+            image?.dispose();
+            for (final inlineImage in inlineImages) {
+              inlineImage.image.dispose();
+            }
+            return;
+          }
           if (image != null) {
             inlineImages.add(
               DanmakuInlineImage(
@@ -722,11 +980,10 @@ class LiveRoomController extends GetxController {
           extra: extra,
           inlineImages: inlineImages,
         );
-        final controller = danmakuController;
-        if (isClosed ||
+        if (!_isCurrentMessageTask(generation, targetRoomId) ||
+            !identical(danmakuController, controller) ||
             !plPlayerController.showDanmaku ||
             !plPlayerController.enableShowLiveDanmaku.value ||
-            controller == null ||
             !controller.addDanmaku(item)) {
           item.dispose();
         }

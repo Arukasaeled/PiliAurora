@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io';
 
 import 'package:pili_aurora/app/app.dart';
@@ -5,6 +6,8 @@ import 'package:pili_aurora/app/app_paths.dart';
 import 'package:pili_aurora/app/platform_setup.dart';
 import 'package:pili_aurora/services/desktop_playback_windows.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart'
+    show PlaybackShutdownOutcome;
 import 'package:pili_aurora/utils/storage_key.dart';
 import 'package:pili_aurora/build_config.dart';
 import 'package:pili_aurora/common/widgets/scale_app.dart';
@@ -111,12 +114,42 @@ Future<void> bootstrapApplication([List<String> arguments = const []]) async {
           controller.positionInMilliseconds,
         );
       }
-      await controller?.pause();
-      controller?.dispose();
-      await CacheManager.manager.dispose();
-      await GStorage.close();
+      final shutdown = await controller?.shutdownPlaybackFacade();
       final directory = windows.cacheDirectory!;
-      if (directory.existsSync()) await directory.delete(recursive: true);
+      Future<void> cleanupWindowResources() async {
+        await CacheManager.manager.dispose();
+        await GStorage.close();
+        if (directory.existsSync()) await directory.delete(recursive: true);
+      }
+
+      if (shutdown?.outcome == PlaybackShutdownOutcome.cleanupIncomplete) {
+        logger.w('播放器在关闭时未能于预算内完成清理', error: shutdown?.failure);
+        unawaited(
+          controller!.playbackReleased.then<void>(
+            (_) async {
+              try {
+                await cleanupWindowResources();
+              } catch (error, stackTrace) {
+                logger.e(
+                  '播放器释放后的窗口资源清理失败',
+                  error: error,
+                  stackTrace: stackTrace,
+                );
+              }
+            },
+            onError: (Object error, StackTrace stackTrace) {
+              logger.e(
+                '播放器资源未确认释放，跳过依赖资源清理',
+                error: error,
+                stackTrace: stackTrace,
+              );
+            },
+          ),
+        );
+        return;
+      }
+      if (controller != null) await controller.playbackReleased;
+      await cleanupWindowResources();
     };
   }
 

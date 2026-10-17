@@ -15,7 +15,6 @@ import 'package:pili_aurora/services/shutdown_timer_service.dart'
     show shutdownTimerService;
 import 'package:pili_aurora/utils/android/bindings.g.dart';
 import 'package:pili_aurora/utils/extension/context_ext.dart';
-import 'package:pili_aurora/utils/extension/string_ext.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
@@ -289,7 +288,7 @@ class _LiveHeaderControlState extends State<LiveHeaderControl>
                             children: [
                               const Icon(Icons.volume_up, size: 17),
                               Text(
-                                '播放器音量: ${player.getProperty('volume').subLength(3)}%',
+                                '播放器音量: ${plPlayerController.playbackVolumePercent.toStringAsFixed(0)}%',
                                 style: const TextStyle(fontSize: 14),
                               ),
                             ],
@@ -297,7 +296,8 @@ class _LiveHeaderControlState extends State<LiveHeaderControl>
                           onTap: () => showPlayerVolumeDialog(
                             context,
                             () {},
-                            onChanged: player.setVolume,
+                            onChanged: (value) => plPlayerController
+                                .setPlayerVolumePercent(value),
                           ),
                         ),
                     ],

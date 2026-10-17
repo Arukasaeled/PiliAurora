@@ -19,6 +19,10 @@ void main() {
     calls = [];
     messenger.setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
+      if (call.method == 'VideoOutputManager.BeginOutputOperation' ||
+          call.method == 'VideoOutputManager.InvalidateOutputGeneration') {
+        return true;
+      }
       return null;
     });
   });
@@ -26,19 +30,31 @@ void main() {
 
   test('updates the buffer before notifying mpv', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
-      expect(player.options, isEmpty);
       calls.add(call);
+      if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+        expect(player.options, isEmpty);
+        return true;
+      }
+      expect(call.method, 'VideoOutputManager.SetSurfaceTextureSize');
+      expect(player.options, isEmpty);
       return null;
     });
     await setAndroidVideoOutputSize(
       player: player,
       size: (width: 960, height: 540),
     );
-    expect(calls.single.method, 'VideoOutputManager.SetSurfaceTextureSize');
-    expect(calls.single.arguments, {
+    expect(calls.map((call) => call.method), [
+      'VideoOutputManager.BeginOutputOperation',
+      'VideoOutputManager.SetSurfaceTextureSize',
+    ]);
+    expect(calls.last.arguments, {
       'handle': '42',
       'width': '960',
       'height': '540',
+      'runtimeId': '0',
+      'loadId': '1',
+      'outputEpoch': '1',
+      'configRevision': '0',
     });
     expect(player.options, [
       ('android-surface-size', '960x540'),
@@ -66,8 +82,12 @@ void main() {
     final gate = Completer<void>();
     final entered = Completer<void>();
     messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
       entered.complete();
       await gate.future;
+      if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+        return true;
+      }
       return null;
     });
     final resize = setAndroidVideoOutputSize(
@@ -86,6 +106,9 @@ void main() {
     () async {
       messenger.setMockMethodCallHandler(channel, (call) async {
         player.current[0] = const Media('file:///next.mp4');
+        if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+          return true;
+        }
         return null;
       });
       await setAndroidVideoOutputSize(
@@ -110,6 +133,9 @@ void main() {
     var current = true;
     messenger.setMockMethodCallHandler(channel, (call) async {
       current = false;
+      if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+        return true;
+      }
       return null;
     });
     final applied = await setAndroidVideoOutputSize(
@@ -128,7 +154,15 @@ void main() {
       final entered = Completer<void>();
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
-        if (calls.length == 1) {
+        if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+          return true;
+        }
+        if (calls
+                .where(
+                  (c) => c.method == 'VideoOutputManager.SetSurfaceTextureSize',
+                )
+                .length ==
+            1) {
           entered.complete();
           await gate.future;
         }
@@ -146,11 +180,16 @@ void main() {
         wid: 123,
       );
       await Future<void>.delayed(Duration.zero);
-      expect(calls, hasLength(1));
+      expect(calls, hasLength(2));
       expect(player.options, isEmpty);
       gate.complete();
       await Future.wait([viewport, source]);
-      expect(calls, hasLength(2));
+      expect(calls.map((call) => call.method), [
+        'VideoOutputManager.BeginOutputOperation',
+        'VideoOutputManager.SetSurfaceTextureSize',
+        'VideoOutputManager.BeginOutputOperation',
+        'VideoOutputManager.SetSurfaceTextureSize',
+      ]);
       expect(player.options, [
         ('android-surface-size', '960x540'),
         ('android-surface-size', '1920x1080'),
@@ -168,7 +207,18 @@ void main() {
       var current = true;
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
-        if (calls.length == 1) {
+        if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+          return true;
+        }
+        if (call.method == 'VideoOutputManager.SetSurfaceTextureSize' &&
+            calls
+                    .where(
+                      (c) =>
+                          c.method ==
+                          'VideoOutputManager.SetSurfaceTextureSize',
+                    )
+                    .length ==
+                1) {
           entered.complete();
           await gate.future;
         }
@@ -206,8 +256,11 @@ void main() {
       final entered = Completer<void>();
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
-        entered.complete();
-        await gate.future;
+        if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+          entered.complete();
+          await gate.future;
+          return true;
+        }
         return null;
       });
       final viewport = setAndroidVideoOutputSize(
@@ -225,7 +278,9 @@ void main() {
       gate.complete();
       expect(await viewport, isFalse);
       expect(await source, isFalse);
-      expect(calls, hasLength(1));
+      expect(calls.map((call) => call.method), [
+        'VideoOutputManager.BeginOutputOperation',
+      ]);
       expect(player.options, isEmpty);
     },
   );

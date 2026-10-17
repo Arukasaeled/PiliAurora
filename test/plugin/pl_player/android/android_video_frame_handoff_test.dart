@@ -26,6 +26,10 @@ void main() {
     player.onSize = () => events.add('mpv');
     messenger.setMockMethodCallHandler(channel, (call) async {
       events.add(call.method);
+      if (call.method == 'VideoOutputManager.BeginOutputOperation' ||
+          call.method == 'VideoOutputManager.InvalidateOutputGeneration') {
+        return true;
+      }
       if (call.method == 'VideoOutputManager.CanWaitForSurfaceFrame') {
         return true;
       }
@@ -59,6 +63,7 @@ void main() {
       await entered.future;
       expect(completed, isFalse);
       expect(events, [
+        'VideoOutputManager.BeginOutputOperation',
         'VideoOutputManager.CanWaitForSurfaceFrame',
         'VideoOutputManager.SetSurfaceTextureSize',
         'mpv',
@@ -107,6 +112,7 @@ void main() {
   test('unsupported frame clock refuses before touching buffer', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
       events.add(call.method);
+      if (call.method == 'VideoOutputManager.BeginOutputOperation') return true;
       return false;
     });
     expect(
@@ -117,7 +123,10 @@ void main() {
       ),
       isFalse,
     );
-    expect(events, ['VideoOutputManager.CanWaitForSurfaceFrame']);
+    expect(events, [
+      'VideoOutputManager.BeginOutputOperation',
+      'VideoOutputManager.CanWaitForSurfaceFrame',
+    ]);
     expect(player.options, isEmpty);
   });
 
@@ -125,8 +134,14 @@ void main() {
     var mayStart = true;
     messenger.setMockMethodCallHandler(channel, (call) async {
       events.add(call.method);
-      mayStart = false;
-      return true;
+      if (call.method == 'VideoOutputManager.BeginOutputOperation') {
+        return true;
+      }
+      if (call.method == 'VideoOutputManager.CanWaitForSurfaceFrame') {
+        mayStart = false;
+        return true;
+      }
+      return null;
     });
     expect(
       await setAndroidVideoOutputSize(
@@ -137,7 +152,10 @@ void main() {
       ),
       isFalse,
     );
-    expect(events, ['VideoOutputManager.CanWaitForSurfaceFrame']);
+    expect(events, [
+      'VideoOutputManager.BeginOutputOperation',
+      'VideoOutputManager.CanWaitForSurfaceFrame',
+    ]);
     expect(player.options, isEmpty);
   });
 

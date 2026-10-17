@@ -47,6 +47,7 @@ import 'package:pili_aurora/pages/video/introduction/ugc/controller.dart';
 import 'package:pili_aurora/pages/video/medialist/view.dart';
 import 'package:pili_aurora/pages/video/playback_source.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/pages/video/note/view.dart';
 import 'package:pili_aurora/pages/video/post_panel/view.dart';
 import 'package:pili_aurora/pages/video/send_danmaku/view.dart';
@@ -138,6 +139,8 @@ class VideoDetailController extends GetxController
   String? get audioUrl =>
       _networkSource == null ? null : _networkSource!.audioSource ?? '';
   late final PlaybackOwner playbackOwner;
+  PlaybackPlan? _playbackPlan;
+  PlaybackInhibitorToken? _routeInhibitor;
   Duration? defaultST;
   Duration? playedTime;
   String playedTimePos(bool hasParams) {
@@ -696,24 +699,23 @@ class VideoDetailController extends GetxController
   }
 
   void _rememberPlaybackState() {
-    _autoPlay.value = plPlayerController.wantsToPlay;
+    _autoPlay.value = plPlayerController.currentPlaybackSnapshot.intent.playing;
     playedTime = plPlayerController.videoPlayerController?.state.position;
   }
 
+  bool _shouldInitializePlayer({bool force = false}) =>
+      force ||
+      _autoPlay.value ||
+      (plPlayerController.preInitPlayer && !plPlayerController.processing) &&
+          (isFileSource ? true : videoPlayerKey.currentState?.mounted == true);
+
   Future<void>? _initPlayerIfNeeded(
     bool autoFullScreenFlag, {
-    bool Function()? isCurrent,
     bool force = false,
   }) {
-    if (force ||
-        _autoPlay.value ||
-        (plPlayerController.preInitPlayer && !plPlayerController.processing) &&
-            (isFileSource
-                ? true
-                : videoPlayerKey.currentState?.mounted == true)) {
+    if (_shouldInitializePlayer(force: force)) {
       return playerInit(
         autoFullScreenFlag: autoFullScreenFlag && _autoPlay.value,
-        isCurrent: isCurrent,
       );
     }
     return null;
@@ -722,71 +724,194 @@ class VideoDetailController extends GetxController
   Future<void> playerInit({
     bool? autoplay,
     bool autoFullScreenFlag = false,
-    bool Function()? isCurrent,
   }) async {
-    if (isClosed || !playbackOwner.isActive || !(isCurrent?.call() ?? true)) {
+    if (isClosed || !playbackOwner.isActive) {
       return;
     }
-    final currentMedia = _mediaGuard();
-    final source = _networkSource;
-    if (!isFileSource && source == null) return;
-    bool valid() => currentMedia() && (isCurrent?.call() ?? true);
-    Duration? seek = defaultST ?? playedTime;
-    if (seek == .zero) seek = null;
-    seek ??= getFirstSegment();
-    await plPlayerController.setDataSource(
-      isFileSource
-          ? FileSource(
-              dir: args['dirPath'],
-              typeTag: entry.typeTag!,
-              isMp4: entry.mediaType == 1,
-              hasDashAudio: entry.hasDashAudio,
-            )
-          : source!,
+    final identity = (bvid, cid.value, epId, seasonId);
+    final source = isFileSource
+        ? FileSource(
+            dir: args['dirPath'],
+            typeTag: entry.typeTag!,
+            isMp4: entry.mediaType == 1,
+            hasDashAudio: entry.hasDashAudio,
+          )
+        : _networkSource;
+    if (source == null) return;
+    final configuration = plPlayerController.capturePlaybackConfiguration(
+      live: false,
+      source: source,
+      mediaVolume: volume,
+    );
+    final plan = _buildPlaybackPlan(source, configuration);
+    _playbackPlan = plan;
+    bool valid() =>
+        !isClosed &&
+        playbackOwner.isActive &&
+        identity == (bvid, cid.value, epId, seasonId) &&
+        (isFileSource || identical(source, _networkSource));
+    final result = await plPlayerController.loadPlaybackPlan(
       owner: playbackOwner,
-      isValid: valid,
-      seekTo: seek,
-      duration: data.timeLength == null
-          ? null
-          : Duration(milliseconds: data.timeLength!),
+      plan: plan,
+      start: autoplay == null
+          ? PlaybackStartPolicy.preserve
+          : autoplay
+          ? PlaybackStartPolicy.play
+          : PlaybackStartPolicy.pause,
+      live: false,
       isVertical: isVertical.value,
       aid: aid,
       bvid: bvid,
       cid: cid.value,
-      autoplay: autoplay ?? _autoPlay.value,
       epid: isUgc ? null : epId,
       seasonId: isUgc ? null : seasonId,
       pgcType: isUgc ? null : pgcType,
       videoType: videoType,
-      onInit: () {
+      onReady: () {
         if (!valid()) return;
         videoState.value = true;
-        setSubtitle(vttSubtitlesIndex.value);
+        unawaited(setSubtitle(vttSubtitlesIndex.value));
       },
-      width: firstVideo.width,
-      height: firstVideo.height,
-      volume: volume,
       autoFullScreenFlag: autoFullScreenFlag,
     );
 
-    if (!valid()) return;
-
-    if (!isFileSource) {
-      if (plPlayerController.enableBlock) {
-        initSkip();
-      }
-
-      if (vttSubtitlesIndex.value == -1) {
-        _queryPlayInfo(isCurrent: valid);
-      }
-
-      if (plPlayerController.showDmChart && dmTrend.value == null) {
-        _getDmTrend(isCurrent: valid);
-      }
-    }
-
+    if (!valid() || result.outcome != LoadOutcome.ready) return;
+    afterPlaybackReady(valid);
     defaultST = null;
   }
+
+  PlaybackPlan _buildPlaybackPlan(
+    DataSource source,
+    PlaybackConfiguration configuration,
+  ) {
+    Duration? seek = defaultST ?? playedTime;
+    if (seek == .zero) seek = null;
+    seek ??= getFirstSegment();
+    final contentKey = isFileSource
+        ? 'file:${cid.value}'
+        : isUgc
+        ? 'ugc:$bvid:${cid.value}'
+        : 'pgc:${seasonId ?? 0}:${epId ?? 0}:${cid.value}';
+    return plPlayerController.createPlaybackPlan(
+      contentKey: contentKey,
+      source: source,
+      configuration: configuration,
+      timelineKind: isFileSource
+          ? PlaybackTimelineKind.local
+          : PlaybackTimelineKind.onDemand,
+      seekPolicy: PlaybackSeekPolicy.allowed,
+      duration: data.timeLength == null
+          ? null
+          : Duration(milliseconds: data.timeLength!),
+      startPosition: seek,
+      reloadPosition: playedTime,
+      metadata: PlaybackMetadataHint(
+        trust: PlaybackMetadataTrust.sourceHint,
+        width: firstVideo.width,
+        height: firstVideo.height,
+      ),
+      mediaVolume: volume,
+    );
+  }
+
+  void afterPlaybackReady(bool Function() valid) {
+    if (!valid() || isFileSource) return;
+    if (plPlayerController.enableBlock) initSkip();
+    if (vttSubtitlesIndex.value == -1) {
+      _queryPlayInfo(isCurrent: valid);
+    }
+    if (plPlayerController.showDmChart && dmTrend.value == null) {
+      _getDmTrend(isCurrent: valid);
+    }
+  }
+
+  Future<LoadResult> submitPlaybackQuery(
+    Future<PlaybackPlan?> Function(PlaybackQuery) resolve, {
+    required PlaybackStartPolicy start,
+  }) => playbackOwner.query(resolve, start: start);
+
+  Future<LoadResult> loadPlaybackPlanForRoute(
+    PlaybackPlan plan, {
+    required PlaybackStartPolicy start,
+    required void Function() onReady,
+  }) => plPlayerController.loadPlaybackPlan(
+    owner: playbackOwner,
+    plan: plan,
+    start: start,
+    live: false,
+    isVertical: isVertical.value,
+    aid: aid,
+    bvid: bvid,
+    cid: cid.value,
+    epid: isUgc ? null : epId,
+    seasonId: isUgc ? null : seasonId,
+    pgcType: isUgc ? null : pgcType,
+    videoType: videoType,
+    onReady: onReady,
+  );
+
+  Future<CommandResult> applyPlaybackSubtitleTrack(
+    PlaybackSubtitleTrack? track,
+  ) => playbackOwner.setSubtitleTrack(track);
+
+  void holdPlaybackForRoute() {
+    final snapshot = plPlayerController.currentPlaybackSnapshot;
+    final plan = plPlayerController.currentPlaybackPlan;
+    if (plan?.contentKey == _playbackPlan?.contentKey) {
+      final position = snapshot.actual.position ?? playedTime;
+      if (position != null) {
+        _playbackPlan = PlaybackPlan(
+          contentKey: plan!.contentKey,
+          source: plan.source,
+          timeline: plan.timeline,
+          configuration: snapshot.configuration.desired,
+          startPosition: position,
+          reloadPosition: position,
+          metadata: plan.metadata,
+        );
+      }
+    }
+    _routeInhibitor ??= playbackOwner.acquireInhibitor(
+      PlaybackInhibitorSource.system,
+    );
+  }
+
+  Future<void> restorePlaybackAfterRoute() async {
+    plPlayerController.activatePlaybackOwner(playbackOwner);
+    final plan = _playbackPlan;
+    final token = _routeInhibitor;
+    if (plan != null && !isClosed) {
+      final identity = (bvid, cid.value, epId, seasonId);
+      final result = await loadPlaybackPlanForRoute(
+        plan,
+        start: PlaybackStartPolicy.preserve,
+        onReady: () {
+          if (isClosed || identity != (bvid, cid.value, epId, seasonId)) return;
+          videoState.value = true;
+          unawaited(setSubtitle(vttSubtitlesIndex.value));
+        },
+      );
+      if (result.outcome == LoadOutcome.ready && !isClosed) {
+        videoState.value = true;
+      }
+    } else if (plan == null && !isClosed) {
+      if (isFileSource) {
+        await playerInit();
+      } else {
+        await queryVideoUrl(startPolicy: PlaybackStartPolicy.preserve);
+      }
+    }
+    if (token != null) {
+      _routeInhibitor = null;
+      await playbackOwner.releaseInhibitor(token);
+    }
+  }
+
+  /*
+   * Page business state is prepared in the query resolver; PlaybackOwner.query
+   * accepts exactly one request and the resolved immutable plan is submitted
+   * by the session itself.
+   */
 
   bool get isQuerying => playbackOwner.isQuerying;
 
@@ -859,36 +984,80 @@ class VideoDetailController extends GetxController
   Future<void> queryVideoUrl({
     bool fromReset = false,
     bool autoFullScreenFlag = false,
+    PlaybackStartPolicy? startPolicy,
   }) async {
     if (isClosed || !playbackOwner.isActive) return;
     if (isFileSource) return _initPlayerIfNeeded(autoFullScreenFlag);
     if (fromReset && _networkSource != null) _rememberPlaybackState();
     final identity = (bvid, cid.value, epId, seasonId);
+    final contentKey = isUgc
+        ? 'ugc:$bvid:${cid.value}'
+        : 'pgc:${seasonId ?? 0}:${epId ?? 0}:${cid.value}';
+    final configuration = plPlayerController.capturePlaybackConfiguration(
+      live: false,
+      source: _networkSource,
+      mediaVolume: volume,
+    );
     final cancelToken = CancelToken();
     final fetch = _captureVideoQuery(cancelToken);
-    await playbackOwner.query(
-      (isCurrent) =>
-          _queryVideoUrl(fromReset, autoFullScreenFlag, fetch, isCurrent),
-      isValid: () =>
-          !isClosed &&
-          playbackOwner.isActive &&
-          identity == (bvid, cid.value, epId, seasonId),
-      cancel: cancelToken.cancel,
+    final start =
+        startPolicy ??
+        (plPlayerController.currentPlaybackContentKey == contentKey
+            ? PlaybackStartPolicy.preserve
+            : _autoPlay.value
+            ? PlaybackStartPolicy.play
+            : PlaybackStartPolicy.pause);
+    PlaybackQuery? acceptedQuery;
+    final result = await submitPlaybackQuery(
+      (query) {
+        acceptedQuery = query;
+        query.registerCancel(cancelToken.cancel);
+        return _queryVideoUrl(
+          fromReset,
+          fetch,
+          configuration,
+          query,
+          identity,
+        );
+      },
+      start: start,
     );
+    final query = acceptedQuery;
+    bool valid() =>
+        query?.isCurrent == true &&
+        !isClosed &&
+        playbackOwner.isActive &&
+        identity == (bvid, cid.value, epId, seasonId);
+    if (!valid()) return;
+    if (result.outcome == LoadOutcome.ready) {
+      videoState.value = true;
+      plPlayerController.onPlaybackQueryReady(
+        autoFullScreenFlag: autoFullScreenFlag && _autoPlay.value,
+      );
+      unawaited(setSubtitle(vttSubtitlesIndex.value));
+      afterPlaybackReady(valid);
+      defaultST = null;
+    }
   }
 
-  Future<void> _queryVideoUrl(
+  Future<PlaybackPlan?> _queryVideoUrl(
     bool fromReset,
-    bool autoFullScreenFlag,
     Future<LoadingState<PlayUrlModel>> Function(int) fetch,
-    bool Function() isCurrent,
+    PlaybackConfiguration configuration,
+    PlaybackQuery query,
+    (String, int, int?, int?) identity,
   ) async {
+    bool isCurrent() =>
+        !isClosed &&
+        playbackOwner.isActive &&
+        query.isCurrent &&
+        identity == (bvid, cid.value, epId, seasonId);
     if (plPlayerController.enableSponsorBlock && isBlock && !fromReset) {
       querySponsorBlock(bvid: bvid, cid: cid.value, isCurrent: isCurrent);
     }
     if (plPlayerController.cacheVideoQa == null) {
       final isWiFi = await ConnectivityUtils.isWiFi;
-      if (!isCurrent()) return;
+      if (!isCurrent()) return null;
       plPlayerController
         ..cacheVideoQa = isWiFi
             ? Pref.defaultVideoQa
@@ -899,15 +1068,15 @@ class VideoDetailController extends GetxController
       preferCodecs = isWiFi ? Pref.preferCodecs : Pref.preferCodecsCellular;
     }
 
-    if (!isCurrent()) return;
+    if (!isCurrent()) return null;
     final result = await fetch(VideoQuality.hdrVivid.code);
-    if (!isCurrent()) return;
+    if (!isCurrent()) return null;
 
     if (result case Success(:final response)) {
       if (response.dash != null) {
         await _supplementVideoQualities(response, fetch, isCurrent);
       }
-      if (!isCurrent()) return;
+      if (!isCurrent()) return null;
       data = response;
 
       languages.value = data.language?.items;
@@ -948,11 +1117,6 @@ class VideoDetailController extends GetxController
             ),
           );
           _setVideoHeight();
-          await _initPlayerIfNeeded(
-            autoFullScreenFlag,
-            isCurrent: isCurrent,
-            force: fromReset,
-          );
         } else {
           SmartDialog.showToast('视频资源不存在');
           _autoPlay.value = false;
@@ -960,26 +1124,42 @@ class VideoDetailController extends GetxController
           if (plPlayerController.isFullScreen.value) {
             plPlayerController.triggerFullScreen(status: false);
           }
+          return null;
         }
-        return;
-      }
-
-      _applyPlaybackSource(
-        VideoPlaybackSource.resolve(
-          data,
-          videoQuality: data.findAvailableVideoQuality(
-            plPlayerController.cacheVideoQa!,
+      } else {
+        _applyPlaybackSource(
+          VideoPlaybackSource.resolve(
+            data,
+            videoQuality: data.findAvailableVideoQuality(
+              plPlayerController.cacheVideoQa!,
+            ),
+            audioQuality: plPlayerController.cacheAudioQa,
+            preferredCodecs: preferCodecs,
           ),
-          audioQuality: plPlayerController.cacheAudioQa,
-          preferredCodecs: preferCodecs,
-        ),
+        );
+        _setVideoHeight();
+      }
+      if (!isCurrent() ||
+          !_shouldInitializePlayer(force: fromReset) ||
+          _networkSource == null) {
+        return null;
+      }
+      final plan = _buildPlaybackPlan(_networkSource!, configuration);
+      plPlayerController.preparePlaybackPlan(
+        owner: playbackOwner,
+        plan: plan,
+        live: false,
+        isVertical: isVertical.value,
+        aid: aid,
+        bvid: bvid,
+        cid: cid.value,
+        epid: isUgc ? null : epId,
+        seasonId: isUgc ? null : seasonId,
+        pgcType: isUgc ? null : pgcType,
+        videoType: videoType,
       );
-      _setVideoHeight();
-      await _initPlayerIfNeeded(
-        autoFullScreenFlag,
-        isCurrent: isCurrent,
-        force: fromReset,
-      );
+      _playbackPlan = plan;
+      return plan;
     } else {
       _autoPlay.value = false;
       videoState.value = false;
@@ -987,6 +1167,7 @@ class VideoDetailController extends GetxController
         plPlayerController.triggerFullScreen(status: false);
       }
       result.toast();
+      return null;
     }
   }
 
@@ -1039,12 +1220,19 @@ class VideoDetailController extends GetxController
   Future<void> setSubtitle(int index) async {
     final generation = ++_subtitleGeneration;
     final currentMedia = _mediaGuard();
+    final owner = plPlayerController.activePlaybackOwner;
+    if (owner == null || !identical(owner, playbackOwner)) return;
     bool valid() => currentMedia() && generation == _subtitleGeneration;
     if (!valid()) return;
-    final player = plPlayerController.videoPlayerController;
     if (index <= 0) {
-      await player?.setSubtitleTrack(.no());
-      if (valid()) vttSubtitlesIndex.value = index;
+      final result = await applyPlaybackSubtitleTrack(
+        const PlaybackSubtitleTrack.no(),
+      );
+      if (valid() &&
+          (result.outcome == CommandOutcome.applied ||
+              result.outcome == CommandOutcome.accepted)) {
+        vttSubtitlesIndex.value = index;
+      }
       return;
     }
     final item = subtitles[index - 1];
@@ -1056,15 +1244,18 @@ class VideoDetailController extends GetxController
       vttSubtitles[index - 1] = subtitle;
     }
     if (!valid()) return;
-    await player?.setSubtitleTrack(
-      SubtitleTrack(
+    final result = await applyPlaybackSubtitleTrack(
+      PlaybackSubtitleTrack.external(
         subtitle.isData ? 'memory://${subtitle.id}' : subtitle.id,
-        item.lanDoc,
-        item.lan,
-        uri: true,
+        title: item.lanDoc,
+        language: item.lan,
       ),
     );
-    if (valid()) vttSubtitlesIndex.value = index;
+    if (valid() &&
+        (result.outcome == CommandOutcome.applied ||
+            result.outcome == CommandOutcome.accepted)) {
+      vttSubtitlesIndex.value = index;
+    }
   }
 
   // interactive video
@@ -1260,7 +1451,7 @@ class VideoDetailController extends GetxController
   @override
   void onClose() {
     _subtitleGeneration++;
-    playbackOwner.close();
+    plPlayerController.closePlaybackOwner(playbackOwner);
     cid.close();
     if (isFileSource) {
       cacheLocalProgress();

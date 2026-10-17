@@ -38,6 +38,8 @@ import 'package:pili_aurora/pages/video/post_panel/popup_menu_text.dart';
 import 'package:pili_aurora/pages/video/post_panel/view.dart';
 import 'package:pili_aurora/pages/video/widgets/header_control.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/super_resolution_policy.dart';
 import 'package:pili_aurora/plugin/pl_player/models/bottom_control_type.dart';
 import 'package:pili_aurora/plugin/pl_player/widgets/desktop_volume_control.dart';
@@ -168,7 +170,18 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   GestureType? _gestureType;
   Offset? _initialFocalPoint;
 
-  bool _pauseDueToPauseUponEnteringBackgroundMode = false;
+  PlaybackOwner? _backgroundOwner;
+  PlaybackInhibitorToken? _backgroundToken;
+
+  void _releaseBackgroundInhibitor() {
+    final owner = _backgroundOwner;
+    final token = _backgroundToken;
+    _backgroundOwner = null;
+    _backgroundToken = null;
+    if (owner != null && token != null) {
+      unawaited(owner.releaseInhibitor(token));
+    }
+  }
 
   StreamSubscription? _brightnessListener;
   StreamSubscription? _videoSizeListener;
@@ -396,17 +409,16 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!plPlayerController.continuePlayInBackground.value) {
-      late final player = plPlayerController.videoPlayerController;
       if (const <AppLifecycleState>[.paused, .detached].contains(state)) {
-        if (player != null && player.state.playing) {
-          _pauseDueToPauseUponEnteringBackgroundMode = true;
-          player.pause();
+        final owner = plPlayerController.activePlaybackOwner;
+        if (plPlayerController.playerStatus.isPlaying && owner != null) {
+          _backgroundOwner = owner;
+          _backgroundToken ??= owner.acquireInhibitor(
+            PlaybackInhibitorSource.backgroundPolicy,
+          );
         }
-      } else {
-        if (_pauseDueToPauseUponEnteringBackgroundMode) {
-          _pauseDueToPauseUponEnteringBackgroundMode = false;
-          player?.play();
-        }
+      } else if (state == AppLifecycleState.resumed) {
+        _releaseBackgroundInhibitor();
       }
     }
   }
@@ -436,6 +448,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   @override
   void dispose() {
+    _releaseBackgroundInhibitor();
     removeObserverMobile(this);
     _unregisterVideoDiagnostics?.call();
     _danmakuListener?.cancel();

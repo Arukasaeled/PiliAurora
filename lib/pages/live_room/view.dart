@@ -95,7 +95,10 @@ class _LiveRoomPageState extends State<LiveRoomPage>
       ..desktopPlaybackRequest = (() =>
           DesktopPlaybackRequest.live(_liveRoomController.roomId))
       ..addStatusLister(playerListener);
-    PlPlayerController.setPlayCallBack(plPlayerController.play);
+    PlPlayerController.setPlayCallBack(
+      plPlayerController.play,
+      owner: this,
+    );
     if (plPlayerController.removeSafeArea) {
       hideSystemBar();
     }
@@ -122,7 +125,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
 
   @override
   Future<void> didPopNext() async {
-    _liveRoomController.playbackOwner.activate();
+    final restore = _liveRoomController.restorePlaybackAfterRoute();
     addObserverMobile(this);
     if (!plPlayerController.isLive) {
       plPlayerController.isLive = true;
@@ -130,25 +133,16 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     }
     plPlayerController.danmakuController =
         _liveRoomController.danmakuController;
-    PlPlayerController.setPlayCallBack(plPlayerController.play);
+    PlPlayerController.setPlayCallBack(
+      plPlayerController.play,
+      owner: this,
+    );
     _liveRoomController.startLiveTimer();
-    if (plPlayerController.playerStatus.isPlaying &&
-        plPlayerController.cid == null) {
-      _liveRoomController
-        ..danmakuController?.resume()
-        ..startLiveMsg();
-    } else {
-      final shouldPlay = _liveRoomController.isPlaying ?? false;
-      if (shouldPlay) {
-        _liveRoomController
-          ..danmakuController?.resume()
-          ..startLiveMsg();
-      }
-      await _liveRoomController.playerInit(autoplay: shouldPlay);
-    }
-    if (!mounted) return;
     plPlayerController.addStatusLister(playerListener);
+    playerListener(plPlayerController.playerStatus);
     super.didPopNext();
+    await restore;
+    if (!mounted) return;
   }
 
   @override
@@ -156,10 +150,10 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     removeObserverMobile(this);
     plPlayerController.removeStatusLister(playerListener);
     _liveRoomController
+      ..holdPlaybackForRoute()
       ..danmakuController?.clear()
       ..cancelLiveTimer()
-      ..closeLiveMsg()
-      ..isPlaying = plPlayerController.playerStatus.isPlaying;
+      ..closeLiveMsg();
     super.didPushNext();
   }
 
@@ -184,10 +178,8 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     if (Platform.isAndroid && !plPlayerController.setSystemBrightness) {
       ScreenBrightnessPlatform.instance.resetApplicationScreenBrightness();
     }
-    PlPlayerController.setPlayCallBack(null);
-    plPlayerController
-      ..removeStatusLister(playerListener)
-      ..dispose();
+    PlPlayerController.setPlayCallBack(null, owner: this);
+    plPlayerController.removeStatusLister(playerListener);
     for (final e in LiveContributionRankType.values) {
       Get.delete<ContributionRankController>(
         tag: '${_liveRoomController.roomId}${e.name}',

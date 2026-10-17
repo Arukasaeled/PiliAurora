@@ -144,8 +144,11 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
   void initState() {
     super.initState();
 
-    PlPlayerController.setPlayCallBack(playCallBack);
     videoDetailController = Get.put(VideoDetailController(), tag: heroTag);
+    PlPlayerController.setPlayCallBack(
+      playCallBack,
+      owner: this,
+    );
     videoDetailController.plPlayerController.desktopPlaybackRequest = () =>
         DesktopPlaybackRequest.video({
           'aid': videoDetailController.aid,
@@ -352,6 +355,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
   @override
   void dispose() {
+    PlPlayerController.setPlayCallBack(null, owner: this);
     plPlayerController
       ?..removeStatusLister(playerListener)
       ..removeCoarsePositionListener(positionListener);
@@ -376,12 +380,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
 
     if (!videoDetailController.plPlayerController.isCloseAll) {
       videoPlayerServiceHandler?.onVideoDetailDispose(heroTag);
-      if (plPlayerController != null) {
-        videoDetailController.makeHeartBeat();
-        plPlayerController!.dispose();
-      } else {
-        PlPlayerController.updatePlayCount();
-      }
+      videoDetailController.makeHeartBeat();
     }
     removeObserverMobile(this);
 
@@ -403,6 +402,7 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     introController.cancelTimer();
 
     videoDetailController
+      ..holdPlaybackForRoute()
       ..videoState.value = false
       ..cancelBlockListener()
       ..playerStatus = plPlayerController?.playerStatus
@@ -411,18 +411,18 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
       videoDetailController.makeHeartBeat();
       plPlayerController!
         ..removeStatusLister(playerListener)
-        ..removeCoarsePositionListener(positionListener)
-        ..pause();
+        ..removeCoarsePositionListener(positionListener);
     }
   }
 
   @override
   // 返回当前页面时
-  void didPopNext() {
-    videoDetailController.playbackOwner.activate();
+  Future<void> didPopNext() async {
+    final restore = videoDetailController.restorePlaybackAfterRoute();
     super.didPopNext();
 
     if (videoDetailController.plPlayerController.isCloseAll) {
+      await restore;
       return;
     }
 
@@ -431,12 +431,10 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     addObserverMobile(this);
 
     plPlayerController?.isLive = false;
-    if (videoDetailController.plPlayerController.playerStatus.isPlaying &&
-        videoDetailController.playerStatus != PlayerStatus.playing) {
-      videoDetailController.plPlayerController.pause();
-    }
-
-    PlPlayerController.setPlayCallBack(playCallBack);
+    PlPlayerController.setPlayCallBack(
+      playCallBack,
+      owner: this,
+    );
 
     introController.startTimer();
 
@@ -461,15 +459,11 @@ class _VideoDetailPageVState extends State<VideoDetailPageV>
     plPlayerController
       ?..addStatusLister(playerListener)
       ..addCoarsePositionListener(positionListener);
-    if (videoDetailController.autoPlay) {
-      videoDetailController.playerInit(
-        autoplay: videoDetailController.playerStatus?.isPlaying ?? false,
-      );
-    } else if (videoDetailController.plPlayerController.preInitPlayer &&
-        !videoDetailController.isQuerying &&
-        videoDetailController.videoUrl != null) {
-      videoDetailController.playerInit();
+    if (plPlayerController?.playerStatus.isPlaying == true) {
+      playerListener(PlayerStatus.playing);
     }
+    await restore;
+    if (!mounted) return;
   }
 
   @override
