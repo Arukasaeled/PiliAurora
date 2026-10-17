@@ -258,7 +258,27 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       (PlatformUtils.isDesktop && isDesktopPip);
   bool get isDesktopPip => DesktopPlaybackWindows.isPlayerWindow;
   DesktopPlaybackRequest Function()? desktopPlaybackRequest;
-  bool _openingDesktopWindow = false;
+  final _openingDesktopWindow = false.obs;
+  bool get openingDesktopWindow => _openingDesktopWindow.value;
+  bool _desktopWindowPresented = false;
+
+  /// 播放页面已经布局当前媒体的有效纹理后，再交接窗口和声音。
+  Future<void> notifyDesktopFramePresented(int loadId) async {
+    final snapshot = currentPlaybackSnapshot;
+    if (!isDesktopPip ||
+        _desktopWindowPresented ||
+        snapshot.loadId != loadId ||
+        snapshot.phase != PlaybackPhase.ready ||
+        snapshot.actual.playing != true) {
+      return;
+    }
+    _desktopWindowPresented = true;
+    try {
+      await DesktopPlaybackWindows.instance.playerReady();
+    } catch (_) {
+      DesktopPlaybackWindows.instance.playerFailed();
+    }
+  }
 
   late final RxBool isAlwaysOnTop = isDesktopPip.obs;
   Future<void> setAlwaysOnTop(bool value) {
@@ -269,18 +289,21 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
   Future<void> exitDesktopPip() => windowManager.close();
 
   Future<void> openDesktopWindow() async {
-    if (_openingDesktopWindow || desktopPlaybackRequest == null) return;
-    _openingDesktopWindow = true;
+    if (openingDesktopWindow || desktopPlaybackRequest == null) return;
+    _openingDesktopWindow.value = true;
+    final owner = _activeOwner;
     try {
       await DesktopPlaybackWindows.instance.open(
         desktopPlaybackRequest!(),
         volume: volume.value,
       );
-      await pause();
+      if (owner != null && owner.isActive && identical(_activeOwner, owner)) {
+        await owner.setPlaying(false);
+      }
     } catch (_) {
       SmartDialog.showToast('播放窗口启动失败，请重试');
     } finally {
-      _openingDesktopWindow = false;
+      _openingDesktopWindow.value = false;
     }
   }
 
@@ -572,15 +595,6 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
   // 添加一个私有构造函数
   PlPlayerController._() {
-    if (isDesktopPip) {
-      var ready = false;
-      _statusListeners.add((status) {
-        if (status.isPlaying && !ready) {
-          ready = true;
-          DesktopPlaybackWindows.instance.playerReady();
-        }
-      });
-    }
     if (PlatformUtils.isMobile) {
       _orientationListener = NativeDeviceOrientationPlatform.instance
           .onOrientationChanged(

@@ -1213,13 +1213,10 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
         player.current.isNotEmpty &&
         identical(player.current.first, media);
     final rect = videoController.rect.value;
-    final configuration = videoController.configuration;
     if (_videoOutputHandoff.image == null &&
-        configuration.width == size.width &&
-        configuration.height == size.height &&
         rect?.width == size.width &&
         rect?.height == size.height) {
-      // 初始固定输出已经收到有效视频帧；保持活纹理，避免静态截图等待批量帧统计。
+      // 暂停加载已配置最终输出；沿用有效纹理，不再为相同尺寸截取保护图。
       if (!current() || _videoOutputResizer.target != size) return false;
       await videoController.setSize(width: size.width, height: size.height);
       final accepted = current();
@@ -1747,6 +1744,20 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
             },
           ),
 
+        // 加载或替换输出时遮住中间画面；底层纹理继续参与 raster。
+        ListenableBuilder(
+          listenable: _videoOutputHandoff,
+          builder: (context, _) => Obx(
+            () =>
+                plPlayerController.dataStatus.loading ||
+                    _videoOutputHandoff.image != null
+                ? Positioned.fill(
+                    child: IgnorePointer(child: ColoredBox(color: widget.fill)),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ),
+
         /// 长按倍速 toast
         if (!isLive)
           IgnorePointer(
@@ -2230,60 +2241,66 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
             ),
         ],
 
-        Obx(() {
-          if (plPlayerController.dataStatus.loading ||
-              (plPlayerController.isBuffering.value &&
-                  plPlayerController.playerStatus.isPlaying)) {
-            return Center(
-              child: GestureDetector(
-                onTap: plPlayerController.refreshPlayer,
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [Colors.black26, Colors.transparent],
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Image.asset(
-                        Assets.buffering,
-                        height: 25,
-                        cacheHeight: 25.cacheSize(context),
-                        semanticLabel: "加载中",
-                        color: Colors.white,
+        ListenableBuilder(
+          listenable: _videoOutputHandoff,
+          builder: (context, _) => Obx(() {
+            if (plPlayerController.dataStatus.loading ||
+                _videoOutputHandoff.image != null ||
+                (plPlayerController.isBuffering.value &&
+                    plPlayerController.playerStatus.isPlaying)) {
+              return Center(
+                child: GestureDetector(
+                  onTap: plPlayerController.refreshPlayer,
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [Colors.black26, Colors.transparent],
                       ),
-                      if (plPlayerController.isBuffering.value)
-                        Obx(() {
-                          final buffered = plPlayerController.buffered.value;
-                          if (buffered == 0) {
-                            return const Text(
-                              '加载中...',
-                              style: TextStyle(
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset(
+                          Assets.buffering,
+                          height: 25,
+                          cacheHeight: 25.cacheSize(context),
+                          semanticLabel: "加载中",
+                          color: Colors.white,
+                        ),
+                        if (plPlayerController.dataStatus.loading ||
+                            _videoOutputHandoff.image != null ||
+                            plPlayerController.isBuffering.value)
+                          Obx(() {
+                            final buffered = plPlayerController.buffered.value;
+                            if (buffered == 0) {
+                              return const Text(
+                                '加载中...',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                ),
+                              );
+                            }
+                            return Text(
+                              DurationUtils.formatDuration(buffered),
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 12,
                               ),
                             );
-                          }
-                          return Text(
-                            DurationUtils.formatDuration(buffered),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                            ),
-                          );
-                        }),
-                    ],
+                          }),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          } else {
-            return const SizedBox.shrink();
-          }
-        }),
+              );
+            } else {
+              return const SizedBox.shrink();
+            }
+          }),
+        ),
 
         /// 点击 快进/快退
         if (!isLive)
@@ -2368,60 +2385,85 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       height: maxHeight,
       color: widget.fill,
       child: Obx(
-        () => MouseInteractiveViewer(
-          scaleEnabled: !plPlayerController.controlsLock.value,
-          pointerSignalFallback: _onPointerSignal,
-          onPointerPanZoomUpdate: _onPointerPanZoomUpdate,
-          onPointerPanZoomEnd: _onPointerPanZoomEnd,
-          onPointerDown: _onPointerDown,
-          onPointerUp: _onPointerUp,
-          onPointerCancel: _onPointerCancel,
-          onPanStart: _onPanStart,
-          onPanUpdate: _onPanUpdate,
-          onPanEnd: _onPanEnd,
-          onScaleUpdate: _onScaleUpdate,
-          scaleGestureRecognizer: _scaleGestureRecognizer,
-          panEnabled: false,
-          minScale: plPlayerController.enableShrinkVideoSize ? 0.75 : 1,
-          maxScale: 2.0,
-          boundaryMargin: plPlayerController.enableShrinkVideoSize
-              ? const .all(double.infinity)
-              : .zero,
-          panAxis: .aligned,
-          transformationController: _transformationController,
-          childKey: _videoKey,
-          child: RepaintBoundary(
-            key: _videoKey,
-            child: Obx(
-              () {
-                final videoFit = plPlayerController.videoFit.value;
-                return Transform.flip(
-                  flipX: plPlayerController.flipX.value,
-                  flipY: plPlayerController.flipY.value,
-                  child: FittedBox(
-                    fit: videoFit.boxFit,
-                    alignment: widget.alignment,
-                    child: (Platform.isAndroid || Platform.isWindows)
-                        ? VideoOutputHandoffView(
-                            handoff: _videoOutputHandoff,
-                            frameKey: _videoFrameKey,
-                            child: SimpleVideo(
+        () {
+          final loaded = plPlayerController.dataStatus.loaded;
+          if (loaded && plPlayerController.isDesktopPip) {
+            final loadId = plPlayerController.currentPlaybackSnapshot.loadId;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted ||
+                  loadId == null ||
+                  _videoOutputHandoff.image != null) {
+                return;
+              }
+              final size = _videoFrameKey.currentContext?.size;
+              final hasVideo =
+                  plPlayerController
+                      .currentPlaybackSnapshot
+                      .capabilities
+                      .hasVideo !=
+                  false;
+              if (!hasVideo || (size != null && !size.isEmpty)) {
+                unawaited(
+                  plPlayerController.notifyDesktopFramePresented(loadId),
+                );
+              }
+            });
+          }
+          return MouseInteractiveViewer(
+            scaleEnabled: !plPlayerController.controlsLock.value,
+            pointerSignalFallback: _onPointerSignal,
+            onPointerPanZoomUpdate: _onPointerPanZoomUpdate,
+            onPointerPanZoomEnd: _onPointerPanZoomEnd,
+            onPointerDown: _onPointerDown,
+            onPointerUp: _onPointerUp,
+            onPointerCancel: _onPointerCancel,
+            onPanStart: _onPanStart,
+            onPanUpdate: _onPanUpdate,
+            onPanEnd: _onPanEnd,
+            onScaleUpdate: _onScaleUpdate,
+            scaleGestureRecognizer: _scaleGestureRecognizer,
+            panEnabled: false,
+            minScale: plPlayerController.enableShrinkVideoSize ? 0.75 : 1,
+            maxScale: 2.0,
+            boundaryMargin: plPlayerController.enableShrinkVideoSize
+                ? const .all(double.infinity)
+                : .zero,
+            panAxis: .aligned,
+            transformationController: _transformationController,
+            childKey: _videoKey,
+            child: RepaintBoundary(
+              key: _videoKey,
+              child: Obx(
+                () {
+                  final videoFit = plPlayerController.videoFit.value;
+                  return Transform.flip(
+                    flipX: plPlayerController.flipX.value,
+                    flipY: plPlayerController.flipY.value,
+                    child: FittedBox(
+                      fit: videoFit.boxFit,
+                      alignment: widget.alignment,
+                      child: (Platform.isAndroid || Platform.isWindows)
+                          ? VideoOutputHandoffView(
+                              handoff: _videoOutputHandoff,
+                              frameKey: _videoFrameKey,
+                              child: SimpleVideo(
+                                controller: plPlayerController.videoController!,
+                                fill: widget.fill,
+                                aspectRatio: videoFit.aspectRatio,
+                              ),
+                            )
+                          : SimpleVideo(
                               controller: plPlayerController.videoController!,
                               fill: widget.fill,
                               aspectRatio: videoFit.aspectRatio,
                             ),
-                          )
-                        : SimpleVideo(
-                            controller: plPlayerController.videoController!,
-                            fill: widget.fill,
-                            aspectRatio: videoFit.aspectRatio,
-                          ),
-                  ),
-                );
-              },
+                    ),
+                  );
+                },
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }

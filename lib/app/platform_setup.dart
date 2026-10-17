@@ -75,12 +75,11 @@ Future<void> initializePlatformWindow() async {
           minimumSize: Size(320, 180),
           titleBarStyle: TitleBarStyle.hidden,
           title: 'PiliAurora Player',
+          backgroundColor: Color(0xFF000000),
         ),
         () async {
           await windowManager.setBounds(windows.initialBounds!);
           await windowManager.setAlwaysOnTop(true);
-          await windowManager.show();
-          await windowManager.focus();
         },
       );
       return;

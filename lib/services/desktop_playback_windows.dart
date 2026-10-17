@@ -294,7 +294,12 @@ class DesktopPlaybackWindows with WindowListener {
     }
   }
 
-  void playerReady() => _sendChild({'type': 'ready'});
+  Future<void> playerReady() async {
+    await windowManager.show();
+    await windowManager.focus();
+    _sendChild({'type': 'ready'});
+  }
+
   void playerFailed() => _sendChild({'type': 'failed'});
   void savePlaybackProgress(int cid, int position) =>
       _sendChild({'type': 'progress', 'cid': cid, 'position': position});

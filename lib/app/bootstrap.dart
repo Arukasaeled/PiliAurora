@@ -62,6 +62,7 @@ Future<void> bootstrapApplication([List<String> arguments = const []]) async {
       SettingBoxKey.showVideoReply: false,
       SettingBoxKey.showBangumiReply: false,
       SettingBoxKey.showRelatedVideo: false,
+      SettingBoxKey.pageTransition: Transition.noTransition.index,
     });
   }
   ScaledWidgetsFlutterBinding.instance.scaleFactor = Pref.uiScale;
