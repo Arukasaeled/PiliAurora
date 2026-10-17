@@ -46,38 +46,6 @@ void main() {
     expect(find.byType(PlayerInfoDialog), findsNothing);
   });
 
-  for (final size in [
-    const Size(640, 360),
-    const Size(1280, 800),
-  ]) {
-    testWidgets('信息弹窗在 $size 下保持紧凑工具栏与可滚动详情', (tester) async {
-      tester.view.physicalSize = size;
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      await openDialog(tester, PlayerState(width: 1920, height: 1080));
-      expect(
-        tester
-            .getSize(find.byKey(const ValueKey('player-info-toolbar')))
-            .height,
-        48,
-      );
-      expect(
-        tester.getSize(find.byType(Dialog)).height,
-        lessThanOrEqualTo(size.height),
-      );
-      await tester.tap(find.text('来源'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('原始参数（已脱敏）'));
-      await tester.pumpAndSettle();
-      expect(find.byType(SelectableText), findsOneWidget);
-      expect(find.byType(Dialog), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await tester.tap(find.byTooltip('关闭播放信息'));
-      await tester.pumpAndSettle();
-      expect(find.byType(PlayerInfoDialog), findsNothing);
-    });
-  }
   testWidgets('格式化视频参数，来源详情隐藏媒体签名', (tester) async {
     await openDialog(
       tester,

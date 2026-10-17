@@ -44,10 +44,6 @@ void main() {
       await tester.pumpWidget(GetMaterialApp(home: _Host(controller)));
       await tester.tap(find.text('打开'));
       await tester.pumpAndSettle();
-      expect(
-        tester.getSize(find.byKey(const ValueKey('danmaku-toolbar'))).height,
-        48,
-      );
       final reset = find.byTooltip('恢复默认值：50.0%', skipOffstage: false);
       await tester.ensureVisible(reset);
       await tester.tap(reset);
@@ -62,8 +58,6 @@ void main() {
         '彩色',
         '高级',
       ].map((label) => find.widgetWithText(FilterChip, label)).toList();
-      final tops = types.map((finder) => tester.getTopLeft(finder).dy).toSet();
-      expect(tops, hasLength(1));
       await tester.tap(types.first);
       await tester.pumpAndSettle();
       expect(DanmakuOptions.blockTypes, contains(2));

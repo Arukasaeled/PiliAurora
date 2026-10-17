@@ -26,7 +26,9 @@ void main() {
 
     await tester.pumpWidget(
       GetMaterialApp(
-        home: const DesktopPlaybackLaunch(request: DesktopPlaybackRequest.live(1)),
+        home: const DesktopPlaybackLaunch(
+          request: DesktopPlaybackRequest.live(1),
+        ),
         getPages: [
           GetPage(
             name: '/liveRoom',
@@ -39,6 +41,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(calls, containsAllInOrder(['show', 'focus']));
     expect(Get.currentRoute, '/liveRoom');
+    expect(Get.arguments, 1);
+    expect(Get.key.currentState!.canPop(), isFalse);
     expect(find.text('加载中...'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
