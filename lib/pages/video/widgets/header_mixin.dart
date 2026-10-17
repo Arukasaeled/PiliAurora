@@ -427,8 +427,10 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
         ];
 
         List<Widget> motion() => [
-          frameRate(),
-          const SizedBox(height: 12),
+          if (!isLive) ...[
+            frameRate(),
+            const SizedBox(height: 12),
+          ],
           Wrap(
             spacing: 8,
             runSpacing: 4,
