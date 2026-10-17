@@ -753,9 +753,12 @@ class VideoDetailController extends GetxController
     final result = await plPlayerController.loadPlaybackPlan(
       owner: playbackOwner,
       plan: plan,
-      start: autoplay == null
+      // 新页面按自动播放偏好起播；同一内容重载沿用会话意图。
+      start:
+          autoplay == null &&
+              plPlayerController.currentPlaybackContentKey == plan.contentKey
           ? PlaybackStartPolicy.preserve
-          : autoplay
+          : (autoplay ?? _autoPlay.value)
           ? PlaybackStartPolicy.play
           : PlaybackStartPolicy.pause,
       live: false,
