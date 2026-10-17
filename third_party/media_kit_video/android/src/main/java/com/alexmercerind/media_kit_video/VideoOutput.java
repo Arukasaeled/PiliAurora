@@ -269,22 +269,18 @@ public class VideoOutput {
             completeDispose(initialFailure);
             return;
         }
-        // Keep the Java global reference until the same conservative delay used
-        // by the previous implementation, and report completion only after JNI.
-        final boolean posted = mainHandler.postDelayed(() -> {
-            Throwable failure = initialFailure;
-            try {
-                deleteGlobalObjectRef.invoke(null, wid);
-                Log.i("media_kit", String.format(Locale.ENGLISH,
-                        "com.alexmercerind.mediakitandroidhelper.MediaKitAndroidHelper.deleteGlobalObjectRef: %d", wid));
-                wid = 0;
-            } catch (Throwable e) {
-                diagnostic("surface.native-error", e);
-                if (failure == null) failure = e;
-            }
-            completeDispose(failure);
-        }, 5000);
-        if (!posted) completeDispose(new IllegalStateException("Could not schedule Java Surface reference release"));
+        // Dart 已同步解除 mpv 的 VO/wid；以实际 JNI 删除结果作为释放回执。
+        Throwable failure = initialFailure;
+        try {
+            deleteGlobalObjectRef.invoke(null, wid);
+            Log.i("media_kit", String.format(Locale.ENGLISH,
+                    "com.alexmercerind.mediakitandroidhelper.MediaKitAndroidHelper.deleteGlobalObjectRef: %d", wid));
+            wid = 0;
+        } catch (Throwable e) {
+            diagnostic("surface.native-error", e);
+            if (failure == null) failure = e;
+        }
+        completeDispose(failure);
     }
 
     private void completeDispose(Throwable error) {

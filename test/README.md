@@ -23,6 +23,8 @@
 
 `plugin/pl_player/playback/video_frame_timings_test.dart` 覆盖刷新请求与消费批次交错、独立的消费证据和新加载首帧状态；`plugin/pl_player/android/preloaded_surface_test.dart` 使用实际 Android 输出控制器与模拟平台通道，检查临时 Surface 的解码前挂载、FILE_LOADED 几何确认及同尺寸输出复用。
 
+`preloaded_surface_test.dart` 还覆盖 preloaded 时 selected=false、FILE_LOADED 选轨确认和 VO/wid 解绑到原生释放回执的顺序；`tool/run-native-probes.ps1` 的释放探针运行生产 Java 释放方法，检查无固定延迟、幂等回执及 JNI 删除失败。
+
 CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dart` 供相位测试和帧率矩阵共用请求时间换算；Android 模型把目标帧时钟领先和视频驱动 Dart 帧绑定在一起，隔离模型用于检查 ticker 自行唤醒。`frame_rate_diagnostics_test.dart` 检查实际更新、请求和定时器累计计数、单调时间及停止后的释放；相位测试同时检查稳定锁相状态。
 
 同一组件的场景集中在对应文件，播放图标测试位于 `common/widgets/svg/play_icon_test.dart`，诊断记录存储及突发写入位于 `services/diagnostics/record_store_test.dart`。页面测试与服务测试分开组织；`pages/danmaku/windows_screen_test.dart` 覆盖 screen 的时钟、预热和 widget 重建行为。

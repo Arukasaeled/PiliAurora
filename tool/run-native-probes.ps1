@@ -54,4 +54,6 @@ foreach ($probe in @('SurfaceFrameFenceProbe', 'VideoFrameSamplesProbe', 'Output
     & $javaPath -cp $outputPath "com.alexmercerind.media_kit_video.$probe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
-Write-Host 'Android host probes completed successfully (6 probes).'
+& python (Join-Path $probeRoot 'video_output_release_probe.py')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host 'Android host probes completed successfully (7 probes).'

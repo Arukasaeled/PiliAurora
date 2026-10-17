@@ -467,6 +467,8 @@ class AndroidVideoController extends PlatformVideoController {
         return unknown(OutputLoadSelectionEvidence.outputMutationUnconfirmed);
       }
     }
+    // on_preloaded 在 mpv 选轨之前运行；vid 写入成功不会立即改变 selected。
+    // 此处确认唯一候选仍存在，实际选中轨道由 FILE_LOADED 再核对。
     final List<NativeVideoTrackMetadata> selectedTracks;
     try {
       selectedTracks = request.nativeApi.readVideoTracks();
@@ -474,8 +476,7 @@ class AndroidVideoController extends PlatformVideoController {
       return unknown(OutputLoadSelectionEvidence.unknown);
     }
     if (selectedTracks.length != 1 ||
-        selectedTracks.single.id != allowedTrackId ||
-        selectedTracks.single.selected != true) {
+        selectedTracks.single.id != allowedTrackId) {
       return unknown(OutputLoadSelectionEvidence.trackSelectionUnconfirmed);
     }
     final track = selectedTracks.single;
@@ -1046,6 +1047,9 @@ class AndroidVideoController extends PlatformVideoController {
     await cancelAndroidSurfaceFrameWait(player);
     // Dispose the [StreamSubscription]s.
     await _subscription?.cancel();
+    // 同步解除 mpv 对 Java Surface 的引用，再允许原生层删除 JNI 全局引用。
+    player.setOption('vo', 'null');
+    player.setOption('wid', '0');
     // Release the native resources.
     final handle = player.handle;
     await _channel.invokeMethod('VideoOutputManager.Dispose', {

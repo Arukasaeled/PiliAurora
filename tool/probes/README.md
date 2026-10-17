@@ -68,7 +68,7 @@ uv run --locked python tool/probes/android/paused_rotation_probe.py --adb <adb�
 
 ## Android 主机帧调度探针
 
-准备项目依赖和 PATH 中的 JDK 25 后运行：
+准备项目依赖、PATH 中的 JDK 25 与 Python 3 后运行：
 
 ```powershell
 pwsh -NoProfile -File tool/run-native-probes.ps1
@@ -82,6 +82,8 @@ pwsh -NoProfile -File tool/run-native-probes.ps1
 - `VideoSurfaceTextureProbe`：生产 listener 完成后采样、回调转发、Handler、注销和消费确认。
 - `VideoSurfaceTextureRequestProbe`：真实 Flutter wrapper 的 monitor 竞争，交替 0/9ms 取图锁等待计入请求样本。
 - `VideoSurfaceTextureAcquireProbe`：30 FPS 视频叠加 120 FPS 重绘时取图 30 次，并检查暂停恢复、通知合并、异常重试、关闭采样和上下文重建；请求探针另检查取图期间的新通知不会丢失。
+
+入口随后运行 `android/video_output_release_probe.py`：从生产 `VideoOutput.java` 提取释放及回执方法，编译到主机 JVM 夹具，检查 JNI 删除后的即时回执、重复释放、无引用输出和 JNI 删除失败。该探针使用 Python 标准库，产物在 `build/probe-validation/android-release/`；它不执行真实 JNI 或 GPU。
 
 缺失 SDK 源码、编译或断言失败均返回非零退出码；产物留在 `build/probe-validation/android/`。Android 桩位于探针目录，不加入生产编译。探针不创建 GL、原生 Surface 或真实消息循环，也未模拟 platform/UI 合并线程的全部行为。采样顺序与 monitor 等待由主机检查，平台 API 由 Android 构建检查，实际 Scene 与呈现由目标设备检查。
 
