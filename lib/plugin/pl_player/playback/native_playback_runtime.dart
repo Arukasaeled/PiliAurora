@@ -1287,6 +1287,39 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         _completeUnknownOutput(pending, attached.evidence.name);
         return;
       }
+      var outputWidth =
+          attached.geometry?.width ?? confirmation.geometry?.width;
+      var outputHeight =
+          attached.geometry?.height ?? confirmation.geometry?.height;
+      if (Platform.isWindows) {
+        final target = VideoOutputSizePolicy.fitWithinLimit(
+          source: VideoOutputSizePolicy.videoDisplaySize(
+            VideoParams(
+              dw:
+                  videoOutputParameters?.displayWidth ??
+                  videoOutputParameters?.width,
+              dh:
+                  videoOutputParameters?.displayHeight ??
+                  videoOutputParameters?.height,
+              rotate: videoOutputParameters?.rotation,
+            ),
+          ),
+          limit: WindowsVideoOutputLimit.detected,
+        );
+        if (target != null) {
+          // 在暂停加载阶段完成限幅，页面挂载后直接播放最终尺寸的纹理。
+          await output
+              .setSize(width: target.width, height: target.height)
+              ?.timeout(_remaining(pending.context));
+          if (!pending.context.isCurrent() ||
+              !identical(_pendingLoad, pending)) {
+            _completeUnknownOutput(pending, 'output-size-expired');
+            return;
+          }
+          outputWidth = target.width;
+          outputHeight = target.height;
+        }
+      }
       _completeOutput(
         pending,
         PlaybackOutputPreparation(
@@ -1295,8 +1328,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
               '$selectionEvidence+'
               '${confirmation.evidence.name}+${attached.evidence.name}',
           outputEpoch: attached.outputEpoch,
-          width: attached.geometry?.width ?? confirmation.geometry?.width,
-          height: attached.geometry?.height ?? confirmation.geometry?.height,
+          width: outputWidth,
+          height: outputHeight,
           hasVideo: true,
         ),
       );
