@@ -34,6 +34,10 @@ Future<void> main() async {
   final skipRapid = config['skipRapid'] == true;
   final rapidOnly = config['rapidOnly'] == true;
   final diagnosticReplayOnly = config['diagnosticReplayOnly'] == true;
+  final switchSources = (config['switchSources'] as List?)?.cast<String>();
+  final switchOnly = switchSources != null;
+  final mountAfterLoad = config['mountAfterLoad'] == true;
+  var canMount = !mountAfterLoad;
   final soakSeconds = config['soakSeconds'] as int? ?? defaultSoakSeconds;
   final decoder =
       config['decoder'] as String? ??
@@ -97,7 +101,7 @@ Future<void> main() async {
         boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
     final image = await render.toImage();
     final bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
-    var low = 255, high = 0;
+    var low = 255, high = 0, fingerprint = 0;
     for (var y = 20; y < image.height - 20; y += 4) {
       for (var x = 20; x < image.width - 20; x += 4) {
         final offset = (y * image.width + x) * 4;
@@ -108,17 +112,24 @@ Future<void> main() async {
             3;
         if (value < low) low = value;
         if (value > high) high = value;
+        fingerprint = (fingerprint * 31 + value) & 0x7fffffff;
       }
     }
     image.dispose();
     check(high - low > 40, 'texture pixels have insufficient contrast');
-    return {'low': low, 'high': high};
+    return {'low': low, 'high': high, 'fingerprint': fingerprint};
   }
 
   Future<void> test(
     String name,
     Future<Map<String, Object?>> Function() body,
   ) async {
+    if (switchOnly &&
+        name != 'paused-load' &&
+        name != 'shutdown-released' &&
+        !name.startsWith('switch-')) {
+      return;
+    }
     if (diagnosticReplayOnly &&
         !{
           'paused-load',
@@ -162,15 +173,15 @@ Future<void> main() async {
 
   PlaybackPlan plan({String? sound, bool live = false, String? source}) =>
       PlaybackPlan(
-        contentKey: live ? 'fixture-live-policy' : 'fixture',
+        contentKey: live || switchOnly ? 'fixture-live-policy' : 'fixture',
         source: PlaybackSourceSnapshot.fromDataSource(
           NetworkSource(videoSource: source ?? media, audioSource: sound),
         ),
         timeline: PlaybackTimeline(
-          kind: live
+          kind: live || switchOnly
               ? PlaybackTimelineKind.live
               : PlaybackTimelineKind.onDemand,
-          seekPolicy: live
+          seekPolicy: live || switchOnly
               ? PlaybackSeekPolicy.disabled
               : PlaybackSeekPolicy.allowed,
         ),
@@ -203,6 +214,7 @@ Future<void> main() async {
   });
   final owner = session.attach();
   final mount = Timer.periodic(const Duration(milliseconds: 20), (_) {
+    if (!canMount) return;
     if (display.value != runtime.videoController) {
       display.value = runtime.videoController;
     }
@@ -210,6 +222,7 @@ Future<void> main() async {
   double? property(String key) =>
       double.tryParse(runtime.player!.getProperty(key));
   Future<Map<String, Object?>> advancing() async {
+    final beforePixels = switchOnly ? await pixels() : null;
     final before = property('time-pos');
     final audioBefore = property('audio-pts');
     await Future<void>.delayed(const Duration(seconds: 2));
@@ -225,6 +238,13 @@ Future<void> main() async {
         'audio timeline stopped',
       );
     }
+    final afterPixels = await pixels();
+    if (beforePixels != null) {
+      check(
+        beforePixels['fingerprint'] != afterPixels['fingerprint'],
+        'texture image stopped while timeline advanced',
+      );
+    }
     return {
       'positionDelta': after! - before!,
       'audioDelta': audioBefore == null || audioAfter == null
@@ -232,7 +252,7 @@ Future<void> main() async {
           : audioAfter - audioBefore,
       'decoder': runtime.player!.getProperty('hwdec-current'),
       'codec': runtime.player!.getProperty('video-codec'),
-      ...await pixels(),
+      ...afterPixels,
     };
   }
 
@@ -246,6 +266,7 @@ Future<void> main() async {
         'cause': result.failure?.cause,
       };
       check(result.outcome == LoadOutcome.ready, 'load failed');
+      canMount = true;
       check(!runtime.player!.state.playing, 'pause intent lost');
       return {
         'outcome': result.outcome.name,
@@ -254,6 +275,31 @@ Future<void> main() async {
         'loadId': session.loadId,
       };
     });
+    if (switchSources != null) {
+      await owner.setPlaying(true);
+      for (var index = 0; index < switchSources.length; index++) {
+        await test('switch-$index', () async {
+          if (Platform.isWindows) {
+            await windowManager.setSize(
+              index.isEven ? const Size(640, 400) : const Size(320, 180),
+            );
+          }
+          final loaded = await owner.load(
+            plan(source: switchSources[index]),
+            start: PlaybackStartPolicy.preserve,
+          );
+          check(loaded.outcome == LoadOutcome.ready, 'stream switch failed');
+          await waitFor(
+            () => runtime.player!.state.position.inMilliseconds > 500,
+          );
+          return {
+            'outcome': loaded.outcome.name,
+            'loadId': session.loadId,
+            ...await advancing(),
+          };
+        });
+      }
+    }
     if (diagnosticReplayOnly) {
       await test('recoverable-log-replay', () async {
         await owner.setPlaying(true);

@@ -253,6 +253,42 @@ debug 包的内部 `cache/`，并同步修改构建参数中的路径。
 不存在的本地文件，要求带文件身份的原生 end-file error 在 5 秒内返回失败，并验证再次加载可用。
 该模式回放错误通知的处理路径，网络包损坏及设备解码错误仍需相应媒体和设备复验。
 
+设置 `{"mountAfterLoad": true, "switchSources": ["http://127.0.0.1:8765/live.flv", "http://127.0.0.1:8765/live.m3u8"]}`
+可检查加载完成后才挂载视频控件、连续切换来源及 Windows 窗口大小变化。该模式使用直播时间线，
+运行初次暂停加载、清单中每一次切换和资源释放；除音视频时间推进外，还要求两次纹理采样的
+指纹不同。样片需持续运动并含音轨，静态画面不适用于运动断言。HTTP 服务由运行者准备，
+签名地址保存在本地配置中。这里的候选切换不经过直播页面的线路选择逻辑。
+
+## Windows 独立播放窗口验收
+
+`playback/desktop_window_acceptance.dart` 使用生产 IPC、子进程启动、播放页面和原生纹理，
+检查小窗画面持续更新、启动 ready 回执，以及视频暂停后重载保持暂停。
+主进程在报告目录的 `window-host/` 创建独立空账号存储和样片副本，不读取当前应用账号。
+使用持续运动、含音轨且超过 20 秒的 MP4 样片：
+
+```powershell
+fvm flutter build windows --debug --no-pub --target tool/probes/playback/desktop_window_acceptance.dart --dart-define=WINDOW_PROBE_MEDIA=E:/media/fixture.mp4 --dart-define=WINDOW_PROBE_REPORT=E:/Code/project/PiliAurora/build/window-validation/window.json
+& build/windows/x64/runner/Debug/PiliAurora.exe
+```
+
+默认验证本地下载视频。在线视频可在 `<报告路径>.config.json` 中设置
+`{"onlineBase": "http://127.0.0.1:8765"}`，并在另一终端从报告目录启动本地 HTTP 服务：
+
+```powershell
+python -m http.server 8765 --bind 127.0.0.1 --directory build/window-validation
+```
+
+探针替换 Dio 的业务 API 响应，让生产页面查询本地 HTTP 视频；媒体下载仍由原生播放器执行。
+简单 HTTP 服务需使用 faststart MP4，可通过 FFmpeg 的 `-c copy -movflags +faststart` 准备。
+
+设置 `{"liveBase": "http://127.0.0.1:8765", "lineSwitchOnly": true}` 可验证直播页面的六次线路切换。
+服务根目录须提供 H.264/AAC `live.flv` 和 fMP4 HLS `live.m3u8` 及其分片；省略
+`lineSwitchOnly` 时交替切换 FLV/HLS。候选线路使用同一本地服务的不同查询参数，
+不覆盖远端 CDN 差异、断流或真实直播时间戳异常。
+
+报告记录会话、页面挂载、解码器和纹理像素摘要；子进程额外生成 `<报告路径>.child.json`。
+这些检查不代表发布版切换耗时、扬声器声音或真实网站接口验收。完成后恢复默认应用入口。
+
 ## Windows 超分切换探针
 
 `playback/session_paused_load.dart` 通过生产 `PlaybackSession` 和
