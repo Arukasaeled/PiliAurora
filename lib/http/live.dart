@@ -19,6 +19,7 @@ import 'package:pili_aurora/models/remote/live/live_emote/data.dart';
 import 'package:pili_aurora/models/remote/live/live_emote/datum.dart';
 import 'package:pili_aurora/models/remote/live/live_feed_index/data.dart';
 import 'package:pili_aurora/models/remote/live/live_follow/data.dart';
+import 'package:pili_aurora/models/remote/live/live_guard_top_list/data.dart';
 import 'package:pili_aurora/models/remote/live/live_medal_wall/data.dart';
 import 'package:pili_aurora/models/remote/live/live_room_info_h5/data.dart';
 import 'package:pili_aurora/models/remote/live/live_room_play_info/data.dart';
@@ -702,6 +703,30 @@ abstract final class LiveHttp {
     if (res.data['code'] == 0) {
       try {
         return Success(LiveContributionRankData.fromJson(res.data['data']));
+      } catch (e, s) {
+        return Error('$e\n\n$s');
+      }
+    } else {
+      return Error(res.data['message']);
+    }
+  }
+
+  static Future<LoadingState<LiveGuardTopListData>> liveGuardTopList({
+    required Object roomId,
+    required Object ruid,
+  }) async {
+    final res = await Request().get(
+      Api.liveGuardTopList,
+      queryParameters: {
+        'roomid': roomId,
+        'ruid': ruid,
+        'page': 1,
+        'page_size': 10,
+      },
+    );
+    if (res.data['code'] == 0) {
+      try {
+        return Success(LiveGuardTopListData.fromJson(res.data['data']));
       } catch (e, s) {
         return Error('$e\n\n$s');
       }

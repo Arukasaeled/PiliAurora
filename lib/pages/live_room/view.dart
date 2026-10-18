@@ -31,6 +31,7 @@ import 'package:pili_aurora/pages/live_room/superchat/superchat_card.dart';
 import 'package:pili_aurora/pages/live_room/superchat/superchat_panel.dart';
 import 'package:pili_aurora/pages/live_room/widgets/bottom_control.dart';
 import 'package:pili_aurora/pages/live_room/widgets/chat_panel.dart';
+import 'package:pili_aurora/pages/live_room/widgets/desktop_sidebar.dart';
 import 'package:pili_aurora/pages/live_room/widgets/header_control.dart';
 import 'package:pili_aurora/pages/video/widgets/player_focus.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
@@ -84,6 +85,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
   late final GlobalKey chatKey = GlobalKey();
   late final GlobalKey scKey = GlobalKey();
   late final GlobalKey playerKey = GlobalKey();
+  late final GlobalKey desktopSidebarKey = GlobalKey();
 
   @override
   void initState() {
@@ -743,7 +745,21 @@ class _LiveRoomPageState extends State<LiveRoomPage>
             child: SizedBox(
               width: rightWidth,
               height: videoHeight,
-              child: _buildBottomWidget,
+              child: DesktopLiveSidebar(
+                key: desktopSidebarKey,
+                roomId: _liveRoomController.roomId,
+                anchorUid: _liveRoomController.roomInfoH5.value?.roomInfo?.uid,
+                anchorName: _liveRoomController
+                    .roomInfoH5
+                    .value
+                    ?.anchorInfo
+                    ?.baseInfo
+                    ?.uname,
+                liveRoomController: _liveRoomController,
+                chat: _buildChatWidget(),
+                input: _buildInputWidget,
+                onShowRank: _showRank,
+              ),
             ),
           ),
         ],
