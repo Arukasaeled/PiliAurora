@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:get/get.dart';
+import 'package:pili_aurora/common/widgets/app_popup_menu_item.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/services/desktop_playback_layout.dart';
 import 'package:pili_aurora/services/desktop_playback_windows.dart';
@@ -34,24 +35,24 @@ class DesktopPlaybackMenu extends StatelessWidget {
       },
       itemBuilder: (_) => [
         if (!DesktopPlaybackWindows.isPlayerWindow)
-          PopupMenuItem(
+          AppPopupMenuItem(
             value: 'open',
             enabled: !controller.openingDesktopWindow,
             child: const Text('弹出为独立小窗'),
           ),
-        const PopupMenuItem(value: 'solo', child: Text('只听这个窗口')),
-        PopupMenuItem(
+        const AppPopupMenuItem(value: 'solo', child: Text('只听这个窗口')),
+        AppPopupMenuItem(
           value: 'grid',
           enabled: DesktopPlaybackWindows.instance.canArrange,
           child: const Text('网格排列播放窗口'),
         ),
-        PopupMenuItem(
+        AppPopupMenuItem(
           value: 'cascade',
           enabled: DesktopPlaybackWindows.instance.canArrange,
           child: const Text('层叠排列播放窗口'),
         ),
         if (DesktopPlaybackWindows.isPlayerWindow)
-          const PopupMenuItem(value: 'close', child: Text('关闭播放窗口')),
+          const AppPopupMenuItem(value: 'close', child: Text('关闭播放窗口')),
       ],
       child: Obx(
         () => SizedBox(

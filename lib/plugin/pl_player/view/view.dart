@@ -7,6 +7,7 @@ import 'package:pili_aurora/utils/volume_utils.dart';
 import 'package:pili_aurora/common/constants.dart';
 import 'package:pili_aurora/common/style.dart';
 import 'package:pili_aurora/common/widgets/cropped_image.dart';
+import 'package:pili_aurora/common/widgets/app_popup_menu_item.dart';
 import 'package:pili_aurora/common/widgets/custom_icon.dart';
 import 'package:pili_aurora/common/widgets/disabled_icon.dart';
 import 'package:pili_aurora/common/widgets/gesture/immediate_tap_gesture_recognizer.dart';
@@ -591,15 +592,15 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
               itemBuilder: (context) {
                 return SuperResolutionType.values
                     .map(
-                      (type) => PopupMenuItem<SuperResolutionType>(
+                      (option) => AppPopupMenuItem<SuperResolutionType>(
                         height: 35,
-                        padding: const EdgeInsets.only(left: 30),
-                        value: type,
+                        value: option,
                         enabled:
-                            type == SuperResolutionType.disable || canEnable,
-                        onTap: () => plPlayerController.setShader(type),
+                            option == SuperResolutionType.disable || canEnable,
+                        selected: option == type,
+                        onTap: () => plPlayerController.setShader(option),
                         child: Text(
-                          type.label,
+                          option.label,
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
@@ -717,10 +718,10 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
             itemBuilder: (context) {
               return VideoFitType.values
                   .map(
-                    (boxFit) => PopupMenuItem<VideoFitType>(
+                    (boxFit) => AppPopupMenuItem<VideoFitType>(
                       height: 35,
-                      padding: const EdgeInsets.only(left: 30),
                       value: boxFit,
+                      selected: boxFit == fit,
                       onTap: () => plPlayerController.toggleVideoFit(boxFit),
                       child: Text(
                         boxFit.desc,
@@ -751,18 +752,21 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
               initialValue: videoDetailController.currLang.value,
               onSelected: videoDetailController.setLanguage,
               itemBuilder: (context) => [
-                const PopupMenuItem<String>(
+                AppPopupMenuItem<String>(
                   height: 35,
                   value: '',
-                  child: Text(
+                  selected:
+                      (videoDetailController.currLang.value ?? '').isEmpty,
+                  child: const Text(
                     "关闭翻译",
                     style: TextStyle(fontSize: 13),
                   ),
                 ),
                 ...list.map(
-                  (e) => PopupMenuItem<String>(
+                  (e) => AppPopupMenuItem<String>(
                     height: 35,
                     value: e.lang,
+                    selected: videoDetailController.currLang.value == e.lang,
                     child: Text(
                       e.title!,
                       style: const TextStyle(fontSize: 13),
@@ -796,9 +800,10 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
               initialValue: val,
               itemBuilder: (context) {
                 return [
-                  PopupMenuItem<int>(
+                  AppPopupMenuItem<int>(
                     value: 0,
                     height: 35,
+                    selected: val == 0,
                     onTap: () => videoDetailController.setSubtitle(0),
                     child: const Text(
                       "关闭字幕",
@@ -806,9 +811,10 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                     ),
                   ),
                   ...videoDetailController.subtitles.mapIndexed((i, e) {
-                    return PopupMenuItem<int>(
+                    return AppPopupMenuItem<int>(
                       value: i + 1,
                       height: 35,
+                      selected: val == i + 1,
                       onTap: () => videoDetailController.setSubtitle(i + 1),
                       child: Text(
                         e.lanDoc ?? e.lan,
@@ -850,10 +856,10 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
           itemBuilder: (context) {
             return plPlayerController.speedList
                 .map(
-                  (double speed) => PopupMenuItem<double>(
+                  (double speed) => AppPopupMenuItem<double>(
                     height: 35,
-                    padding: const EdgeInsets.only(left: 30),
                     value: speed,
+                    selected: speed == plPlayerController.playbackSpeed,
                     onTap: () => plPlayerController.setPlaybackSpeed(speed),
                     child: Text(
                       "${speed}X",
@@ -898,11 +904,11 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                 (index) {
                   final item = videoFormat[index];
                   final enabled = availableQa.contains(item.quality);
-                  return PopupMenuItem<int>(
+                  return AppPopupMenuItem<int>(
                     enabled: enabled,
                     height: 35,
-                    padding: const EdgeInsets.only(left: 15, right: 10),
                     value: item.quality,
+                    selected: currentVideoQa.code == item.quality,
                     onTap: () async {
                       if (currentVideoQa.code == item.quality) {
                         return;

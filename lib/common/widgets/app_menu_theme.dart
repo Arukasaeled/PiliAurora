@@ -2,9 +2,10 @@ import 'package:material_ui/material_ui.dart';
 
 /// 全局菜单表面与选择字段的共用视觉参数。
 abstract final class AppMenuTheme {
-  static const double menuRadius = 12;
-  static const double menuPadding = 5;
-  static const double itemRadius = 8;
+  static const double menuRadius = 16;
+  static const double menuPadding = 6;
+  // 内项圆角按外圆角收进一个 padding，保证两层弧线同心。
+  static const double itemRadius = menuRadius - menuPadding;
   static const double itemHeight = 37;
   static const double selectWidth = 128;
   static const double selectMenuWidth = 252;

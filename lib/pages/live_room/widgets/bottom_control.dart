@@ -1,4 +1,5 @@
 import 'package:pili_aurora/common/widgets/custom_icon.dart';
+import 'package:pili_aurora/common/widgets/app_popup_menu_item.dart';
 import 'package:pili_aurora/common/widgets/player_bar.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/video/widgets/header_mixin.dart';
@@ -158,10 +159,11 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
                     itemBuilder: (context) {
                       return VideoFitType.values
                           .map(
-                            (boxFit) => PopupMenuItem<VideoFitType>(
+                            (boxFit) => AppPopupMenuItem<VideoFitType>(
                               height: 35,
-                              padding: const EdgeInsets.only(left: 30),
                               value: boxFit,
+                              selected:
+                                  boxFit == plPlayerController.videoFit.value,
                               onTap: () =>
                                   plPlayerController.toggleVideoFit(boxFit),
                               child: Text(
@@ -192,10 +194,10 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
                     itemBuilder: (context) {
                       return liveRoomCtr.acceptQnList
                           .map(
-                            (e) => PopupMenuItem<int>(
+                            (e) => AppPopupMenuItem<int>(
                               height: 35,
-                              padding: const EdgeInsets.only(left: 30),
                               value: e.code,
+                              selected: e.code == liveRoomCtr.currentQn,
                               onTap: () => liveRoomCtr.changeQn(e.code),
                               child: Text(
                                 e.desc,
