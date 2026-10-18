@@ -166,10 +166,7 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
                                   plPlayerController.toggleVideoFit(boxFit),
                               child: Text(
                                 boxFit.desc,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                ),
+                                style: const TextStyle(fontSize: 13),
                               ),
                             ),
                           )
@@ -202,10 +199,7 @@ class _BottomControlState extends State<BottomControl> with HeaderMixin {
                               onTap: () => liveRoomCtr.changeQn(e.code),
                               child: Text(
                                 e.desc,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                ),
+                                style: const TextStyle(fontSize: 13),
                               ),
                             ),
                           )

@@ -600,13 +600,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                         onTap: () => plPlayerController.setShader(type),
                         child: Text(
                           type.label,
-                          style: TextStyle(
-                            color:
-                                type == SuperResolutionType.disable || canEnable
-                                ? Colors.white
-                                : Colors.white38,
-                            fontSize: 13,
-                          ),
+                          style: const TextStyle(fontSize: 13),
                         ),
                       ),
                     )
@@ -730,10 +724,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                       onTap: () => plPlayerController.toggleVideoFit(boxFit),
                       child: Text(
                         boxFit.desc,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
+                        style: const TextStyle(fontSize: 13),
                       ),
                     ),
                   )
@@ -765,7 +756,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                   value: '',
                   child: Text(
                     "关闭翻译",
-                    style: TextStyle(color: Colors.white, fontSize: 13),
+                    style: TextStyle(fontSize: 13),
                   ),
                 ),
                 ...list.map(
@@ -774,7 +765,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                     value: e.lang,
                     child: Text(
                       e.title!,
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      style: const TextStyle(fontSize: 13),
                     ),
                   ),
                 ),
@@ -811,10 +802,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                     onTap: () => videoDetailController.setSubtitle(0),
                     child: const Text(
                       "关闭字幕",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                      ),
+                      style: TextStyle(fontSize: 13),
                     ),
                   ),
                   ...videoDetailController.subtitles.mapIndexed((i, e) {
@@ -826,7 +814,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                         e.lanDoc ?? e.lan,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const .new(color: Colors.white, fontSize: 13),
+                        style: const TextStyle(fontSize: 13),
                       ),
                     );
                   }),
@@ -869,7 +857,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                     onTap: () => plPlayerController.setPlaybackSpeed(speed),
                     child: Text(
                       "${speed}X",
-                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      style: const TextStyle(fontSize: 13),
                       semanticsLabel: "$speed倍速",
                     ),
                   ),
@@ -940,12 +928,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                     },
                     child: Text(
                       item.newDesc ?? '',
-                      style: enabled
-                          ? const TextStyle(color: Colors.white, fontSize: 13)
-                          : const TextStyle(
-                              color: Color(0x62FFFFFF),
-                              fontSize: 13,
-                            ),
+                      style: const TextStyle(fontSize: 13),
                     ),
                   );
                 },
