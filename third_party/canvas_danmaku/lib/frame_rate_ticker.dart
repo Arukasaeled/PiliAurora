@@ -30,6 +30,7 @@ class FrameRateTicker extends Ticker {
   int? _callbackId;
   int _frameStartedAt = 0;
   Duration? _origin;
+  // 接受本次更新时才提交下一截止；唤醒重排不改变尚未完成的更新。
   Duration? _nextFrameTime;
   int? _nativeAnchor;
   int? _nativePeriod;
@@ -37,9 +38,13 @@ class FrameRateTicker extends Ticker {
   int? _nativeScreenPeriod;
   int _syncExpires = 0;
   bool _observing = false;
-  Duration? _externalFrame;
-  int _externalMatches = 0;
-  bool _externalPhaseAdopted = false;
+  int _slot = 0;
+  int? _slotPeriod;
+  int? _previousSlotFrameUs;
+  double? _nextUpdateSlot;
+  int? _scheduledUpdateSlot;
+  double? _cadencePhase;
+  double? _cadencePhasePeriod;
   Duration _lastFrame = Duration.zero;
   Duration _lastSystemFrame = Duration.zero;
   ValueListenable<List<int>>? _videoFrameTimings;
@@ -48,6 +53,14 @@ class FrameRateTicker extends Ticker {
   int _updates = 0;
   int _frameRequests = 0;
   int _timerWakeups = 0;
+  int _frameCallbacks = 0;
+  int _deadlineSkips = 0;
+  int? _previousUpdateFrameUs;
+  int _maxUpdateGapUs = 0;
+  int _longUpdateGaps = 0;
+  // 各桶互斥，边界单位为微秒；快照差分可查看短窗口的间隔分布。
+  static const _gapBoundsUs = [10000, 20000, 30000, 40000, 60000, 100000];
+  final _updateGapBuckets = List<int>.filled(_gapBoundsUs.length + 1, 0);
   int? _lastUpdate;
   int? _lastFrameRequest;
 
@@ -72,6 +85,15 @@ class FrameRateTicker extends Ticker {
         'updates': _updates,
         'frameRequests': _frameRequests,
         'timerWakeups': _timerWakeups,
+        'frameCallbacks': _frameCallbacks,
+        'deadlineSkips': _deadlineSkips,
+        'maxUpdateGapUs': _maxUpdateGapUs,
+        'longUpdateGaps': _longUpdateGaps,
+        'updateGapBuckets': {
+          for (var i = 0; i < _gapBoundsUs.length; i++)
+            'le${_gapBoundsUs[i]}': _updateGapBuckets[i],
+          'gt${_gapBoundsUs.last}': _updateGapBuckets.last,
+        },
         'lastUpdateMonotonicUs': _lastUpdate,
         'lastFrameRequestMonotonicUs': _lastFrameRequest,
       };
@@ -114,6 +136,8 @@ class FrameRateTicker extends Ticker {
     _stableIntervals = 0;
     _nativeScreenPeriod = null;
     _syncExpires = 0;
+    _cadencePhase = null;
+    _cadencePhasePeriod = null;
   }
 
   void _onVideoFrames() {
@@ -189,8 +213,20 @@ class FrameRateTicker extends Ticker {
       (_screenRate != null &&
           _frameRate >= _screenRate! - _refreshRateTolerance);
 
+  int? get _screenDivisor {
+    final rate = _screenRate;
+    if (rate == null || _frameRate <= 0) return null;
+    final divisor = (rate / _frameRate).round();
+    return divisor >= 1 &&
+            (rate - _frameRate * divisor).abs() <= _refreshRateTolerance
+        ? divisor
+        : null;
+  }
+
   int get _frameInterval {
     if (_followVsync && _screenRate != null) return _screenPeriod;
+    final divisor = _screenDivisor;
+    if (divisor != null) return divisor * _screenPeriod;
     final requested = (1000000 / _frameRate).floor();
     if (_screenRate == null) return requested;
     final screen = _screenPeriod;
@@ -225,54 +261,105 @@ class FrameRateTicker extends Ticker {
     }
   }
 
+  void _resetSlots() {
+    _slot = 0;
+    _slotPeriod = null;
+    _previousSlotFrameUs = null;
+    _nextUpdateSlot = null;
+    _scheduledUpdateSlot = null;
+    _cadencePhase = null;
+    _cadencePhasePeriod = null;
+  }
+
+  void _trackSlots() {
+    final period = _screenRate == null ? null : _screenPeriod;
+    if (period != _slotPeriod) {
+      _resetSlots();
+      _slotPeriod = period;
+      _nextFrameTime = null;
+    }
+    if (period == null) return;
+    final frame = _lastSystemFrame.inMicroseconds;
+    final previous = _previousSlotFrameUs;
+    if (previous != null && frame > previous) {
+      // 用相邻 vsync 的距离数槽位，微小周期漂移不会积累到下一次截止。
+      _slot += ((frame - previous) / period).round();
+    }
+    _previousSlotFrameUs = frame;
+  }
+
+  void _planNextUpdate(Duration timestamp) {
+    final screen = _slotPeriod;
+    if (screen == null) {
+      if (_frameRate <= 0) return;
+      final interval = Duration(microseconds: _frameInterval);
+      final next = (_nextFrameTime ?? timestamp) + interval;
+      _nextFrameTime = next <= timestamp ? timestamp + interval : next;
+      return;
+    }
+    final interval = _followVsync
+        ? 1.0
+        : _screenDivisor?.toDouble() ?? _screenRate! / _frameRate;
+    final period = _followVsync ? null : _syncPeriod;
+    final anchor = period == null
+        ? null
+        : _slot +
+            (_nativeAnchor! + screen - _lastSystemFrame.inMicroseconds) /
+                screen;
+    final phasePeriod = period == null ? null : period / screen;
+    if (anchor != null && phasePeriod != null) {
+      final previous = _cadencePhase;
+      final offset = previous == null
+          ? 0.0
+          : anchor -
+              previous -
+              ((anchor - previous) / phasePeriod).round() * phasePeriod;
+      if (previous == null ||
+          (phasePeriod - _cadencePhasePeriod!).abs() > 0.1 ||
+          offset.abs() > 0.5) {
+        // 视频跨到另一屏幕相位时重新建立一次预算；批次内的小幅波动沿用原预算。
+        _nextUpdateSlot = null;
+        _cadencePhase = anchor;
+        _cadencePhasePeriod = phasePeriod;
+      }
+    }
+    var next = (_nextUpdateSlot ?? _slot.toDouble()) + interval;
+    if (next <= _slot) next = _slot + interval;
+    _nextUpdateSlot = next;
+    final latest = _slot + interval.ceil();
+    var scheduled = next.round().clamp(_slot + 1, latest);
+    if (anchor != null && phasePeriod != null) {
+      var aligned =
+          (anchor + ((next - anchor) / phasePeriod).round() * phasePeriod)
+              .round();
+      if (aligned > latest) aligned = (aligned - phasePeriod).round();
+      // 相位偏差保持在一个更新周期内；累计余量与最长槽距共同约束校准。
+      if (aligned > _slot &&
+          aligned <= latest &&
+          (aligned - next).abs() < interval) {
+        scheduled = aligned;
+      }
+    }
+    _scheduledUpdateSlot = scheduled;
+    _nextFrameTime =
+        timestamp + Duration(microseconds: (scheduled - _slot) * screen);
+  }
+
   void _scheduleWakeup() {
-    // 采样只更新相位，已安排的唤醒照常执行；下一次安排时再应用新相位。
     if (_timer != null) return;
     var delay = _nextFrameTime! - _lastFrame;
-    final period = _syncPeriod;
-    if (period != null) {
-      final screen = _screenPeriod;
-      final anchor = _nativeAnchor! + screen;
-      final desired = _lastSystemFrame.inMicroseconds + delay.inMicroseconds;
-      // 优先选择目标之前仍可达的相位点，避免重锁相时额外拉长一帧。
-      // 槽位取整误差沿用截止容差，防止分频目标误落回前一视频周期。
-      var target = anchor +
-          ((desired - anchor + _frameToleranceMicros) / period).floor() *
-              period;
-      final now = clockMicroseconds;
-      int screenTarget() =>
-          anchor + ((target - anchor - 1000) / screen).ceil() * screen;
-      // BeginFrame 使用目标时刻，相位锚点保存对应的 vsync 开始。
-      // 选择仍来得及请求的槽位，并提前半个屏幕周期唤醒。
-      final lead = _lastSystemFrame.inMicroseconds - _frameStartedAt;
-      final targetLead = lead > 0 && lead <= screen ? screen : 0;
-      while (screenTarget() <= _lastSystemFrame.inMicroseconds + 1000 ||
-          screenTarget() < now + targetLead + screen ~/ 2) {
-        target += period;
-      }
-      _nextFrameTime = _lastFrame +
-          Duration(microseconds: target - _lastSystemFrame.inMicroseconds);
-      // Android 的目标时间领先实际 vsync 一个周期，锁相唤醒也须还原到请求时刻。
+    final screen = _slotPeriod;
+    if (screen != null) {
+      // 已提交的更新槽位同时承载唤醒，重排不再改变更新截止。
       delay = Duration(
-        microseconds: screenTarget() - targetLead - now - screen ~/ 2,
+        microseconds: (_scheduledUpdateSlot! - _slot) * screen - screen ~/ 2,
       );
-    } else {
-      if (_screenRate != null) {
-        final screen = _screenPeriod;
-        var slots =
-            ((delay.inMicroseconds - _frameToleranceMicros) / screen).ceil();
-        if (slots < 1) slots = 1;
-        // 在承载目标的 vsync 前唤醒，边界上的 Timer 请求可能赶不上这一帧。
-        delay = Duration(microseconds: slots * screen - screen ~/ 2);
-        final lead = _lastSystemFrame.inMicroseconds - _frameStartedAt;
-        if (lead > 0 && lead <= screen) {
-          // Android BeginFrame 使用下一周期目标时间，扣除回调已消耗的槽位时间。
-          delay -= Duration(microseconds: screen - lead);
-        }
+      final lead = _lastSystemFrame.inMicroseconds - _frameStartedAt;
+      if (lead > 0 && lead <= screen) {
+        delay -= Duration(microseconds: screen - lead);
       }
-      // 弹幕更新占用的时间已属于本周期，避免每帧把这段耗时累加到等待中。
-      delay -= Duration(microseconds: clockMicroseconds - _frameStartedAt);
     }
+    delay -= Duration(microseconds: clockMicroseconds - _frameStartedAt);
     _timer ??= Timer(delay, () {
       _timer = null;
       _timerWakeups++;
@@ -312,6 +399,7 @@ class FrameRateTicker extends Ticker {
   @override
   TickerFuture start() {
     if (!isActive) {
+      _previousUpdateFrameUs = null;
       _origin = null;
       _nextFrameTime = null;
       // 短空档复用仍有效的相位，屏幕刷新率改变或样本过期后重新学习。
@@ -322,9 +410,7 @@ class FrameRateTicker extends Ticker {
           _nativeScreenPeriod != _screenPeriod) {
         _clearPhase();
       }
-      _externalFrame = null;
-      _externalMatches = 0;
-      _externalPhaseAdopted = false;
+      _resetSlots();
     }
     if (!_observing) {
       SchedulerBinding.instance.addTimingsCallback(_onTimings);
@@ -345,12 +431,11 @@ class FrameRateTicker extends Ticker {
 
   set frameRate(int value) {
     if (value == _frameRate) return;
+    _previousUpdateFrameUs = null;
     final wasMuted = muted;
     muted = true;
     _frameRate = value;
-    _externalFrame = null;
-    _externalMatches = 0;
-    _externalPhaseAdopted = false;
+    _resetSlots();
     muted = wasMuted;
   }
 
@@ -385,58 +470,61 @@ class FrameRateTicker extends Ticker {
   }
 
   void _tickFrame(Duration timestamp) {
+    _frameCallbacks++;
     _frameStartedAt = clockMicroseconds;
     _lastFrame = timestamp;
     _lastSystemFrame = SchedulerBinding.instance.currentSystemFrameTimeStamp;
+    _trackSlots();
     _callbackId = null;
-    var next = _nextFrameTime;
-    if (_timer != null && _frameRate > 0) {
-      final previous = _externalFrame;
-      _externalFrame = timestamp;
-      final interval = _frameInterval;
-      if (previous == null ||
-          (timestamp - previous).inMicroseconds > interval * 2 + 1000) {
-        _externalPhaseAdopted = false;
-      }
-      // 高频 UI 动画也可能偶尔留下同频采样；连续确认后才调整相位。
-      _externalMatches = previous != null &&
-              ((timestamp - previous).inMicroseconds - interval).abs() <= 1000
-          ? (_externalMatches + 1).clamp(0, 2)
-          : 0;
-      if (!_externalPhaseAdopted &&
-          _externalMatches >= 2 &&
-          next != null &&
-          timestamp < next) {
-        next = null;
-        _nextFrameTime = null;
-        // 连续外部帧只校准一次，避免高频 UI 动画反复提前弹幕更新。
-        _externalPhaseAdopted = true;
-      }
-    }
-    // 刷新周期取整可能使目标晚于真实 vsync 数微秒；按累计目标限频并容忍该误差。
-    if (_followVsync ||
-        next == null ||
-        timestamp.inMicroseconds + _frameToleranceMicros >=
-            next.inMicroseconds) {
+    final next = _nextFrameTime;
+    final due = _slotPeriod != null
+        ? _scheduledUpdateSlot == null || _slot >= _scheduledUpdateSlot!
+        : next == null ||
+            timestamp.inMicroseconds + _frameToleranceMicros >=
+                next.inMicroseconds;
+    if (_followVsync || due) {
       _timer?.cancel();
       _timer = null;
       _origin ??= timestamp;
-      if (_frameRate > 0) {
-        final interval = Duration(microseconds: _frameInterval);
-        // 按目标时间累积余量，使 90 FPS 在 120 Hz 上均匀分配帧。
-        var target = (next ?? timestamp) + interval;
-        if (target <= timestamp) target = timestamp + interval;
-        _nextFrameTime = target;
-      }
+      _planNextUpdate(timestamp);
       _updates++;
       _lastUpdate = clockMicroseconds;
+      _recordUpdateGap();
       _onFrame(timestamp - _origin!);
+    } else {
+      _deadlineSkips++;
     }
     if (shouldScheduleTick) scheduleTick(rescheduling: true);
   }
 
+  void _recordUpdateGap() {
+    final stamp = _lastSystemFrame.inMicroseconds;
+    final previous = _previousUpdateFrameUs;
+    _previousUpdateFrameUs = stamp;
+    if (previous == null || stamp <= previous) return;
+    final gap = stamp - previous;
+    if (gap > _maxUpdateGapUs) _maxUpdateGapUs = gap;
+    var bucket = 0;
+    while (bucket < _gapBoundsUs.length && gap > _gapBoundsUs[bucket]) {
+      bucket++;
+    }
+    _updateGapBuckets[bucket]++;
+    final screen = _screenPeriod;
+    // 非整除档位允许正常槽位量化，例如120Hz上的90FPS交替占1/2槽。
+    final expected = _followVsync
+        ? screen
+        : _screenRate == null
+            ? _frameInterval
+            : ((_frameInterval - _frameToleranceMicros) / screen).ceil() *
+                screen;
+    if (gap > expected + _frameToleranceMicros) _longUpdateGaps++;
+  }
+
   @override
   void unscheduleTick() {
+    // 暂停、静音和切档的空档不计入连续播放间隔。
+    _previousUpdateFrameUs = null;
+    _resetSlots();
     _timer?.cancel();
     _timer = null;
     if (_callbackId case final id?) {

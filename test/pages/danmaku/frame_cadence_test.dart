@@ -5,9 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'frame_sync_fixture.dart';
 
 void main() {
-  for (final videoRate in [24, 30, 60]) {
+  for (final videoRate in [24, 30, 60, 23.976, 29.97, 59.94]) {
     for (final target in [60, 90]) {
       for (final pattern in ['steady', 'phase-step', 'request-jitter']) {
+        if (videoRate != videoRate.round() && pattern != 'steady') continue;
         testWidgets('$videoRate FPS 视频 / $target FPS 弹幕，$pattern 时保持更新间隔', (
           tester,
         ) async {
@@ -35,7 +36,9 @@ void main() {
             final shift = pattern == 'phase-step'
                 ? (currentSlot ~/ 120) % 2
                 : 0;
-            final hasVideo = (currentSlot - shift) % (120 ~/ videoRate) == 0;
+            final hasVideo =
+                ((currentSlot - shift) * videoRate / 120).floor() >
+                ((currentSlot - shift - 1) * videoRate / 120).floor();
             if (hasVideo) {
               final jitter =
                   pattern == 'request-jitter' &&

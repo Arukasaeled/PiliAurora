@@ -30,6 +30,10 @@ Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`
 
 统计弹幕实际频率时，按 Player、媒体代次和 `targetFrameRate` 分组，对相邻且目标不变、active、非 muted 的采样作累计计数差分；排除暂停、缓冲与目标切换边界。`targetFrameRate=0` 表示跟随屏幕，不能与 60/90 FPS 阶段混算。`locked/independent` 切换本身不足以证明实际更新频率异常。
 
+弹幕调度快照另提供 `frameCallbacks`（收到的 Dart 帧回调）和 `deadlineSkips`（早于更新截止时间而略过的回调）。结合 `updates/frameRequests` 差分，区分引擎未交付回调与回调到达后未更新。`updateGapBuckets` 记录连续更新的系统帧时间间隔，桶互斥，上限分别为 10/20/30/40/60/100ms，最后一桶大于100ms；按相邻快照差分读取窗口分布。`maxUpdateGapUs` 为累计最大间隔，`longUpdateGaps` 统计超过目标档位正常屏幕槽位量化的间隔，例如120Hz上的60FPS超过约16.67ms、90FPS正常的1/2槽交替不计为长间隔。暂停、静音和切档中断连续统计；所有计数继续累计。这些是弹幕更新时序，最终呈现还需对照 SurfaceFlinger 或 Perfetto。
+
+帧调度矩阵覆盖约 5.7ms 以内的回调/批次迟到；20–31ms 的 Timer 迟到会按迟到量丢失更新槽，由 `test/pages/danmaku/frame_late_delivery_test.dart` 单独回归，不能用矩阵的 16.7ms 上限判断该场景。
+
 Android `media.output.preloaded` 记录预挂载策略、证据和解码前 selected 值；mpv 在 on_preloaded 之后选轨，该阶段允许唯一候选尚未 selected，FILE_LOADED 继续核对实际选轨。`runtime.shutdown.*` 分段记录文件卸载、订阅清理、输出释放与 Player 释放；`player.disposed` 是诊断停止事件，不代表原生释放完成。Surface 释放先同步解除 VO/wid，再等待 JNI 删除回执。
 
 直播 FILE_LOADED 后缺少有效视频几何时，最多等待 5 秒，且不超过请求剩余预算；输出就绪前的 EOF/error 立即使加载失败。正常点播沿用请求预算，纯音频沿用无视频输出路径。`media.startup.failed` 记录几何等待失败，页面显示既有失败及刷新入口。加载动画的首帧可见性和驱动行为仍需设备验证。

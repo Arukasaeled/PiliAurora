@@ -33,7 +33,11 @@ CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dar
 
 `pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理刷新请求批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、30 FPS 视频配 60 FPS 弹幕在 120 Hz 上的相位变化、匹配到失配再匹配时的退化与恢复、mpv 显示同步状态切换与订阅释放、批次限界、请求时间抖动、29.97 FPS 漂移与来源释放。相位变化测试同时断言弹幕更新频率和视频、弹幕合计刷新的次数。屏幕槽位与呈现的结论来自设备检查。
 
-`pages/danmaku/frame_cadence_test.dart` 逐次记录更新所在屏幕槽位，覆盖24/30/60 FPS视频、60/90 FPS弹幕及稳定、每秒相位变化、请求完成时间抖动。120Hz无阻塞模型中检查更新间隔，防止平均帧率正常时仍夹入25ms长间隔；GPU呈现由目标设备检查。
+`pages/danmaku/frame_cadence_test.dart` 逐次记录更新所在屏幕槽位，覆盖24/30/60 FPS视频、60/90 FPS弹幕及稳定、每秒相位变化、请求完成时间抖动，另覆盖23.976/29.97/59.94 FPS视频的稳定源时钟漂移。120Hz无阻塞模型中检查更新间隔，防止平均帧率正常时仍夹入25ms长间隔；GPU呈现由目标设备检查。`frame_rate_diagnostics_test.dart` 另检查回调与截止时间跳过计数、间隔分布、暂停空档排除及正常槽位量化。
+
+`pages/danmaku/frame_deadline_replay_test.dart` 使用诊断中提取的1.2秒数值时序，包含实际回调目标时间、交付时间和原生请求批次，回归亚毫秒偏差引发的连续更新延期。扩大矩阵见 `tool/experiments/danmaku/frame_cadence_device_matrix_test.dart`：用同一时序还原槽位抖动，覆盖Android目标时钟领先、119.88/120.0000076/120.12Hz读数、跟随屏幕及30/60/90/120FPS、29.97/59.94FPS视频、250ms批次与1秒积压压力；同时检查频率、最长更新间隔、屏幕上限合帧与停止后的释放。
+
+`pages/danmaku/frame_late_delivery_test.dart` 模拟定时唤醒或回调交付迟到10/20/31.6ms，检查只丢失不可避免的更新槽位，恢复后不再额外多丢一帧；该场景不混入上述矩阵的严格槽距上限。
 
 `pages/danmaku/frame_rate_ticker_test.dart` 检查所属视图刷新率、屏幕降频、刷新率不可用、暂停与静音时的帧请求释放，以及 30/60/90/120 FPS 档位。测试使用模拟时钟，不测量设备屏幕或 GPU 合成。
 
