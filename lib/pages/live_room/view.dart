@@ -33,6 +33,7 @@ import 'package:pili_aurora/pages/live_room/widgets/bottom_control.dart';
 import 'package:pili_aurora/pages/live_room/widgets/chat_panel.dart';
 import 'package:pili_aurora/pages/live_room/widgets/desktop_sidebar.dart';
 import 'package:pili_aurora/pages/live_room/widgets/header_control.dart';
+import 'package:pili_aurora/pages/live_room/widgets/live_list_sheet.dart';
 import 'package:pili_aurora/pages/video/widgets/player_focus.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_status.dart';
@@ -542,19 +543,13 @@ class _LiveRoomPageState extends State<LiveRoomPage>
   void _showRank() {
     if (_liveRoomController.ruid case final ruid?) {
       final heightFactor = PlatformUtils.isMobile && !isPortrait ? 1.0 : 0.7;
-      showModalBottomSheet(
+      showLiveListSheet(
         context: context,
-        useSafeArea: true,
-        clipBehavior: .hardEdge,
-        isScrollControlled: true,
-        constraints: const BoxConstraints(maxWidth: 450),
-        builder: (context) => FractionallySizedBox(
-          widthFactor: 1.0,
-          heightFactor: heightFactor,
-          child: ContributionRankPanel(
-            ruid: ruid,
-            roomId: _liveRoomController.roomId,
-          ),
+        title: '房间观众',
+        heightFactor: heightFactor,
+        child: ContributionRankPanel(
+          ruid: ruid,
+          roomId: _liveRoomController.roomId,
         ),
       );
     }
@@ -749,6 +744,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
                 key: desktopSidebarKey,
                 roomId: _liveRoomController.roomId,
                 anchorUid: _liveRoomController.roomInfoH5.value?.roomInfo?.uid,
+                onShowRank: _showRank,
                 anchorName: _liveRoomController
                     .roomInfoH5
                     .value
@@ -758,7 +754,6 @@ class _LiveRoomPageState extends State<LiveRoomPage>
                 liveRoomController: _liveRoomController,
                 chat: _buildChatWidget(),
                 input: _buildInputWidget,
-                onShowRank: _showRank,
               ),
             ),
           ),

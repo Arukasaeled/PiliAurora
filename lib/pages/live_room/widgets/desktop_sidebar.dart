@@ -11,6 +11,7 @@ import 'package:pili_aurora/models/remote/live/live_contribution_rank/item.dart'
 import 'package:pili_aurora/models/remote/live/live_guard_top_list/data.dart';
 import 'package:pili_aurora/models/remote/live/live_guard_top_list/item.dart';
 import 'package:pili_aurora/pages/live_room/contribution_rank/controller.dart';
+import 'package:pili_aurora/pages/live_room/widgets/live_list_sheet.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/member_guard/view.dart';
 
@@ -174,19 +175,19 @@ class _DesktopLiveSidebarState extends State<DesktopLiveSidebar> {
   Widget _buildPreview(BuildContext context) {
     final isAudience = _tab == _SidebarTab.audience;
     return SizedBox(
-      height: 116,
+      height: 148,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
         child: Column(
           children: [
             SizedBox(
-              height: 28,
+              height: 40,
               child: Row(
                 children: [
                   Text(
                     isAudience ? '在线榜' : '舰长榜',
                     style: const TextStyle(
-                      fontSize: 10,
+                      fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFFC5C7CD),
                     ),
@@ -198,24 +199,24 @@ class _DesktopLiveSidebarState extends State<DesktopLiveSidebar> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 9,
+                        fontSize: 12,
                         color: Color(0xFF7E8189),
                       ),
                     ),
                   ),
                   TextButton(
-                    onPressed: isAudience ? widget.onShowRank : _openGuard,
+                    onPressed: () => _openAll(isAudience),
                     style: TextButton.styleFrom(
                       foregroundColor: const Color(0xFF8F929A),
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      minimumSize: const Size(0, 24),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(88, 36),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: VisualDensity.compact,
                     ),
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('查看全部', style: TextStyle(fontSize: 9)),
+                        Text('查看全部', style: TextStyle(fontSize: 12)),
                         Icon(Icons.chevron_right, size: 14),
                       ],
                     ),
@@ -326,7 +327,7 @@ class _DesktopLiveSidebarState extends State<DesktopLiveSidebar> {
 
   Widget _buildChatHead(BuildContext context) {
     return Container(
-      height: 32,
+      height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: const BoxDecoration(
         border: Border(
@@ -348,7 +349,7 @@ class _DesktopLiveSidebarState extends State<DesktopLiveSidebar> {
           const Text(
             '实时聊天',
             style: TextStyle(
-              fontSize: 10,
+              fontSize: 14,
               fontWeight: FontWeight.w600,
               color: Color(0xFFD9DADD),
             ),
@@ -358,7 +359,7 @@ class _DesktopLiveSidebarState extends State<DesktopLiveSidebar> {
             () => Text(
               '${widget.liveRoomController.messages.value.length} 条',
               style: const TextStyle(
-                fontSize: 9,
+                fontSize: 12,
                 color: Color(0xFF72757D),
               ),
             ),
@@ -366,7 +367,7 @@ class _DesktopLiveSidebarState extends State<DesktopLiveSidebar> {
           const Spacer(),
           const Text(
             '最新消息在底部',
-            style: TextStyle(fontSize: 9, color: Color(0xFF888B93)),
+            style: TextStyle(fontSize: 12, color: Color(0xFF888B93)),
           ),
         ],
       ),
@@ -378,13 +379,19 @@ class _DesktopLiveSidebarState extends State<DesktopLiveSidebar> {
     Get.toNamed('/member?mid=$uid');
   }
 
-  void _openGuard() {
+  void _openAll(bool isAudience) {
+    if (isAudience) {
+      widget.onShowRank();
+      return;
+    }
     final anchorUid = widget.anchorUid;
     if (anchorUid == null) return;
-    MemberGuard.toMemberGuard(
-      mid: anchorUid,
-      name: widget.anchorName ?? '主播',
-      count: _guardState?.dataOrNull?.count,
+    final count = _guardState?.dataOrNull?.count;
+    showLiveListSheet(
+      context: context,
+      title:
+          '${widget.anchorName ?? '主播'}的舰队${count == null ? '' : '($count)'}',
+      child: MemberGuard.panel(ruid: anchorUid),
     );
   }
 }
@@ -408,27 +415,30 @@ class _SidebarTabButton extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Stack(
+        fit: StackFit.expand,
         alignment: Alignment.center,
         children: [
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: label,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                if (count != null)
+          Center(
+            child: Text.rich(
+              TextSpan(
+                children: [
                   TextSpan(
-                    text: '  $count',
-                    style: TextStyle(
-                      color: selected
-                          ? const Color(0xFFC5C7CD)
-                          : const Color(0xFF777A82),
-                    ),
+                    text: label,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
-              ],
+                  if (count != null)
+                    TextSpan(
+                      text: '  $count',
+                      style: TextStyle(
+                        color: selected
+                            ? const Color(0xFFC5C7CD)
+                            : const Color(0xFF777A82),
+                      ),
+                    ),
+                ],
+              ),
+              style: TextStyle(fontSize: 15, color: color),
             ),
-            style: TextStyle(fontSize: 12, color: color),
           ),
           if (selected)
             Positioned(
@@ -496,7 +506,7 @@ class _RankPreviewCard extends StatelessWidget {
                     child: Text(
                       '$rank',
                       style: const TextStyle(
-                        fontSize: 8,
+                        fontSize: 11,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF652D35),
                       ),
@@ -507,7 +517,7 @@ class _RankPreviewCard extends StatelessWidget {
                     score ?? '--',
                     maxLines: 1,
                     style: TextStyle(
-                      fontSize: 9,
+                      fontSize: 12,
                       color: isTop
                           ? const Color(0xFFDFC17B)
                           : const Color(0xFFB6B8BF),
@@ -531,7 +541,7 @@ class _RankPreviewCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 9,
+                        fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFFE7E8EC),
                       ),
@@ -545,7 +555,7 @@ class _RankPreviewCard extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  fontSize: 8,
+                  fontSize: 11,
                   color: Color(0xFF84878F),
                 ),
               ),
@@ -591,7 +601,7 @@ class _SidebarPreviewMessage extends StatelessWidget {
               message,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 9, color: Color(0xFF85878E)),
+              style: const TextStyle(fontSize: 12, color: Color(0xFF85878E)),
             ),
           ),
           if (onRetry != null)
@@ -602,7 +612,7 @@ class _SidebarPreviewMessage extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 6),
                 visualDensity: VisualDensity.compact,
               ),
-              child: const Text('重试', style: TextStyle(fontSize: 9)),
+              child: const Text('重试', style: TextStyle(fontSize: 12)),
             ),
         ],
       ),

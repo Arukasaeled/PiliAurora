@@ -9,13 +9,18 @@ import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/remote/member_guard/guard_top_list.dart';
 import 'package:pili_aurora/pages/member_guard/controller.dart';
 import 'package:pili_aurora/utils/bili_utils.dart';
+import 'package:pili_aurora/utils/color_utils.dart';
 import 'package:pili_aurora/utils/extension/widget_ext.dart';
 import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart' hide ListTile;
 
 class MemberGuard extends StatefulWidget {
-  const MemberGuard({super.key});
+  const MemberGuard({super.key}) : ruid = null;
+
+  const MemberGuard.panel({super.key, required this.ruid});
+
+  final Object? ruid;
 
   @override
   State<MemberGuard> createState() => _MemberGuardState();
@@ -44,31 +49,36 @@ class _MemberGuardState extends State<MemberGuard> {
   @override
   void initState() {
     super.initState();
-    final args = Get.arguments;
-    _userName = args['name'];
-    _count = args['count'];
-    _controller = Get.put(
-      MemberGuardController(),
-      tag: args['ruid'].toString(),
-    );
+    final args = widget.ruid == null ? Get.arguments : null;
+    _userName = widget.ruid == null ? args['name'] : '';
+    _count = widget.ruid == null ? args['count'] : null;
+    _controller = MemberGuardController(ruid: widget.ruid ?? args['ruid'])
+      ..onInit();
+  }
+
+  @override
+  void dispose() {
+    _controller.onClose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return SimpleScaffold(
-      appBar: AppBar(
-        title: Text('$_userName的舰队${_count == null ? '' : '($_count)'}'),
+    final title = '$_userName的舰队${_count == null ? '' : '($_count)'}';
+    final body = refreshIndicator(
+      onRefresh: _controller.onRefresh,
+      child: CustomScrollView(
+        slivers: [
+          ViewSliverSafeArea(
+            sliver: Obx(() => _buildBody(_controller.loadingState.value)),
+          ),
+        ],
       ),
-      body: refreshIndicator(
-        onRefresh: _controller.onRefresh,
-        child: CustomScrollView(
-          slivers: [
-            ViewSliverSafeArea(
-              sliver: Obx(() => _buildBody(_controller.loadingState.value)),
-            ),
-          ],
-        ),
-      ).constraintWidth(),
+    ).constraintWidth();
+    if (widget.ruid != null) return body;
+    return SimpleScaffold(
+      appBar: AppBar(title: Text(title)),
+      body: body,
     );
   }
 
@@ -95,7 +105,19 @@ class _MemberGuardState extends State<MemberGuard> {
                       safeArea: false,
                       visualDensity: .comfortable,
                       onTap: () => Get.toNamed('/member?mid=${item.uid}'),
-                      leading: _avatar(item.face, 32, item.guardLevel),
+                      leading: Row(
+                        mainAxisSize: .min,
+                        spacing: 10,
+                        children: [
+                          SizedBox(
+                            width: 32,
+                            child: Center(
+                              child: _rank(index + _controller.tops.length + 1),
+                            ),
+                          ),
+                          _avatar(item.face, 32, item.guardLevel),
+                        ],
+                      ),
                       title: Text(
                         item.username,
                         style: const TextStyle(fontSize: 14),
@@ -112,7 +134,7 @@ class _MemberGuardState extends State<MemberGuard> {
     }
   }
 
-  Widget _buildTopItem(GuardItem item, double size) {
+  Widget _buildTopItem(GuardItem item, double size, int rank) {
     final child = GestureDetector(
       behavior: .opaque,
       onTap: () => Get.toNamed('/member?mid=${item.uid}'),
@@ -129,6 +151,7 @@ class _MemberGuardState extends State<MemberGuard> {
                 child: _avatar(item.face, size, item.guardLevel),
               ),
             ),
+            _rank(rank),
             Text(item.username, maxLines: 1, overflow: .ellipsis),
           ],
         ),
@@ -143,22 +166,32 @@ class _MemberGuardState extends State<MemberGuard> {
     return child;
   }
 
+  Widget _rank(int rank) => Text(
+    '$rank',
+    style: TextStyle(
+      fontSize: 16,
+      fontWeight: FontWeight.bold,
+      fontStyle: FontStyle.italic,
+      color: ColourUtils.index2Color(rank - 1, ColorScheme.of(context).outline),
+    ),
+  );
+
   Widget _buildTopItems() {
     final Widget first;
     final Widget second;
     final Widget third;
     if (_controller.tops.firstOrNull case final item?) {
-      first = _buildTopItem(item, 50);
+      first = _buildTopItem(item, 50, 1);
     } else {
       first = const SizedBox.shrink();
     }
     if (_controller.tops.elementAtOrNull(1) case final item?) {
-      second = _buildTopItem(item, 42);
+      second = _buildTopItem(item, 42, 2);
     } else {
       second = const SizedBox.shrink();
     }
     if (_controller.tops.elementAtOrNull(2) case final item?) {
-      third = _buildTopItem(item, 42);
+      third = _buildTopItem(item, 42, 3);
     } else {
       third = const SizedBox.shrink();
     }

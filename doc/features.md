@@ -94,6 +94,7 @@ flowchart TD
 ## 直播
 
 - 页面：`lib/pages/live/`、`live_room/`、`live_search/`、`live_follow/`、`live_dm_block/`。
+- 桌面直播侧栏在 `lib/pages/live_room/widgets/desktop_sidebar.dart`，包含观众、大航海预览和聊天区。“高能观众”和观众“查看全部”共用榜单入口；两个榜单共用 `live_list_sheet.dart` 的深色弹层。大航海列表复用 `MemberGuard.panel`，关闭时释放列表控制器。
 - API：`lib/http/live.dart`。
 - 服务：`lib/services/live_stream/live.dart`、`live_packet.dart`、`live_packet_decoder.dart`。
 - 排查直播问题时，分别检查连接、包解码、历史与未读消息、渲染和退出清理。
