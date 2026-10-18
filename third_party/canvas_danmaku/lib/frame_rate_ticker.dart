@@ -18,11 +18,13 @@ class FrameRateTicker extends Ticker {
     ValueListenable<List<int>>? videoFrameTimings,
     ValueListenable<bool>? videoDisplaySyncActive,
     double Function()? screenRefreshRate,
+    int? wakeLeadMicros,
   })  : _onFrame = onTick,
         _frameRate = frameRate,
         _videoFrameTimings = videoFrameTimings,
         _videoDisplaySyncActive = videoDisplaySyncActive,
-        _screenRefreshRate = screenRefreshRate;
+        _screenRefreshRate = screenRefreshRate,
+        _wakeLeadMicros = wakeLeadMicros;
 
   final TickerCallback _onFrame;
   int _frameRate;
@@ -50,6 +52,7 @@ class FrameRateTicker extends Ticker {
   ValueListenable<List<int>>? _videoFrameTimings;
   ValueListenable<bool>? _videoDisplaySyncActive;
   final double Function()? _screenRefreshRate;
+  final int? _wakeLeadMicros;
   int _updates = 0;
   int _frameRequests = 0;
   int _timerWakeups = 0;
@@ -351,8 +354,12 @@ class FrameRateTicker extends Ticker {
     final screen = _slotPeriod;
     if (screen != null) {
       // 已提交的更新槽位同时承载唤醒，重排不再改变更新截止。
+      final wakeLead = (_wakeLeadMicros ?? screen ~/ 2).clamp(
+        0,
+        screen * 2,
+      );
       delay = Duration(
-        microseconds: (_scheduledUpdateSlot! - _slot) * screen - screen ~/ 2,
+        microseconds: (_scheduledUpdateSlot! - _slot) * screen - wakeLead,
       );
       final lead = _lastSystemFrame.inMicroseconds - _frameStartedAt;
       if (lead > 0 && lead <= screen) {
