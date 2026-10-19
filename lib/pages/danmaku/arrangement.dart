@@ -34,12 +34,14 @@ class DanmakuArrangement<T> {
     this.candidate,
     this.trajectory,
     this.track,
-    this.scrolling,
-  );
+    this.scrolling, {
+    this.suspended = false,
+  });
   final DanmakuMeasuredCandidate<T> candidate;
   final DanmakuTrajectory? trajectory;
   final int track;
   final bool scrolling;
+  final bool suspended;
   bool get accepted => trajectory != null;
   double? xAt(int mediaUs) => trajectory?.xAt(mediaUs / 1000);
 }
@@ -202,6 +204,15 @@ class DanmakuWindowPlanner<T> {
         final oldMotion = old.trajectory;
         if (oldMotion == null ||
             old.candidate.type == DanmakuItemType.special) {
+          continue;
+        }
+        if (old.suspended) {
+          if (overlap &&
+              motion.height <= trackHeight &&
+              oldMotion.height <= trackHeight) {
+            continue;
+          }
+          if (motion.overlapsDuring(oldMotion, padding: padding)) return true;
           continue;
         }
         final late = motion.startMs < oldMotion.startMs;

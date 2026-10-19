@@ -8,6 +8,7 @@ import 'package:pili_aurora/pages/danmaku/arrangement.dart';
 import 'package:pili_aurora/pages/danmaku/raster_cache.dart';
 import 'package:pili_aurora/pages/danmaku/render_guard.dart';
 import 'package:pili_aurora/pages/danmaku/special_frame.dart';
+import 'package:pili_aurora/pages/danmaku/interaction.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_window.dart';
 
 class DanmakuWindowContent<T> {
@@ -19,7 +20,7 @@ class DanmakuWindowContent<T> {
 
 class _ActiveRaster<T> {
   _ActiveRaster(this.item, this.image, {this.specialBounds});
-  final DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>> item;
+  DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>> item;
   final ui.Image image;
   final Rect? specialBounds;
   DanmakuSpecialFrame? specialFrame;
@@ -70,6 +71,10 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   int _mediaUs = 0;
   int activeBytes = 0;
   bool _disposed = false;
+  int _interactionEpoch = 0;
+  ({Object identity, int remainingUs, double velocity})? _held;
+  DanmakuInteractionHandle<T> get interaction =>
+      _WindowInteraction(this, _interactionEpoch);
   int get activeCount => _active.length;
   int get activeSpecialCount =>
       _active.values.where((item) => item.specialBounds != null).length;
@@ -159,10 +164,12 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       return true;
     });
     for (final item in desired.values) {
-      if (_active.containsKey(item.identity) ||
-          _unavailable.contains(item.identity)) {
+      final existing = _active[item.identity];
+      if (existing != null) {
+        existing.item = item;
         continue;
       }
+      if (_unavailable.contains(item.identity)) continue;
       final content = item.payload.candidate.payload;
       if (content is SpecialDanmakuContentItem<T>) {
         final raster = rasters.textRenderer.rasterizeSpecial(
@@ -222,27 +229,139 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     return visible != null;
   }
 
-  ({Object identity, DanmakuContentItem<T> content, Rect bounds})? hitTest(
-    Offset point,
-  ) {
+  DanmakuDisplaySnapshot<T>? _snapshotFor(_ActiveRaster<T> active) {
+    final content = active.item.payload.candidate.payload;
+    final motion = active.item.payload.trajectory!;
+    final bounds = active.specialBounds == null
+        ? Rect.fromLTWH(
+            motion.xAt(_mediaUs / 1000),
+            motion.y,
+            motion.width,
+            motion.height,
+          )
+        : active.specialFrame?.bounds;
+    if (bounds == null) return null;
+    return DanmakuDisplaySnapshot(
+      identity: active.item.identity,
+      text: content.text,
+      extra: content.extra,
+      bounds: bounds,
+      selectable: active.specialBounds == null,
+      selected: active.item.identity == _held?.identity,
+    );
+  }
+
+  DanmakuDisplaySnapshot<T>? hitTest(Offset point) {
+    final held = _active[_held?.identity];
+    final selected = held == null ? null : _snapshotFor(held);
+    if (selected != null && selected.bounds.contains(point)) return selected;
     for (final active in _active.values.toList().reversed) {
       if (active.specialBounds != null) continue;
-      final motion = active.item.payload.trajectory!;
-      final bounds = Rect.fromLTWH(
-        motion.xAt(_mediaUs / 1000),
-        motion.y,
-        motion.width,
-        motion.height,
-      );
-      if (bounds.contains(point)) {
-        return (
-          identity: active.item.identity,
-          content: active.item.payload.candidate.payload,
-          bounds: bounds,
-        );
-      }
+      final snapshot = _snapshotFor(active);
+      if (snapshot != null && snapshot.bounds.contains(point)) return snapshot;
     }
     return null;
+  }
+
+  bool _select(Object identity) {
+    final active = _active[identity];
+    if (active == null || active.specialBounds != null) return false;
+    if (_held?.identity == identity) return true;
+    final previous = _held;
+    _held = (
+      identity: identity,
+      remainingUs: active.item.endUs - _mediaUs,
+      velocity: active.item.payload.trajectory!.velocity,
+    );
+    _rebaseInteraction(previous);
+    return true;
+  }
+
+  bool _clearSelection() {
+    final previous = _held;
+    if (previous == null) return true;
+    _held = null;
+    _rebaseInteraction(previous);
+    return true;
+  }
+
+  void _rebaseInteraction(
+    ({Object identity, int remainingUs, double velocity})? previous,
+  ) {
+    final items =
+        <DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>>>[];
+    for (final active in _active.values) {
+      final item = active.item;
+      final arrangement = item.payload;
+      var motion = arrangement.trajectory!;
+      var endUs = item.endUs;
+      if (active.specialBounds == null) {
+        final x = motion.xAt(_mediaUs / 1000);
+        var velocity = motion.velocity;
+        if (previous?.identity == item.identity) {
+          velocity = previous!.velocity;
+          endUs = _mediaUs + previous.remainingUs;
+        }
+        final held = _held?.identity == item.identity;
+        if (held) {
+          velocity = 0;
+          endUs = 0x7fffffffffffffff;
+        }
+        motion = DanmakuTrajectory(
+          startMs: _mediaUs / 1000,
+          endMs: endUs / 1000,
+          startX: x,
+          y: motion.y,
+          width: motion.width,
+          height: motion.height,
+          velocity: velocity,
+        );
+      }
+      items.add(
+        DanmakuWindowItem(
+          identity: item.identity,
+          sourceUs: item.sourceUs,
+          startUs: _mediaUs,
+          endUs: endUs,
+          estimatedBytes: item.estimatedBytes,
+          payload: DanmakuArrangement(
+            arrangement.candidate,
+            motion,
+            arrangement.track,
+            arrangement.scrolling,
+            suspended: _held?.identity == item.identity,
+          ),
+        ),
+      );
+    }
+    _planner.window.reset(_mediaUs);
+    _planner.window.extend(
+      items,
+      generation: _planner.window.generation,
+      preparedUntilUs: _mediaUs + 1,
+    );
+    _unavailable.clear();
+    present(_mediaUs, allowUnprepared: true);
+  }
+
+  void _paintOrdinary(Canvas canvas, _ActiveRaster<T> active, Paint paint) {
+    final motion = active.item.payload.trajectory!;
+    final position = Offset(motion.xAt(_mediaUs / 1000), motion.y);
+    if (active.image.width == motion.width.ceil()) {
+      canvas.drawImage(active.image, position, paint);
+    } else {
+      canvas.drawImageRect(
+        active.image,
+        Rect.fromLTWH(
+          0,
+          0,
+          active.image.width.toDouble(),
+          active.image.height.toDouble(),
+        ),
+        Rect.fromLTWH(position.dx, position.dy, motion.width, motion.height),
+        paint,
+      );
+    }
   }
 
   void paint(Canvas canvas, Size size, {double opacity = 1}) {
@@ -258,23 +377,9 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     }
     final paint = Paint();
     for (final active in _active.values) {
-      if (active.specialBounds != null) continue;
-      final motion = active.item.payload.trajectory!;
-      final position = Offset(motion.xAt(_mediaUs / 1000), motion.y);
-      if (active.image.width == motion.width.ceil()) {
-        canvas.drawImage(active.image, position, paint);
-      } else {
-        canvas.drawImageRect(
-          active.image,
-          Rect.fromLTWH(
-            0,
-            0,
-            active.image.width.toDouble(),
-            active.image.height.toDouble(),
-          ),
-          Rect.fromLTWH(position.dx, position.dy, motion.width, motion.height),
-          paint,
-        );
+      if (active.specialBounds == null &&
+          active.item.identity != _held?.identity) {
+        _paintOrdinary(canvas, active, paint);
       }
     }
     for (final active in _active.values) {
@@ -297,11 +402,17 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
         );
       }
     }
+    final held = _active[_held?.identity];
+    if (held != null) {
+      _paintOrdinary(canvas, held, paint..color = const Color(0xffffffff));
+    }
     if (opacity < 1) canvas.restore();
     canvas.restore();
   }
 
   void reset(int fromUs) {
+    _interactionEpoch++;
+    _held = null;
     for (final active in _active.values) {
       active.image.dispose();
     }
@@ -329,4 +440,27 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     rasters.clear();
     super.dispose();
   }
+}
+
+class _WindowInteraction<T> implements DanmakuInteractionHandle<T> {
+  _WindowInteraction(this.renderer, this.epoch);
+  final DanmakuWindowRenderer<T> renderer;
+  final int epoch;
+  @override
+  bool get isValid =>
+      !renderer._disposed && epoch == renderer._interactionEpoch;
+  @override
+  List<DanmakuDisplaySnapshot<T>> get snapshot => !isValid
+      ? const []
+      : List.unmodifiable([
+          for (final active in renderer._active.values)
+            ?renderer._snapshotFor(active),
+        ]);
+  @override
+  DanmakuDisplaySnapshot<T>? hitTest(Offset point) =>
+      isValid ? renderer.hitTest(point) : null;
+  @override
+  bool select(Object identity) => isValid && renderer._select(identity);
+  @override
+  bool clearSelection() => isValid && renderer._clearSelection();
 }
