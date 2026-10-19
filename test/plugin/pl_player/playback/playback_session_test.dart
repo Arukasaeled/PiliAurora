@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/background_policy.dart';
@@ -9,6 +11,56 @@ import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('媒体时钟独立发布，丢弃其他 runtime、旧加载和旧 seek 的采样', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('clock'), start: PlaybackStartPolicy.play);
+    final samples = <PlaybackMediaAnchor?>[];
+    final subscription = session.mediaAnchors.listen(samples.add);
+    const anchor = PlaybackMediaAnchor(
+      positionUs: 1000000,
+      observedAtUs: 2000000,
+      effectiveRate: 1,
+      advancing: true,
+      ready: true,
+      continuity: 1,
+      validForUs: 500000,
+    );
+    void emit({int? runtimeId, int? loadId, int sequence = 0}) {
+      runtime._events.add(
+        PlaybackRuntimeMediaAnchor(
+          runtimeId: runtimeId ?? runtime.runtimeId,
+          loadId: loadId ?? session.loadId,
+          seekSequence: sequence,
+          anchor: anchor,
+        ),
+      );
+    }
+
+    final version = session.currentSnapshot.snapshotVersion;
+    emit(runtimeId: -1);
+    emit(loadId: session.loadId - 1);
+    expect(samples, isEmpty);
+    emit();
+    expect(session.currentMediaAnchor, same(anchor));
+    expect(session.currentSnapshot.snapshotVersion, version);
+    await owner.seek(const Duration(seconds: 2));
+    expect(session.currentMediaAnchor, isNull);
+    emit();
+    expect(samples, [anchor, null]);
+    emit(sequence: 1);
+    expect(session.currentMediaAnchor, same(anchor));
+    final next = session.attach();
+    expect(session.currentMediaAnchor, isNull);
+    emit(sequence: 1);
+    expect(samples, [anchor, null, anchor, null]);
+    await subscription.cancel();
+    owner.close();
+    next.close();
+    await runtime.released;
+  });
 
   test('加载期间进入后台抑制后续播放，切换 owner 后仍保持策略', () async {
     final binding = TestWidgetsFlutterBinding.instance;

@@ -1,12 +1,13 @@
 import 'dart:async';
 
+import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/playback_load_queue.dart';
 
 /// Owns playback intent, request acceptance and the only command path to a runtime.
 /// A session is local to one controller; native resource reuse is guarded by
 /// [PlaybackRuntimeSlot], not by reusing this object across UI lifetimes.
-class PlaybackSession {
+class PlaybackSession implements PlaybackMediaClock {
   PlaybackSession({
     required PlaybackRuntimePort runtime,
     Duration Function()? monotonicNow,
@@ -78,6 +79,24 @@ class PlaybackSession {
   int _nextActionId = 1;
   int _requestId = 0;
   int _loadId = 0;
+  int _seekSequence = 0;
+  PlaybackMediaAnchor? _mediaAnchor;
+  final _mediaAnchors = StreamController<PlaybackMediaAnchor?>.broadcast(
+    sync: true,
+  );
+
+  @override
+  PlaybackMediaAnchor? get currentMediaAnchor => _mediaAnchor;
+
+  @override
+  Stream<PlaybackMediaAnchor?> get mediaAnchors => _mediaAnchors.stream;
+
+  void _invalidateMediaAnchor() {
+    if (_mediaAnchor == null) return;
+    _mediaAnchor = null;
+    _mediaAnchors.add(null);
+  }
+
   int _intentRevision = 0;
   int _keepAliveCount = 0;
   int? _writerLoadRequestId;
@@ -124,6 +143,7 @@ class PlaybackSession {
         ..invalidateRequests()
         .._requiresLoad = true;
     }
+    _invalidateMediaAnchor();
     _supersedeAcceptedRequest();
     _operations.prioritizeLoad();
     final owner = PlaybackOwner._(this, _nextOwnerId++);
@@ -360,6 +380,7 @@ class PlaybackSession {
   }) {
     if (_closingRequested || _disposed || owner._closed) return null;
     if (!owner.isActive) return null;
+    _invalidateMediaAnchor();
     _supersedeAcceptedRequest();
     _operations.prioritizeLoad();
     final acceptedAt = _now();
@@ -564,6 +585,7 @@ class PlaybackSession {
         requestId: request.id,
         runtimeId: _runtime.runtimeId,
         loadId: thisLoadId,
+        seekSequence: _seekSequence,
         deadline: request.deadline,
         monotonicNow: _now,
         cancelled: request.cancelled.future,
@@ -907,6 +929,8 @@ class PlaybackSession {
     }
     final request = _requestId;
     final load = _loadId;
+    final seekSequence = ++_seekSequence;
+    _invalidateMediaAnchor();
     final result = await _operations.submit<PlaybackRuntimeCommandResult>(
       slot: PlaybackOperationSlot.seek,
       deadline: _now() + commandBudget,
@@ -924,6 +948,7 @@ class PlaybackSession {
             requestId: request,
             runtimeId: _runtime.runtimeId,
             loadId: load,
+            seekSequence: seekSequence,
             deadline: operation.deadline,
             monotonicNow: _now,
             cancelled: Future<void>.value(),
@@ -1376,6 +1401,22 @@ class PlaybackSession {
     }
     if (event.loadId != null && event.loadId != _loadId) return;
     switch (event) {
+      case PlaybackRuntimeMediaAnchor(:final anchor, :final seekSequence):
+        if (_activeOwner == null ||
+            _activeOwner!._requiresLoad ||
+            _phase != PlaybackPhase.ready ||
+            seekSequence != _seekSequence) {
+          return;
+        }
+        final previous = _mediaAnchor;
+        if (previous != null &&
+            (anchor.continuity < previous.continuity ||
+                (anchor.continuity == previous.continuity &&
+                    anchor.observedAtUs < previous.observedAtUs))) {
+          return;
+        }
+        _mediaAnchor = anchor;
+        _mediaAnchors.add(anchor);
       case PlaybackRuntimeStateChanged(:final actual):
         _actual = actual;
         _observeHealth(_now());
@@ -1641,6 +1682,7 @@ class PlaybackSession {
         ..invalidateRequests()
         .._requiresLoad = true;
     }
+    _invalidateMediaAnchor();
     _supersedeAcceptedRequest();
     _operations.prioritizeLoad();
     _owners
@@ -1669,6 +1711,7 @@ class PlaybackSession {
     _owners.remove(owner);
     if (identical(_acceptedRequest?.owner, owner)) _supersedeAcceptedRequest();
     if (wasActive) {
+      _invalidateMediaAnchor();
       _operations.prioritizeLoad();
       _activeOwner = null;
       for (final remainingOwner in _owners) {
@@ -1700,6 +1743,7 @@ class PlaybackSession {
     _shutdownStarted = true;
     _phase = PlaybackPhase.closing;
     _stage = PlaybackStage.closing;
+    _invalidateMediaAnchor();
     _supersedeAcceptedRequest();
     _operations.dispose();
     _settlePlayingWaiters(const CommandResult.closed());
@@ -1792,7 +1836,9 @@ class PlaybackSession {
     _stage = PlaybackStage.idle;
     _failure = null;
     _publish();
+    _invalidateMediaAnchor();
     _disposed = true;
+    unawaited(_mediaAnchors.close());
     unawaited(_runtimeSubscription?.cancel());
     _runtimeSubscription = null;
     if (!_traceController.isClosed) unawaited(_traceController.close());
