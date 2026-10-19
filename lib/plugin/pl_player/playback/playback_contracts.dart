@@ -687,6 +687,9 @@ abstract interface class PlaybackSeekSubmissionGate {
 abstract interface class PlaybackRuntimePort {
   int get runtimeId;
 
+  /// 当前原生进度，供提交重载前冻结续播位置。
+  Duration? get position;
+
   /// Whether changing shaders on the active output would reset its renderer.
   bool get shaderChangeRequiresRendererReset;
   Stream<PlaybackRuntimeEvent> get events;
@@ -717,6 +720,9 @@ abstract interface class PlaybackRuntimePort {
   );
   Future<PlaybackRuntimeCommandResult> setAudioTrack(
     int? trackId,
+    PlaybackExecutionContext context,
+  );
+  Future<PlaybackRuntimeCommandResult> reloadAudio(
     PlaybackExecutionContext context,
   );
   Future<PlaybackRuntimeCommandResult> setSubtitleTrack(

@@ -39,6 +39,36 @@ void main() {
     recovery.dispose();
   });
 
+  testWidgets('残余 33ms 数据不能取消断流恢复，缓存耗尽后重载', (tester) async {
+    var state = (
+      buffering: false,
+      position: const Duration(milliseconds: 838500),
+      buffer: const Duration(milliseconds: 851067),
+    );
+    var retries = 0;
+    final recovery = PlaybackNetworkRecovery(
+      isCurrent: () => true,
+      readState: () => state,
+      reload: (_) async => retries++,
+      onError: (error) => fail('$error'),
+    )..schedule(waitForCachedPlayback: true);
+    state = (
+      buffering: false,
+      position: const Duration(milliseconds: 841500),
+      buffer: const Duration(milliseconds: 851100),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 0);
+    state = (
+      buffering: false,
+      position: const Duration(milliseconds: 851480),
+      buffer: const Duration(milliseconds: 851100),
+    );
+    await tester.pump(const Duration(seconds: 3));
+    expect(retries, 1);
+    recovery.dispose();
+  });
+
   testWidgets('独立音轨故障但主视频缓存健康，取消主视频重载', (tester) async {
     var state = (
       buffering: false,

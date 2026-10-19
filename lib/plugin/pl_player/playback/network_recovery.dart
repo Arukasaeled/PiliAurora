@@ -80,12 +80,14 @@ class PlaybackNetworkRecovery {
     final previous = _failureState;
     if (_allowNativeRecovery && !_requireEmptyBuffer && previous != null) {
       final state = readState();
-      // FFmpeg 可以自行重连；播放和缓冲终点都恢复推进后，取消这次整段重载。
-      // 仅播放时钟推进可能来自剩余缓存或独立音轨，仍需保留断流恢复。
+      // 新读入的数据需补足已消耗的时长，残余损坏包的少量推进仍要等待缓存耗尽。
       if (state != null &&
           !state.buffering &&
+          state.buffer > state.position &&
           state.position > previous.position &&
-          state.buffer > previous.buffer) {
+          state.buffer > previous.buffer &&
+          state.buffer - state.position >=
+              previous.buffer - previous.position) {
         // 本次没有重载，不占用下一次真实断流的限频名额。
         if (_scheduledAttempt case final key?) _attempted.remove(key);
         return;

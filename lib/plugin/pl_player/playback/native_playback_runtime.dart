@@ -14,6 +14,7 @@ import 'package:pili_aurora/plugin/pl_player/playback/playback_runtime_slot.dart
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/video_frame_timings.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/native_audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_media_source.dart';
 import 'package:pili_aurora/services/android_video_output_limit.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
@@ -40,6 +41,10 @@ class NativePlaybackRuntime
 
   @override
   final int runtimeId = _nextRuntimeId++;
+
+  @override
+  Duration? get position => _player?.state.position;
+
   final PlaybackRuntimeConfig configuration;
   final Map<String, Object?> Function() diagnosticsExtra;
 
@@ -305,6 +310,29 @@ class NativePlaybackRuntime
     _emitCapabilities(context.loadId);
     _configRevision++;
     return const PlaybackRuntimeCommandResult();
+  });
+
+  @override
+  Future<PlaybackRuntimeCommandResult> reloadAudio(
+    PlaybackExecutionContext context,
+  ) => _serialize(() async {
+    final player = _usablePlayer(context);
+    final audio = _activePlan?.source.currentAudioSource;
+    if (player == null || audio == null) {
+      return const PlaybackRuntimeCommandResult(applied: false);
+    }
+    final applied = await reloadNativeAudio(
+      player: player,
+      audioUrl: audio,
+      trackList: _diagnostics?.property('track-list'),
+      isCurrent: context.isCurrent,
+    );
+    if (applied) {
+      _lastPts.remove('audio');
+      _lastAudioPtsAdvance = null;
+      _emitActual(context.loadId);
+    }
+    return PlaybackRuntimeCommandResult(applied: applied);
   });
 
   @override

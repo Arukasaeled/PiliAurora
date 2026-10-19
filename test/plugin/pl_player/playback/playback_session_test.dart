@@ -689,6 +689,118 @@ void main() {
     await runtime.released;
   });
 
+  test('音轨重连经过会话命令，保留视频代次、暂停意图和音量', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('movie'), start: PlaybackStartPolicy.pause);
+    await owner.setVolume(37);
+    final snapshot = session.currentSnapshot;
+    expect((await owner.reloadAudio()).outcome, CommandOutcome.applied);
+    expect(runtime.audioReloadContexts, hasLength(1));
+    expect(runtime.audioReloadContexts.single.loadId, snapshot.loadId);
+    expect(runtime.loadedPlans, hasLength(1));
+    expect(session.currentSnapshot.loadId, snapshot.loadId);
+    expect(session.currentSnapshot.intent.playing, isFalse);
+    expect(session.currentSnapshot.configuration.desired.volume, 37);
+    expect(runtime.seekCalls, isEmpty);
+    owner.close();
+    await session.shutdown();
+  });
+
+  test('音轨重连中切源使旧结果失效，原生命令排空后再加载新媒体', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final pending = Completer<PlaybackRuntimeCommandResult>();
+    runtime.onReloadAudio = (_) => pending.future;
+    addTearDown(() async {
+      if (!pending.isCompleted) {
+        pending.complete(const PlaybackRuntimeCommandResult());
+      }
+      owner.close();
+      await session.shutdown();
+    });
+    await owner.load(_plan('first'));
+    final repair = owner.reloadAudio();
+    await _until(() => runtime.audioReloadContexts.isNotEmpty);
+    final nextLoad = owner.load(_plan('second'));
+    expect((await repair).outcome, CommandOutcome.superseded);
+    expect(runtime.audioReloadContexts.single.isCurrent(), isFalse);
+    expect(runtime.loadedKeys, ['first']);
+    pending.complete(const PlaybackRuntimeCommandResult());
+    expect((await nextLoad).outcome, LoadOutcome.ready);
+    expect(runtime.loadedKeys, ['first', 'second']);
+    expect(session.currentPlan?.contentKey, 'second');
+  });
+
+  test('自动恢复从当前播放位置继续，保留当前配置和来源候选', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final plan = _plan('movie');
+    await owner.load(plan, start: PlaybackStartPolicy.play);
+    await owner.setVolume(37);
+    runtime
+      ..emitActual(
+        session.loadId,
+        const PlaybackActual(
+          playing: true,
+          position: Duration(seconds: 1),
+        ),
+      )
+      // 原生进度持续变化时不会为每一帧发布规范状态快照。
+      ..position = const Duration(milliseconds: 867600);
+    expect((await owner.recover(plan)).outcome, LoadOutcome.ready);
+    final reloaded = runtime.loadedPlans.last;
+    expect(reloaded.startPosition, const Duration(milliseconds: 867600));
+    expect(reloaded.reloadPosition, const Duration(milliseconds: 867600));
+    expect(reloaded.configuration.volume, 37);
+    expect(reloaded.source, same(plan.source));
+    owner.close();
+    await session.shutdown();
+  });
+
+  test('延期恢复在执行时捕获新位置，直播恢复不携带位置', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final plan = _plan('movie');
+    await owner.load(plan, start: PlaybackStartPolicy.play);
+    await owner.setPlaying(false);
+    expect((await owner.recover(plan)).outcome, LoadOutcome.deferred);
+    runtime.emitActual(
+      session.loadId,
+      const PlaybackActual(
+        playing: false,
+        position: Duration(seconds: 8),
+      ),
+    );
+    await owner.setPlaying(true);
+    runtime.emitActual(
+      session.loadId,
+      const PlaybackActual(
+        playing: true,
+        videoProgressing: false,
+        position: Duration(seconds: 8),
+      ),
+    );
+    await _until(() => runtime.loadedPlans.length == 2);
+    expect(runtime.loadedPlans.last.reloadPosition, const Duration(seconds: 8));
+    await _until(() => session.currentSnapshot.phase == PlaybackPhase.ready);
+    final live = _plan('live', kind: PlaybackTimelineKind.live);
+    await owner.load(live, start: PlaybackStartPolicy.play);
+    runtime.emitActual(
+      session.loadId,
+      const PlaybackActual(playing: true, position: Duration(seconds: 500)),
+    );
+    await owner.recover(live);
+    expect(runtime.loadedPlans.last.startPosition, isNull);
+    expect(runtime.loadedPlans.last.reloadPosition, isNull);
+    owner.close();
+    await session.shutdown();
+  });
+
   test('暂停期间恢复延期，恢复用户播放意图后才提交加载', () async {
     var now = Duration.zero;
     final runtime = _FakeRuntime();
@@ -901,6 +1013,8 @@ class _FakeRuntime implements PlaybackRuntimePort {
   @override
   final int runtimeId = 51;
   @override
+  Duration? position;
+  @override
   bool shaderChangeRequiresRendererReset = false;
   final StreamController<PlaybackRuntimeEvent> _events =
       StreamController<PlaybackRuntimeEvent>.broadcast(sync: true);
@@ -909,6 +1023,9 @@ class _FakeRuntime implements PlaybackRuntimePort {
   final loadedPlans = <PlaybackPlan>[];
   final playCalls = <bool>[];
   final seekCalls = <Duration>[];
+  final audioReloadContexts = <PlaybackExecutionContext>[];
+  Future<PlaybackRuntimeCommandResult> Function(PlaybackExecutionContext)?
+  onReloadAudio;
   final shaderCalls = <List<String>>[];
   final decoderCalls = <String>[];
   final audioOnlyCalls = <bool>[];
@@ -935,13 +1052,16 @@ class _FakeRuntime implements PlaybackRuntimePort {
   @override
   Future<void> get released => _released.future;
 
-  void emitActual(int loadId, PlaybackActual actual) => _events.add(
-    PlaybackRuntimeStateChanged(
-      runtimeId: runtimeId,
-      loadId: loadId,
-      actual: actual,
-    ),
-  );
+  void emitActual(int loadId, PlaybackActual actual) {
+    position = actual.position;
+    _events.add(
+      PlaybackRuntimeStateChanged(
+        runtimeId: runtimeId,
+        loadId: loadId,
+        actual: actual,
+      ),
+    );
+  }
 
   void completeRelease() {
     if (!_released.isCompleted) _released.complete();
@@ -1011,6 +1131,16 @@ class _FakeRuntime implements PlaybackRuntimePort {
     int? trackId,
     PlaybackExecutionContext context,
   ) async => const PlaybackRuntimeCommandResult();
+
+  @override
+  Future<PlaybackRuntimeCommandResult> reloadAudio(
+    PlaybackExecutionContext context,
+  ) async {
+    audioReloadContexts.add(context);
+    return onReloadAudio == null
+        ? const PlaybackRuntimeCommandResult()
+        : onReloadAudio!(context);
+  }
 
   @override
   Future<PlaybackRuntimeCommandResult> setSubtitleTrack(
