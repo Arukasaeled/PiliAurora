@@ -105,7 +105,7 @@ class _Player implements NativePlayer {
   Completer<void>? pending;
 
   @override
-  Future<void> command(List<String> args) async {
+  Future<void> command(List<String> args, {int? seekObservationId}) async {
     commands.add(args);
     await pending?.future;
   }
