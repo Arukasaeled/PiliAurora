@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
 
 const _size = Size(800, 360);
 const _fontSize = 20.0;
@@ -52,6 +53,137 @@ double _baseTrackHeight(double lineHeight) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('同尺寸同内容在 Canvas 与 Windows 得到一致普通排轨结果', (tester) async {
+    const option = DanmakuOption(fontSize: _fontSize, lineHeight: 1);
+    late DanmakuController<void> canvas;
+    await tester.pumpWidget(
+      _screen(option: option, onCreated: (value) => canvas = value),
+    );
+    final windows = WindowsDanmakuRenderer<void>(option: option, size: _size);
+    addTearDown(windows.dispose);
+    (bool, int) locate(DanmakuController<void> controller, String text) {
+      final fixed = controller.staticDanmaku.indexWhere(
+        (item) => item?.content.text == text,
+      );
+      if (fixed >= 0) return (false, fixed);
+      return (
+        true,
+        controller.scrollDanmaku.indexWhere(
+          (items) => items.any((item) => item.content.text == text),
+        ),
+      );
+    }
+
+    final inputs = [
+      ('scroll', DanmakuItemType.scroll, 1.0),
+      ('fixed', DanmakuItemType.top, 1.0),
+      ('expanded scroll', DanmakuItemType.scroll, 2.0),
+      ('expanded bottom', DanmakuItemType.bottom, 2.0),
+      ('another expanded', DanmakuItemType.scroll, 3.0),
+      ('expanded top', DanmakuItemType.top, 2.0),
+    ];
+    for (final (text, type, scale) in inputs) {
+      DanmakuContentItem<void> content() =>
+          DanmakuContentItem<void>(text, type: type, fontSizeScale: scale);
+      expect(
+        canvas.addDanmaku(content()),
+        windows.add(content()),
+        reason: text,
+      );
+      expect(
+        locate(canvas, text),
+        locate(windows.controller, text),
+        reason: text,
+      );
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('两端命中查询采用相同放大边界并在清空后失效', (tester) async {
+    const option = DanmakuOption(fontSize: _fontSize, lineHeight: 1);
+    late DanmakuController<void> canvas;
+    await tester.pumpWidget(
+      _screen(option: option, onCreated: (value) => canvas = value),
+    );
+    final windows = WindowsDanmakuRenderer<void>(option: option, size: _size);
+    addTearDown(windows.dispose);
+    for (final controller in [canvas, windows.controller]) {
+      expect(
+        controller.addDanmaku(
+          DanmakuContentItem<void>(
+            'expanded',
+            type: DanmakuItemType.top,
+            fontSizeScale: 2,
+          ),
+        ),
+        isTrue,
+      );
+      final item = controller.staticDanmaku.first!;
+      final inside = Offset(item.xPosition + item.width / 2, item.height - 1);
+      expect(controller.findSingleDanmaku(inside)?.$2, same(item));
+      expect(controller.findDanmaku(inside).map((entry) => entry.$2), [item]);
+      expect(
+        controller.findSingleDanmaku(Offset(item.xPosition - 1, 1)),
+        isNull,
+      );
+      item.expired = true;
+      expect(controller.findSingleDanmaku(inside), isNull);
+      controller.clear();
+      expect(controller.findDanmaku(inside), isEmpty);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('两端海量模式共用活动额度，清空后释放名额', (tester) async {
+    const option = DanmakuOption(fontSize: _fontSize, massiveMode: true);
+    late DanmakuController<void> canvas;
+    await tester.pumpWidget(
+      _screen(option: option, onCreated: (value) => canvas = value),
+    );
+    final windows = WindowsDanmakuRenderer<void>(option: option, size: _size);
+    addTearDown(windows.dispose);
+    for (final controller in [canvas, windows.controller]) {
+      for (var index = 0; index < DanmakuDisplayLimits.maxActive; index++) {
+        expect(controller.addDanmaku(DanmakuContentItem<void>('x')), isTrue);
+      }
+      expect(controller.activeCount, DanmakuDisplayLimits.maxActive);
+      expect(
+        controller.addDanmaku(DanmakuContentItem<void>('overflow')),
+        isFalse,
+      );
+      controller.clear();
+      expect(controller.activeCount, 0);
+      expect(controller.addDanmaku(DanmakuContentItem<void>('next')), isTrue);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('固定项有效期结束后可立即复用轨道并释放旧图片', (tester) async {
+    late DanmakuController<void> controller;
+    await tester.pumpWidget(
+      _screen(
+        option: const DanmakuOption(fontSize: _fontSize, staticDuration: .05),
+        onCreated: (value) => controller = value,
+      ),
+    );
+    controller.addDanmaku(
+      DanmakuContentItem<void>('old', type: DanmakuItemType.top),
+    );
+    await tester.pump();
+    final old = controller.staticDanmaku.first!;
+    final image = old.image!;
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      controller.addDanmaku(
+        DanmakuContentItem<void>('replacement', type: DanmakuItemType.top),
+      ),
+      isTrue,
+    );
+    expect(controller.staticDanmaku.first!.content.text, 'replacement');
+    expect(image.debugDisposed, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets('enlarged scrolling items reserve rows and remain hittable', (
     tester,

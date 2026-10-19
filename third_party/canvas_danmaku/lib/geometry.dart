@@ -54,6 +54,46 @@ class DanmakuTrajectory {
 
 /// 普通弹幕共用的速度与入场追尾规则，时间单位为毫秒。
 abstract final class DanmakuGeometry {
+  static int trackSpan(double height, double trackHeight) =>
+      math.max(1, (height / trackHeight).ceil());
+
+  static bool contains(
+          {required double x,
+          required double y,
+          required double width,
+          required double height,
+          required double pointX,
+          required double pointY}) =>
+      x <= pointX && pointX <= x + width && y <= pointY && pointY <= y + height;
+
+  /// 放大项按完整有效轨迹占位，普通静态项与普通滚动项允许共用基础行。
+  static bool blocks(
+    DanmakuTrajectory candidate,
+    DanmakuTrajectory existing, {
+    required double trackHeight,
+    required double viewWidth,
+    required bool candidateScrolling,
+    required bool existingScrolling,
+    required bool sameTrack,
+    bool allowNormalOverlap = false,
+    double padding = 0,
+  }) {
+    if (math.min(candidate.endMs, existing.endMs) <=
+        math.max(candidate.startMs, existing.startMs)) {
+      return false;
+    }
+    if (candidate.height > trackHeight || existing.height > trackHeight) {
+      return candidate.overlapsDuring(existing, padding: padding);
+    }
+    if (!sameTrack || allowNormalOverlap) return false;
+    if (!candidateScrolling && !existingScrolling) return true;
+    if (candidateScrolling && existingScrolling) {
+      return !existing.canBeFollowedBy(
+          candidate.width, candidate.velocity, viewWidth, candidate.startMs);
+    }
+    return false;
+  }
+
   static double scrollVelocity(
           double viewWidth, double width, double durationMs,
           {required bool fixed}) =>

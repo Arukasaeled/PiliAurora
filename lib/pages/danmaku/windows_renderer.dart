@@ -41,8 +41,8 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       clear: clear,
       getOption: () => _option,
       isRunning: () => running,
-      findDanmaku: (_) => const Iterable.empty(),
-      findSingleDanmaku: (_) => null,
+      findDanmaku: _findDanmaku,
+      findSingleDanmaku: (position) => _findDanmaku(position).firstOrNull,
       getTrackCount: () => scrollDanmaku.length,
       scrollDanmaku: scrollDanmaku,
       staticDanmaku: staticDanmaku,
@@ -59,7 +59,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
     defaultValue: 96,
   );
   static const maxActiveBytes = maxActiveBytesMiB * 1024 * 1024;
-  static const maxActiveItems = 600;
+  static const maxActiveItems = DanmakuDisplayLimits.maxActive;
   static const maxPendingPrewarm = 64;
   // 实验性实现，仅通过编译参数启用。
   static const adaptivePrewarm = bool.fromEnvironment(
@@ -208,7 +208,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
   );
 
   int _trackSpan(double height) {
-    return math.max(1, (height / _trackHeight).ceil());
+    return DanmakuGeometry.trackSpan(height, _trackHeight);
   }
 
   bool _fitsTrack(int track, double height) {
@@ -216,15 +216,38 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
     return track >= 0 && track + span <= scrollDanmaku.length;
   }
 
-  bool _overlapsExpandedEntry(DanmakuTrajectory trajectory) {
+  bool _blocksPlacement(
+    DanmakuTrajectory trajectory,
+    int track,
+    bool scrolling, {
+    bool allowNormalOverlap = false,
+  }) {
+    bool blocks(_PreparedEntry entry) => DanmakuGeometry.blocks(
+      trajectory,
+      entry.trajectory,
+      trackHeight: _trackHeight,
+      viewWidth: _size.width,
+      candidateScrolling: scrolling,
+      existingScrolling: entry.scrolling,
+      sameTrack: track == entry.track,
+      allowNormalOverlap: allowNormalOverlap,
+      padding: 1 / rasters.devicePixelRatio,
+    );
     final expanded = trajectory.height > _trackHeight;
     final entries = expanded ? _entries.values : _expandedEntries.values;
     for (final entry in entries) {
-      if (trajectory.overlapsDuring(
-        entry.trajectory,
-        padding: 1 / rasters.devicePixelRatio,
-      )) {
-        return true;
+      if (blocks(entry)) return true;
+    }
+    if (!expanded && !allowNormalOverlap) {
+      if (scrolling) {
+        for (final item in scrollDanmaku[track]) {
+          final entry = _entries[item];
+          if (entry != null && blocks(entry)) return true;
+        }
+      } else {
+        final item = staticDanmaku[track];
+        final entry = item == null ? null : _entries[item];
+        if (entry != null && blocks(entry)) return true;
       }
     }
     return false;
@@ -293,6 +316,14 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       }
       return false;
     }
+    if (!DanmakuDisplayLimits.canAdd(
+      _entries.length + specialDanmaku.length,
+      specialDanmaku.length,
+      isSpecial: content.type == DanmakuItemType.special,
+    )) {
+      rejectedByActiveItemLimit++;
+      return false;
+    }
     if (content is SpecialDanmakuContentItem<T>) {
       if (!DanmakuRenderGuard.canRasterizeSpecial(
         content,
@@ -349,13 +380,10 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
             : index;
         if (staticDanmaku[candidate] == null &&
             _fitsTrack(candidate, raster.height) &&
-            !_overlapsExpandedEntry(
-              _trajectory(
-                raster.width,
-                raster.height,
-                candidate,
-                false,
-              ),
+            !_blocksPlacement(
+              _trajectory(raster.width, raster.height, candidate, false),
+              candidate,
+              false,
             )) {
           track = candidate;
           break;
@@ -367,24 +395,15 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       }
     }
     if (scrolling) {
-      final velocity = _velocity(raster.width);
       for (var index = 0; index < scrollDanmaku.length; index++) {
         if (!_fitsTrack(index, raster.height)) continue;
-        final previous = scrollDanmaku[index].lastOrNull;
         final candidateTrajectory = _trajectory(
           raster.width,
           raster.height,
           index,
           true,
         );
-        if (!_overlapsExpandedEntry(candidateTrajectory) &&
-            (previous == null ||
-                _entries[previous]!.trajectory.canBeFollowedBy(
-                  raster.width,
-                  velocity,
-                  _size.width,
-                  tick.toDouble(),
-                ))) {
+        if (!_blocksPlacement(candidateTrajectory, index, true)) {
           track = index;
           break;
         }
@@ -400,7 +419,12 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
           true,
         );
         if (_fitsTrack(candidate, raster.height) &&
-            !_overlapsExpandedEntry(trajectory)) {
+            !_blocksPlacement(
+              trajectory,
+              candidate,
+              true,
+              allowNormalOverlap: true,
+            )) {
           track = candidate;
         }
       }
@@ -681,7 +705,12 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
               _option.staticDurationInMilliseconds,
         ),
       );
-      if (_overlapsExpandedEntry(entry.trajectory)) {
+      if (_blocksPlacement(
+        entry.trajectory,
+        entry.track,
+        entry.scrolling,
+        allowNormalOverlap: true,
+      )) {
         _disposeItem(item);
         continue;
       }
@@ -805,6 +834,14 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       );
     }
   }
+
+  Iterable<(double, DanmakuItem<T>)> _findDanmaku(Offset position) =>
+      hitTestDanmaku(
+        position: position,
+        trackHeight: _trackHeight,
+        fixed: staticDanmaku,
+        scrolling: scrollDanmaku,
+      );
 
   void pause() {
     running = false;

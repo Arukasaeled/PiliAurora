@@ -26,6 +26,11 @@ class DanmakuController<T> {
 
   int get trackCount => getTrackCount();
 
+  int get activeCount =>
+      specialDanmaku.length +
+      staticDanmaku.nonNulls.length +
+      scrollDanmaku.fold(0, (count, track) => count + track.length);
+
   Map<String, Object?> get schedulerDiagnostics =>
       getSchedulerDiagnostics?.call() ?? const {};
 

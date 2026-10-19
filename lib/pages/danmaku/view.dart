@@ -48,10 +48,10 @@ class _PlDanmakuState extends State<PlDanmaku> {
     'WINDOWS_DANMAKU_PREPROCESS',
     defaultValue: true,
   );
-  static const _maxDanmakuPerTick = 120;
-  static const _maxActiveDanmaku = 600;
-  static const _maxSpecialPerTick = 4;
-  static const _maxActiveSpecialDanmaku = 32;
+  static const _maxDanmakuPerTick = DanmakuDisplayLimits.maxPerBatch;
+  static const _maxActiveDanmaku = DanmakuDisplayLimits.maxActive;
+  static const _maxSpecialPerTick = DanmakuDisplayLimits.maxSpecialPerBatch;
+  static const _maxActiveSpecialDanmaku = DanmakuDisplayLimits.maxActiveSpecial;
 
   PlPlayerController get playerController => widget.playerController;
 
@@ -144,7 +144,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
       final danmakuWeight = DanmakuOptions.danmakuWeight;
       var remaining = _maxDanmakuPerTick.clamp(
         0,
-        _maxActiveDanmaku - _activeDanmakuCount(controller),
+        _maxActiveDanmaku - controller.activeCount,
       );
       var remainingSpecial = _maxSpecialPerTick.clamp(
         0,
@@ -249,15 +249,6 @@ class _PlDanmakuState extends State<PlDanmaku> {
           )
           .map(_normalContent),
     );
-  }
-
-  int _activeDanmakuCount(DanmakuController<DanmakuExtra> controller) {
-    var count = controller.specialDanmaku.length;
-    count += controller.staticDanmaku.nonNulls.length;
-    for (final track in controller.scrollDanmaku) {
-      count += track.length;
-    }
-    return count;
   }
 
   @override
