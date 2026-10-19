@@ -1,7 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
-import 'package:canvas_danmaku/utils/utils.dart' as canvas_danmaku;
+import 'package:canvas_danmaku/text_renderer.dart' as canvas_danmaku;
 
 typedef DanmakuRasterKey = (String, int, bool, bool, int?, double);
 
@@ -37,6 +37,20 @@ class DanmakuRasterCache {
   DanmakuOption option;
   double devicePixelRatio;
   String? fontFamily;
+  canvas_danmaku.DanmakuTextRenderer? _textRenderer;
+  canvas_danmaku.DanmakuTextRenderer get textRenderer {
+    final current = _textRenderer;
+    if (current != null &&
+        current.devicePixelRatio == devicePixelRatio &&
+        current.fontFamily == fontFamily) {
+      return current;
+    }
+    return _textRenderer = canvas_danmaku.DanmakuTextRenderer(
+      devicePixelRatio: devicePixelRatio,
+      fontFamily: fontFamily,
+    );
+  }
+
   final int maxEntries;
   final int maxBytes;
   final int maxItemBytes;
@@ -75,10 +89,8 @@ class DanmakuRasterCache {
     if (entry.image == null) {
       final paragraph = entry.paragraph;
       if (paragraph == null) return null;
-      canvas_danmaku.DmUtils.devicePixelRatio = devicePixelRatio;
-      canvas_danmaku.DmUtils.fontFamily = fontFamily;
-      canvas_danmaku.DmUtils.updateSelfSendPaint(option.strokeWidth);
-      entry.image = canvas_danmaku.DmUtils.recordDanmakuImage(
+
+      entry.image = textRenderer.recordDanmakuImage(
         contentParagraph: paragraph,
         content: content,
         fontSize: option.fontSize,
@@ -95,13 +107,10 @@ class DanmakuRasterCache {
   }
 
   DanmakuRaster? get(DanmakuContentItem content, {bool rasterize = false}) {
-    canvas_danmaku.DmUtils.devicePixelRatio = devicePixelRatio;
-    canvas_danmaku.DmUtils.fontFamily = fontFamily;
-    canvas_danmaku.DmUtils.updateSelfSendPaint(option.strokeWidth);
     final key = keyOf(content);
     var entry = _entries.remove(key);
     if (entry == null) {
-      final paragraph = canvas_danmaku.DmUtils.generateParagraph(
+      final paragraph = textRenderer.generateParagraph(
         content: content,
         fontSize: option.fontSize,
         fontWeight: option.fontWeight,

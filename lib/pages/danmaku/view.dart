@@ -183,6 +183,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
               MediaQuery.devicePixelRatioOf(context),
               controller.option.strokeWidth,
               controller.option.fontWeight,
+              fontFamily: DefaultTextStyle.of(context).style.fontFamily,
             )) {
               continue;
             }

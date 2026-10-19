@@ -1,7 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/models/danmaku_content_item.dart';
-import 'package:canvas_danmaku/utils/utils.dart';
+import 'package:canvas_danmaku/text_renderer.dart';
 
 class DanmakuItem<T> {
   /// 弹幕内容
@@ -21,6 +21,7 @@ class DanmakuItem<T> {
 
   /// 弹幕布局缓存
   ui.Image? image;
+  ui.Rect? specialBounds;
 
   bool expired = false;
 
@@ -34,9 +35,13 @@ class DanmakuItem<T> {
     return needRemove;
   }
 
-  void dispose() {
+  void invalidateImage() {
     image?.dispose();
     image = null;
+  }
+
+  void dispose() {
+    invalidateImage();
     content.dispose();
   }
 
@@ -46,6 +51,7 @@ class DanmakuItem<T> {
     required this.width,
     this.xPosition = 0,
     this.image,
+    this.specialBounds,
     this.drawTick,
   });
 
@@ -53,14 +59,15 @@ class DanmakuItem<T> {
     double fontSize,
     int fontWeight,
     double strokeWidth,
+    DanmakuTextRenderer textRenderer,
   ) {
     if (image == null) {
-      final paragraph = DmUtils.generateParagraph(
+      final paragraph = textRenderer.generateParagraph(
         content: content,
         fontSize: fontSize,
         fontWeight: fontWeight,
       );
-      image = DmUtils.recordDanmakuImage(
+      image = textRenderer.recordDanmakuImage(
         contentParagraph: paragraph,
         content: content,
         fontSize: fontSize,

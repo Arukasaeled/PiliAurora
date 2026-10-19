@@ -1,5 +1,5 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart';
-import 'package:canvas_danmaku/utils/utils.dart' as canvas;
+import 'package:canvas_danmaku/text_renderer.dart' as canvas;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/pages/danmaku/raster_cache.dart';
@@ -28,12 +28,12 @@ void main() {
       expect(largeRaster.image!.height, largeRaster.height.ceil());
       expect(cache.get(normal), same(smallRaster));
 
-      final paragraph = canvas.DmUtils.generateParagraph(
+      final paragraph = (const canvas.DanmakuTextRenderer()).generateParagraph(
         content: large,
         fontSize: 20,
         fontWeight: option.fontWeight,
       );
-      final image = canvas.DmUtils.recordDanmakuImage(
+      final image = (const canvas.DanmakuTextRenderer()).recordDanmakuImage(
         contentParagraph: paragraph,
         content: large,
         fontSize: 20,

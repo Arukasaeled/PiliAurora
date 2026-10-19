@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:canvas_danmaku/special_danmaku_painter.dart';
-import 'package:canvas_danmaku/utils/utils.dart' as canvas_danmaku;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/pages/danmaku/prewarm_policy.dart';
@@ -172,8 +171,8 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    canvas_danmaku.DmUtils.fontFamily = rasters.fontFamily;
-    final paragraph = canvas_danmaku.DmUtils.generateParagraph(
+
+    final paragraph = rasters.textRenderer.generateParagraph(
       content: DanmakuContentItem<T>('弹幕'),
       fontSize: _option.fontSize,
       fontWeight: _option.fontWeight,
@@ -300,17 +299,18 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
         rasters.devicePixelRatio,
         _option.strokeWidth,
         _option.fontWeight,
+        fontFamily: rasters.fontFamily,
       )) {
         rejectedByRaster++;
         return false;
       }
-      canvas_danmaku.DmUtils.devicePixelRatio = rasters.devicePixelRatio;
-      canvas_danmaku.DmUtils.fontFamily = rasters.fontFamily;
-      final image = canvas_danmaku.DmUtils.recordSpecialDanmakuImg(
+
+      final raster = rasters.textRenderer.rasterizeSpecial(
         content: content,
         strokeWidth: _option.strokeWidth,
         fontWeight: _option.fontWeight,
       );
+      final image = raster.image;
       final bytes = image.width * image.height * 4;
       if (activeBytes + bytes > maxActiveBytes) {
         image.dispose();
@@ -320,9 +320,10 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       specialDanmaku.add(
         DanmakuItem<T>(
           content: content,
-          width: content.rect.width,
-          height: content.rect.height,
+          width: raster.bounds.width,
+          height: raster.bounds.height,
           image: image,
+          specialBounds: raster.bounds,
           drawTick: tick,
         ),
       );
@@ -705,22 +706,27 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
           rasters.devicePixelRatio,
           _option.strokeWidth,
           _option.fontWeight,
+          fontFamily: rasters.fontFamily,
         )) {
           return true;
         }
-        canvas_danmaku.DmUtils.devicePixelRatio = rasters.devicePixelRatio;
-        canvas_danmaku.DmUtils.fontFamily = rasters.fontFamily;
-        final image = canvas_danmaku.DmUtils.recordSpecialDanmakuImg(
+
+        final raster = rasters.textRenderer.rasterizeSpecial(
           content: content,
           fontWeight: _option.fontWeight,
           strokeWidth: _option.strokeWidth,
         );
+        final image = raster.image;
         final bytes = image.width * image.height * 4;
         if (activeBytes + bytes > maxActiveBytes) {
           image.dispose();
           return true;
         }
-        item.image = image;
+        item
+          ..image = image
+          ..specialBounds = raster.bounds
+          ..width = raster.bounds.width
+          ..height = raster.bounds.height;
         activeBytes += bytes;
       }
       return false;
@@ -771,11 +777,10 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
       if (item != null) _paintItem(canvas, item, track * _trackHeight);
     }
     if (specialDanmaku.isNotEmpty) {
-      canvas_danmaku.DmUtils.devicePixelRatio = rasters.devicePixelRatio;
-      canvas_danmaku.DmUtils.fontFamily = rasters.fontFamily;
       SpecialDanmakuPainter(
         length: specialDanmaku.length,
         danmakuItems: specialDanmaku,
+        textRenderer: rasters.textRenderer,
         fontSize: _option.fontSize,
         fontWeight: _option.fontWeight,
         strokeWidth: _option.strokeWidth,

@@ -2,7 +2,6 @@ import 'dart:math' show cos, sin;
 import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
-import 'package:canvas_danmaku/utils/utils.dart' as canvas_danmaku;
 import 'package:material_ui/material_ui.dart';
 
 /// 在 canvas_danmaku 同步生成图片前，限制单条高级弹幕的栅格尺寸。
@@ -14,8 +13,9 @@ abstract final class DanmakuRenderGuard {
     SpecialDanmakuContentItem content,
     double devicePixelRatio,
     double strokeWidth,
-    int fontWeight,
-  ) {
+    int fontWeight, {
+    String? fontFamily,
+  }) {
     if (!devicePixelRatio.isFinite ||
         devicePixelRatio <= 0 ||
         !content.fontSize.isFinite ||
@@ -29,7 +29,7 @@ abstract final class DanmakuRenderGuard {
       ui.ParagraphStyle(
         fontSize: content.fontSize,
         fontWeight: FontWeight.values[fontWeight],
-        fontFamily: canvas_danmaku.DmUtils.fontFamily,
+        fontFamily: fontFamily,
         textDirection: TextDirection.ltr,
       ),
     )..addText(content.text);

@@ -1,7 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/models/danmaku_content_item.dart';
-import 'package:canvas_danmaku/utils/utils.dart';
+import 'package:canvas_danmaku/text_renderer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -23,12 +23,12 @@ void main() {
         ),
       ],
     );
-    final paragraph = DmUtils.generateParagraph(
+    final paragraph = (const DanmakuTextRenderer()).generateParagraph(
       content: content,
       fontSize: 24,
       fontWeight: FontWeight.values.indexOf(FontWeight.normal),
     );
-    final raster = DmUtils.recordDanmakuImage(
+    final raster = (const DanmakuTextRenderer()).recordDanmakuImage(
       contentParagraph: paragraph,
       content: content,
       fontSize: 24,

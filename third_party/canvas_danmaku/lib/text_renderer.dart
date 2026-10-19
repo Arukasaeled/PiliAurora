@@ -4,19 +4,13 @@ import 'dart:ui' as ui;
 import 'package:canvas_danmaku/models/danmaku_content_item.dart';
 import 'package:material_ui/material_ui.dart';
 
-abstract final class DmUtils {
+/// 每个显示实例持有自己的字体与像素密度，布局与栅格使用同一上下文。
+final class DanmakuTextRenderer {
+  const DanmakuTextRenderer({this.devicePixelRatio = 1, this.fontFamily});
+
   static const maxRasterizeSize = 8192.0;
-
-  static double devicePixelRatio = 1;
-  static final Paint _selfSendPaint = Paint()
-    ..style = PaintingStyle.stroke
-    ..color = Colors.green;
-
-  static void updateSelfSendPaint(double strokeWidth) {
-    _selfSendPaint.strokeWidth = strokeWidth;
-  }
-
-  static String? fontFamily;
+  final double devicePixelRatio;
+  final String? fontFamily;
 
   static List<DanmakuInlineImage> _imagesInText(
     String text,
@@ -73,7 +67,7 @@ abstract final class DmUtils {
     }
   }
 
-  static ui.Paragraph generateParagraph({
+  ui.Paragraph generateParagraph({
     required DanmakuContentItem content,
     required double fontSize,
     required int fontWeight,
@@ -104,7 +98,7 @@ abstract final class DmUtils {
       ..layout(const ui.ParagraphConstraints(width: double.infinity));
   }
 
-  static ui.Image recordDanmakuImage({
+  ui.Image recordDanmakuImage({
     required ui.Paragraph contentParagraph,
     required DanmakuContentItem content,
     required double fontSize,
@@ -157,7 +151,8 @@ abstract final class DmUtils {
           ..pop();
       }
 
-      builder.pushStyle(ui.TextStyle(fontSize: fontSize, foreground: strokePaint));
+      builder
+          .pushStyle(ui.TextStyle(fontSize: fontSize, foreground: strokePaint));
       _addText(builder, content);
 
       final strokeParagraph = builder.build()
@@ -182,7 +177,12 @@ abstract final class DmUtils {
 
     if (content.selfSend) {
       w += 4;
-      canvas.drawRect(Rect.fromLTRB(0, 0, w, h), _selfSendPaint);
+      canvas.drawRect(
+          Rect.fromLTRB(0, 0, w, h),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..color = Colors.green
+            ..strokeWidth = strokeWidth);
     }
 
     final pic = rec.endRecording();
@@ -194,7 +194,7 @@ abstract final class DmUtils {
     return img;
   }
 
-  static ui.Image recordSpecialDanmakuImg({
+  ({ui.Image image, Rect bounds}) rasterizeSpecial({
     required SpecialDanmakuContentItem content,
     required int fontWeight,
     required double strokeWidth,
@@ -278,13 +278,11 @@ abstract final class DmUtils {
       rect = Rect.fromLTRB(left, top, right, bottom);
     }
 
-    content.rect = rect;
-
     final pic = rec.endRecording();
     final img = pic.toImageSync(width.ceil(), height.ceil());
     pic.dispose();
 
-    return img;
+    return (image: img, bounds: rect);
   }
 
   static Rect _calculateRotatedBounds(

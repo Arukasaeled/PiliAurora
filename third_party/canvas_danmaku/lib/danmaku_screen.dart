@@ -11,7 +11,7 @@ import 'package:canvas_danmaku/models/danmaku_option.dart';
 import 'package:canvas_danmaku/scroll_danmaku_painter.dart';
 import 'package:canvas_danmaku/special_danmaku_painter.dart';
 import 'package:canvas_danmaku/static_danmaku_painter.dart';
-import 'package:canvas_danmaku/utils/utils.dart';
+import 'package:canvas_danmaku/text_renderer.dart';
 import 'package:material_ui/material_ui.dart';
 
 class DanmakuScreen<T> extends StatefulWidget {
@@ -41,7 +41,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   /// 视图宽度
   double _viewWidth = 0;
   double _viewHeight = 0;
-  double devicePixelRatio = 1;
+  var _textRenderer = const DanmakuTextRenderer();
 
   /// 弹幕配置
   late DanmakuOption _option;
@@ -84,7 +84,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   void initState() {
     super.initState();
     _option = widget.option;
-    DmUtils.updateSelfSendPaint(_option.strokeWidth);
 
     _danmakuHeight = _calculateTrackHeight();
 
@@ -121,8 +120,27 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     _view = View.of(context);
     _ticker.muted = !TickerMode.valuesOf(context).enabled;
     final fontFamily = DefaultTextStyle.of(context).style.fontFamily;
-    if (fontFamily != DmUtils.fontFamily) {
-      DmUtils.fontFamily = fontFamily;
+    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final fontChanged = fontFamily != _textRenderer.fontFamily;
+    final densityChanged = devicePixelRatio != _textRenderer.devicePixelRatio;
+    _textRenderer = DanmakuTextRenderer(
+      fontFamily: fontFamily,
+      devicePixelRatio: devicePixelRatio,
+    );
+    if (fontChanged || densityChanged) {
+      for (final track in _scrollDanmakuItems) {
+        for (final item in track) {
+          item.invalidateImage();
+        }
+      }
+      for (final item in _staticDanmakuItems.value.nonNulls) {
+        item.invalidateImage();
+      }
+      for (final item in _specialDanmakuItems) {
+        item.invalidateImage();
+      }
+    }
+    if (fontChanged) {
       final trackHeight = _calculateTrackHeight();
       if (trackHeight != _danmakuHeight) {
         _clearTrackDanmakus();
@@ -130,24 +148,11 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
         _calcTracks();
       }
     }
-
-    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
-    DmUtils.devicePixelRatio = devicePixelRatio;
-    if (devicePixelRatio > this.devicePixelRatio) {
-      for (var i in _scrollDanmakuItems) {
-        for (var e in i) {
-          e.dispose();
-        }
-      }
-      for (var e in _staticDanmakuItems.value) {
-        e?.dispose();
-      }
-      for (var item in _specialDanmakuItems) {
-        item.dispose();
-      }
-      this.devicePixelRatio = devicePixelRatio;
-    }
     _updateNormalDanmaku(_notifier.value);
+    if (fontChanged || densityChanged) {
+      _refreshPaintClocks();
+      _refreshStaticDanmaku();
+    }
   }
 
   int _time = 0;
@@ -174,8 +179,8 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     for (var track = 0; track < _scrollDanmakuItems.length; track++) {
       for (final item in _scrollDanmakuItems[track]) {
         if (item.expired) continue;
-        item.drawParagraphIfNeeded(
-            _option.fontSize, _option.fontWeight, _option.strokeWidth);
+        item.drawParagraphIfNeeded(_option.fontSize, _option.fontWeight,
+            _option.strokeWidth, _textRenderer);
         final velocity = DanmakuGeometry.scrollVelocity(
             _viewWidth, item.width, _option.durationInMilliseconds,
             fixed: _option.scrollFixedVelocity);
@@ -208,8 +213,8 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
       }
     }
     for (final item in _staticDanmakuItems.value.nonNulls) {
-      item.drawParagraphIfNeeded(
-          _option.fontSize, _option.fontWeight, _option.strokeWidth);
+      item.drawParagraphIfNeeded(_option.fontSize, _option.fontWeight,
+          _option.strokeWidth, _textRenderer);
       item.xPosition = (_viewWidth - item.width) / 2;
       if (item.suspend && item.drawTick != null) {
         item.drawTick = item.drawTick! + max(0, tick - _normalTick);
@@ -230,7 +235,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
           style: TextStyle(
             fontSize: _option.fontSize,
             fontWeight: FontWeight.values[_option.fontWeight],
-            fontFamily: DmUtils.fontFamily,
+            fontFamily: _textRenderer.fontFamily,
             height: _option.lineHeight,
           ),
         ),
@@ -248,7 +253,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
         style: TextStyle(
           fontSize: _option.fontSize,
           fontWeight: FontWeight.values[_option.fontWeight],
-          fontFamily: DmUtils.fontFamily,
+          fontFamily: _textRenderer.fontFamily,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -277,7 +282,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   }) {
     bool added = false;
 
-    final paragraph = DmUtils.generateParagraph(
+    final paragraph = _textRenderer.generateParagraph(
       content: content,
       fontSize: _option.fontSize,
       fontWeight: _option.fontWeight,
@@ -303,7 +308,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
         width: danmakuWidth,
         height: danmakuHeight,
         content: content,
-        image: DmUtils.recordDanmakuImage(
+        image: _textRenderer.recordDanmakuImage(
           contentParagraph: paragraph,
           content: content,
           fontSize: _option.fontSize,
@@ -380,17 +385,18 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
       case DanmakuItemType.special:
         if (_option.hideSpecial) return false;
         added = true;
-        _specialDanmakuItems.add(
-          DanmakuItem<T>(
-              width: 0,
-              height: 0,
-              content: content,
-              image: DmUtils.recordSpecialDanmakuImg(
-                content: content as SpecialDanmakuContentItem,
-                fontWeight: _option.fontWeight,
-                strokeWidth: _option.strokeWidth,
-              )),
+        final raster = _textRenderer.rasterizeSpecial(
+          content: content as SpecialDanmakuContentItem,
+          fontWeight: _option.fontWeight,
+          strokeWidth: _option.strokeWidth,
         );
+        _specialDanmakuItems.add(DanmakuItem<T>(
+          width: raster.bounds.width,
+          height: raster.bounds.height,
+          content: content,
+          image: raster.image,
+          specialBounds: raster.bounds,
+        ));
         if (_running && !_ticker.isActive) {
           _ticker.start();
         }
@@ -491,7 +497,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     /// 清理已经存在的 Paragraph 缓存
     if (clearParagraph) {
       for (var item in _specialDanmakuItems) {
-        item.dispose();
+        item.invalidateImage();
       }
     }
 
@@ -499,9 +505,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     setState(() => _option = option);
     if (clearParagraph || lineHeightChanged) {
       _danmakuHeight = _calculateTrackHeight();
-    }
-    if (clearParagraph) {
-      DmUtils.updateSelfSendPaint(option.strokeWidth);
     }
     if (clearParagraph || lineHeightChanged || areaChanged || safeAreaChanged) {
       _calcTracks();
@@ -771,6 +774,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
               painter: SpecialDanmakuPainter(
                 length: _specialDanmakuItems.length,
                 danmakuItems: _specialDanmakuItems,
+                textRenderer: _textRenderer,
                 fontSize: _option.fontSize,
                 fontWeight: _option.fontWeight,
                 strokeWidth: _option.strokeWidth,

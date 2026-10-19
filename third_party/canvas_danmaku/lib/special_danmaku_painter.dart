@@ -4,15 +4,17 @@ import 'dart:ui' as ui;
 import 'package:canvas_danmaku/base_danmaku_painter.dart';
 import 'package:canvas_danmaku/models/danmaku_content_item.dart';
 import 'package:canvas_danmaku/models/danmaku_item.dart';
-import 'package:canvas_danmaku/utils/utils.dart';
+import 'package:canvas_danmaku/text_renderer.dart';
 import 'package:material_ui/material_ui.dart';
 
 final class SpecialDanmakuPainter extends BaseDanmakuPainter {
   List<DanmakuItem> danmakuItems;
+  final DanmakuTextRenderer textRenderer;
 
   SpecialDanmakuPainter({
     required super.length,
     required this.danmakuItems,
+    required this.textRenderer,
     required super.fontSize,
     required super.fontWeight,
     required super.strokeWidth,
@@ -37,6 +39,19 @@ final class SpecialDanmakuPainter extends BaseDanmakuPainter {
   @pragma("vm:prefer-inline")
   void _paintSpecialDanmaku(Canvas canvas, DanmakuItem dm,
       SpecialDanmakuContentItem item, Size size, int elapsed) {
+    if (dm.image == null) {
+      final raster = textRenderer.rasterizeSpecial(
+        content: item,
+        fontWeight: fontWeight,
+        strokeWidth: strokeWidth,
+      );
+      dm
+        ..image = raster.image
+        ..specialBounds = raster.bounds
+        ..width = raster.bounds.width
+        ..height = raster.bounds.height;
+    }
+    final bounds = dm.specialBounds!;
     // 透明度动画
     final color = item.alphaTween == null
         ? item.color
@@ -61,20 +76,16 @@ final class SpecialDanmakuPainter extends BaseDanmakuPainter {
       dx = item.translateXTween.begin! * size.width;
       dy = item.translateYTween.begin! * size.height;
     }
-    dx += item.rect.left;
-    dy += item.rect.top;
+    dx += bounds.left;
+    dy += bounds.top;
 
     paintImg(
       canvas,
-      dm.image ??= DmUtils.recordSpecialDanmakuImg(
-        content: item,
-        fontWeight: fontWeight,
-        strokeWidth: strokeWidth,
-      ),
+      dm.image!,
       dx,
       dy,
-      item.rect.width,
-      item.rect.height,
+      bounds.width,
+      bounds.height,
       _paint..color = color,
     );
   }
