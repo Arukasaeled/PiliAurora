@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:pili_aurora/http/browser_ua.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_load_readiness.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_runtime_slot.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
@@ -89,6 +90,9 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   bool _nativeLifecycleUnknown = false;
   bool _nativeOpenNeedsRetirement = false;
   bool _seeking = false;
+  int _mediaClockSeekSequence = 0;
+  int _mediaClockContinuity = 0;
+  bool _mediaClockSeekPending = false;
   bool _buffering = false;
   bool _playing = false;
   bool? _hasVideo;
@@ -146,6 +150,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     if (player == null) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
+    _mediaClockSeekSequence = context.seekSequence;
+    _mediaClockSeekPending = true;
     await player.seek(target);
     if (!context.isCurrent()) {
       return const PlaybackRuntimeCommandResult(applied: false);
@@ -164,6 +170,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
     await player.setRate(value);
+    _sampleMediaClock();
     if (!context.isCurrent()) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
@@ -497,6 +504,9 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       }
       if (result.loaded &&
           result.output.strategy != PlaybackOutputStrategy.unknown) {
+        _mediaClockSeekSequence = context.seekSequence;
+        _mediaClockContinuity++;
+        _mediaClockSeekPending = false;
         _activePlan = plan;
         final binding = pending.binding;
         if (binding != null) _activeBinding = binding;
@@ -836,14 +846,52 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     }
   }
 
+  void _sampleMediaClock() {
+    final player = _player;
+    final binding = _activeBinding;
+    if (player == null ||
+        binding == null ||
+        binding.entryId == null ||
+        binding.retiring ||
+        _shutdownRequested ||
+        _nativeLifecycleUnknown ||
+        _pendingLoad != null ||
+        _mediaClockSeekPending) {
+      return;
+    }
+    try {
+      final anchor = sampleNativeMediaClock(
+        readProperty: player.getProperty,
+        playlistEntryId: binding.entryId!,
+        continuity: _mediaClockContinuity,
+        monotonicNowUs: () => Timeline.now,
+      );
+      if (anchor == null) return;
+      _emit(
+        PlaybackRuntimeMediaAnchor(
+          runtimeId: runtimeId,
+          loadId: binding.loadId,
+          seekSequence: _mediaClockSeekSequence,
+          anchor: anchor,
+        ),
+      );
+    } catch (_) {
+      // 原生文件退出期间属性可能不可读，等待下一份有效采样。
+    }
+  }
+
   void _subscribePlayerState(Player player) {
     _subscriptions.addAll([
+      player.stream.position.listen((_) => _sampleMediaClock()),
+      player.stream.completed.listen((_) => _sampleMediaClock()),
       player.stream.playing.listen((value) {
         _playing = value;
+        _sampleMediaClock();
         _emitActual(_activeBinding?.loadId);
       }),
       player.stream.buffering.listen((value) {
         _buffering = value;
+        _sampleMediaClock();
         _emitActual(_activeBinding?.loadId);
       }),
       player.stream.duration.listen((_) => _emitActual(_activeBinding?.loadId)),
