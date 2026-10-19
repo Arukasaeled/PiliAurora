@@ -43,6 +43,7 @@ class DanmakuTimelineWindow<T> {
   int get validUntilUs => _validUntilUs;
   int get length => _items.length;
   int get estimatedBytes => _bytes;
+  List<DanmakuWindowItem<T>> get preparedItems => List.unmodifiable(_starts);
 
   bool contains(int positionUs) =>
       _validFromUs <= positionUs && positionUs < _validUntilUs;
