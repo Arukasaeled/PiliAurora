@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pili_aurora/pages/danmaku/trajectory.dart';
+import 'package:canvas_danmaku/geometry.dart';
 
 DanmakuTrajectory _motion({
   double start = 0,

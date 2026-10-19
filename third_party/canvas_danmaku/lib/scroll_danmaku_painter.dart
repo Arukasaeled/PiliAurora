@@ -7,13 +7,11 @@ import 'package:material_ui/material_ui.dart';
 final class ScrollDanmakuPainter extends BaseDanmakuPainter {
   final double trackHeight;
   final List<List<DanmakuItem>> danmakuItems;
-  final double durationInMilliseconds;
 
   const ScrollDanmakuPainter({
     required super.length,
     required this.trackHeight,
     required this.danmakuItems,
-    required this.durationInMilliseconds,
     required super.fontSize,
     required super.fontWeight,
     required super.strokeWidth,
@@ -50,12 +48,12 @@ final class ScrollDanmakuPainter extends BaseDanmakuPainter {
           continue;
         }
 
-        paintDanmaku(pictureCanvas, size, i, index * trackHeight);
+        paintDanmaku(pictureCanvas, i, index * trackHeight);
       }
     }
 
     if (suspend case final suspend?) {
-      paintDanmaku(pictureCanvas, size, suspend, suspendIndex * trackHeight);
+      paintDanmaku(pictureCanvas, suspend, suspendIndex * trackHeight);
     }
 
     if (pictureRecorder != null) {
@@ -67,46 +65,14 @@ final class ScrollDanmakuPainter extends BaseDanmakuPainter {
 
   void paintDanmaku(
     ui.Canvas canvas,
-    ui.Size size,
     DanmakuItem item,
     double yPos,
   ) {
-    item.drawParagraphIfNeeded(
-      fontSize,
-      fontWeight,
-      strokeWidth,
-    );
-    if (!item.suspend) {
-      final startPosition = size.width;
-      final endPosition = -item.width;
-
-      if (item.drawTick == null) {
-        item
-          ..drawTick = tick
-          ..xPosition = startPosition;
-      } else {
-        if (durationInMilliseconds.isNegative) {
-          item.xPosition += (tick - item.drawTick!) * durationInMilliseconds;
-        } else {
-          final distance = startPosition - endPosition;
-          item.xPosition +=
-              ((item.drawTick! - tick) / durationInMilliseconds) * distance;
-        }
-      }
-
-      if (item.xPosition < endPosition || item.xPosition > startPosition) {
-        item.expired = true;
-        return;
-      }
-    }
-
     BaseDanmakuPainter.paintImg(
       canvas,
       item,
       item.xPosition,
       yPos,
     );
-
-    item.drawTick = tick;
   }
 }

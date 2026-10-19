@@ -42,7 +42,30 @@ class DanmakuTrajectory {
     double viewWidth,
     double milliseconds,
   ) {
-    final right = xAt(milliseconds) + width;
+    return DanmakuGeometry.canFollow(
+      x: xAt(milliseconds),
+      width: width,
+      velocity: velocity,
+      nextVelocity: nextVelocity,
+      viewWidth: viewWidth,
+    );
+  }
+}
+
+/// 普通弹幕共用的速度与入场追尾规则，时间单位为毫秒。
+abstract final class DanmakuGeometry {
+  static double scrollVelocity(
+          double viewWidth, double width, double durationMs,
+          {required bool fixed}) =>
+      (viewWidth + (fixed ? 0 : width)) / durationMs;
+
+  static bool canFollow(
+      {required double x,
+      required double width,
+      required double velocity,
+      required double nextVelocity,
+      required double viewWidth}) {
+    final right = x + width;
     return right <= viewWidth &&
         (nextVelocity <= velocity ||
             right * nextVelocity <= viewWidth * velocity);

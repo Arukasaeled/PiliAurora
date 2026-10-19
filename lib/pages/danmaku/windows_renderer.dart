@@ -8,7 +8,6 @@ import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/pages/danmaku/prewarm_policy.dart';
 import 'package:pili_aurora/pages/danmaku/raster_cache.dart';
 import 'package:pili_aurora/pages/danmaku/render_guard.dart';
-import 'package:pili_aurora/pages/danmaku/trajectory.dart';
 
 class _PreparedEntry {
   _PreparedEntry(this.trajectory, this.track, this.scrolling);
@@ -202,9 +201,12 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
     staticDanmaku.length = count;
   }
 
-  double _velocity(double width) =>
-      (_size.width + (_option.scrollFixedVelocity ? 0 : width)) /
-      _option.durationInMilliseconds;
+  double _velocity(double width) => DanmakuGeometry.scrollVelocity(
+    _size.width,
+    width,
+    _option.durationInMilliseconds,
+    fixed: _option.scrollFixedVelocity,
+  );
 
   int _trackSpan(double height) {
     return math.max(1, (height / _trackHeight).ceil());

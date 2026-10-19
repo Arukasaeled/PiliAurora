@@ -16,7 +16,7 @@ class DanmakuItem<T> {
   /// 弹幕水平方向位置
   double xPosition;
 
-  /// 上次绘制时间
+  /// 普通弹幕的最近更新时间；高级弹幕保留绘制时刻。
   int? drawTick;
 
   /// 弹幕布局缓存

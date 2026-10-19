@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:ui' show FlutterView;
 import 'package:flutter/foundation.dart' show ValueListenable;
 
+import 'package:canvas_danmaku/geometry.dart';
 import 'package:canvas_danmaku/danmaku_controller.dart';
 import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:canvas_danmaku/models/danmaku_content_item.dart';
@@ -47,6 +48,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 
   /// 滚动弹幕
   final _scrollDanmakuItems = <List<DanmakuItem<T>>>[];
+  final _scrollMotions = <DanmakuItem<T>, DanmakuTrajectory>{};
 
   /// 静态弹幕
   final _staticDanmakuItems = ListValueNotifier(<DanmakuItem<T>?>[]);
@@ -66,9 +68,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   /// 弹幕轨道数
   int _trackCount = 0;
 
-  /// 滚动弹幕速度或时间，负号表示速度
-  double _scrollVelocityOrDuration = 0;
-
   late final _random = Random();
 
   late final FrameRateTicker _ticker;
@@ -85,9 +84,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   void initState() {
     super.initState();
     _option = widget.option;
-    if (!_option.scrollFixedVelocity) {
-      _scrollVelocityOrDuration = _option.durationInMilliseconds;
-    }
     DmUtils.updateSelfSendPaint(_option.strokeWidth);
 
     _danmakuHeight = _calculateTrackHeight();
@@ -151,9 +147,11 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
       }
       this.devicePixelRatio = devicePixelRatio;
     }
+    _updateNormalDanmaku(_notifier.value);
   }
 
   int _time = 0;
+  int _normalTick = 0;
   void _refreshPaintClocks() {
     _scrollPaintTick.update(
         _notifier.value, _scrollDanmakuItems.any((track) => track.isNotEmpty));
@@ -161,13 +159,64 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   }
 
   void _tick(Duration elapsed) {
-    _notifier.value = elapsed.inMilliseconds + _lastTick;
+    final tick = elapsed.inMilliseconds + _lastTick;
+    _updateNormalDanmaku(tick);
+    _notifier.value = tick;
     // 新增固定弹幕与运动图层共用本帧；首个 tick 为零时也要发布内容。
     if (_staticDanmakuDirty) _refreshStaticDanmaku();
     if (_time++ > 10) {
       _time = 0;
       _lazyTick(_notifier.value);
     }
+  }
+
+  void _updateNormalDanmaku(int tick) {
+    for (var track = 0; track < _scrollDanmakuItems.length; track++) {
+      for (final item in _scrollDanmakuItems[track]) {
+        if (item.expired) continue;
+        item.drawParagraphIfNeeded(
+            _option.fontSize, _option.fontWeight, _option.strokeWidth);
+        final velocity = DanmakuGeometry.scrollVelocity(
+            _viewWidth, item.width, _option.durationInMilliseconds,
+            fixed: _option.scrollFixedVelocity);
+        if (item.suspend) {
+          _scrollMotions.remove(item);
+          item.drawTick = tick;
+          continue;
+        }
+        var motion = _scrollMotions[item];
+        if (motion == null ||
+            motion.velocity != velocity ||
+            motion.width != item.width ||
+            motion.height != item.height) {
+          final start = (item.drawTick ?? tick).toDouble();
+          motion = DanmakuTrajectory(
+            startMs: start,
+            endMs: start + (item.xPosition + item.width) / velocity,
+            startX: item.xPosition,
+            y: track * _danmakuHeight,
+            width: item.width,
+            height: item.height,
+            velocity: velocity,
+          );
+          _scrollMotions[item] = motion;
+        }
+        item.xPosition = motion.xAt(tick.toDouble());
+        item.expired =
+            item.xPosition < -item.width || item.xPosition > _viewWidth;
+        item.drawTick = tick;
+      }
+    }
+    for (final item in _staticDanmakuItems.value.nonNulls) {
+      item.drawParagraphIfNeeded(
+          _option.fontSize, _option.fontWeight, _option.strokeWidth);
+      item.xPosition = (_viewWidth - item.width) / 2;
+      if (item.suspend && item.drawTick != null) {
+        item.drawTick = item.drawTick! + max(0, tick - _normalTick);
+      }
+      item.drawTick ??= tick;
+    }
+    _normalTick = tick;
   }
 
   void _refreshStaticDanmaku() {
@@ -271,6 +320,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
         if (content.type == DanmakuItemType.scroll || scroll) {
           _scrollDanmakuItems[index].add(item);
         } else {
+          item.xPosition = (_viewWidth - item.width) / 2;
           _staticDanmakuItems.value[index] = item;
           _staticDanmakuDirty = true;
         }
@@ -346,6 +396,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
         }
         break;
     }
+    if (added && !_running) _updateNormalDanmaku(_notifier.value);
     return added;
   }
 
@@ -385,13 +436,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 
   /// 更新弹幕设置
   void _updateOption(DanmakuOption option) {
-    if (option.durationInMilliseconds != _option.durationInMilliseconds ||
-        option.scrollFixedVelocity != _option.scrollFixedVelocity) {
-      _scrollVelocityOrDuration = option.scrollFixedVelocity
-          ? -_viewWidth / option.durationInMilliseconds
-          : option.durationInMilliseconds;
-    }
-
     final lineHeightChanged = option.lineHeight != _option.lineHeight;
     final fontSizeChanged = option.fontSize != _option.fontSize;
     final areaChanged = option.area != _option.area;
@@ -418,6 +462,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     if (clearScroll) {
       for (var i in _scrollDanmakuItems) {
         for (var e in i) {
+          _scrollMotions.remove(e);
           e.dispose();
         }
         i.clear();
@@ -479,6 +524,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   }
 
   void _clearTrackDanmakus() {
+    _scrollMotions.clear();
     for (var i in _scrollDanmakuItems) {
       for (var e in i) {
         e.dispose();
@@ -535,20 +581,17 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
   }
 
   bool _scrollItemCanFollow(DanmakuItem<T> item, double newDanmakuWidth) {
-    // 首先保证进入屏幕时不发生重叠
-    final right = item.xPosition + item.width;
-    if (_viewWidth < right) {
-      return false;
-    }
-    // 其次保证知道移出屏幕前不与速度慢的弹幕(弹幕宽度较小)发生重叠
-    if (!_option.scrollFixedVelocity && item.width < newDanmakuWidth) {
-      // (1 - ((_viewWidth - item.xPosition) / (item.width + _viewWidth))) > ((_viewWidth) / (_viewWidth + newDanmakuWidth))
-      if (right * newDanmakuWidth >
-          _viewWidth * (_viewWidth - item.xPosition)) {
-        return false;
-      }
-    }
-    return true;
+    return DanmakuGeometry.canFollow(
+      x: item.xPosition,
+      width: item.width,
+      velocity: DanmakuGeometry.scrollVelocity(
+          _viewWidth, item.width, _option.durationInMilliseconds,
+          fixed: _option.scrollFixedVelocity),
+      nextVelocity: DanmakuGeometry.scrollVelocity(
+          _viewWidth, newDanmakuWidth, _option.durationInMilliseconds,
+          fixed: _option.scrollFixedVelocity),
+      viewWidth: _viewWidth,
+    );
   }
 
   /// 确定静态弹幕是否可以添加
@@ -610,13 +653,13 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
 
   @pragma("vm:prefer-inline")
   void _lazyTick(int tick) {
-    // 移除屏幕外滚动弹幕
-    for (var i in _scrollDanmakuItems) {
-      i.removeWhereUnsafe((item) => item.needRemove(item.expired ||
-          // `paint()` is skipped when `opacity` is `0`, `expired` is always `false`
-          (!item.suspend &&
-              item.drawTick != null &&
-              (tick - item.drawTick!) >= _option.durationInMilliseconds)));
+    for (final track in _scrollDanmakuItems) {
+      track.removeWhereUnsafe((item) {
+        if (!item.expired) return false;
+        _scrollMotions.remove(item);
+        item.dispose();
+        return true;
+      });
     }
     // 移除静态弹幕
     _staticDanmakuItems.removeWhere((item) => item.needRemove(!item.suspend &&
@@ -670,10 +713,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     final viewHeight = size.height;
     if (_viewWidth != viewWidth) {
       _viewWidth = viewWidth;
-      if (_option.scrollFixedVelocity) {
-        _scrollVelocityOrDuration =
-            -_viewWidth / _option.durationInMilliseconds;
-      }
     }
     if (_viewHeight != viewHeight) {
       _viewHeight = viewHeight;
@@ -694,7 +733,6 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
                     _scrollDanmakuItems.fold<int>(0, (p, n) => p + n.length),
                 trackHeight: _danmakuHeight,
                 danmakuItems: _scrollDanmakuItems,
-                durationInMilliseconds: _scrollVelocityOrDuration,
                 fontSize: _option.fontSize,
                 fontWeight: _option.fontWeight,
                 strokeWidth: _option.strokeWidth,
@@ -717,12 +755,9 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
                     count: value.nonNulls.length,
                     trackHeight: _danmakuHeight,
                     danmakuItems: value,
-                    staticDurationInMilliseconds:
-                        _option.staticDurationInMilliseconds,
                     fontSize: _option.fontSize,
                     fontWeight: _option.fontWeight,
                     strokeWidth: _option.strokeWidth,
-                    tick: _notifier.value,
                   ),
                   size: widget.size,
                 );
@@ -790,6 +825,7 @@ class _DanmakuScreenState<T> extends State<DanmakuScreen<T>> {
     double trackTop,
     Offset position,
   ) =>
+      !item.expired &&
       trackTop <= position.dy &&
       position.dy <= trackTop + item.height &&
       item.xPosition <= position.dx &&

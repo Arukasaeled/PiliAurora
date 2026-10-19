@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:canvas_danmaku/scroll_danmaku_painter.dart';
 import 'package:canvas_danmaku/special_danmaku_painter.dart';
@@ -38,6 +40,62 @@ Future<DanmakuController<void>> _mount(
 }
 
 void main() {
+  testWidgets('普通绘制器重复绘制不改变位置、时间与过期状态', (tester) async {
+    final controller = await _mount(tester);
+    controller.addDanmaku(DanmakuContentItem<void>('readonly'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final item = controller.scrollDanmaku.first.single;
+    final before = (item.xPosition, item.drawTick, item.expired);
+    final painter = tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .map((widget) => widget.painter)
+        .whereType<ScrollDanmakuPainter>()
+        .single;
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    painter
+      ..paint(canvas, _size)
+      ..paint(canvas, _size);
+    recorder.endRecording().dispose();
+    expect((item.xPosition, item.drawTick, item.expired), before);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('图层不绘制时普通弹幕仍按更新时钟运动并到期', (tester) async {
+    late DanmakuController<void> controller;
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: MediaQuery(
+          data: const MediaQueryData(size: _size),
+          child: Opacity(
+            opacity: 0,
+            child: SizedBox.fromSize(
+              size: _size,
+              child: DanmakuScreen<void>(
+                size: _size,
+                option: const DanmakuOption(fontSize: 20, duration: 1),
+                createdController: (value) => controller = value,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    controller.addDanmaku(DanmakuContentItem<void>('hidden'));
+    await tester.pump();
+    final item = controller.scrollDanmaku.first.single;
+    final start = item.xPosition;
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(item.xPosition, lessThan(start));
+    for (var frame = 0; frame < 15; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(controller.scrollDanmaku.every((track) => track.isEmpty), isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('120 FPS 档位在 120 Hz 上实际绘制对应数量的运动帧', (tester) async {
     const fps = 120;
     tester.view.display.refreshRate = 120;

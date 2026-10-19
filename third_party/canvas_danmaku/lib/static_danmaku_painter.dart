@@ -6,22 +6,18 @@ final class StaticDanmakuPainter extends CustomPainter {
   final int count;
   final double trackHeight;
   final List<DanmakuItem?> danmakuItems;
-  final double staticDurationInMilliseconds;
   final double fontSize;
   final int fontWeight;
   final double strokeWidth;
-  final int tick;
 
   StaticDanmakuPainter({
     super.repaint,
     required this.count,
     required this.trackHeight,
     required this.danmakuItems,
-    required this.staticDurationInMilliseconds,
     required this.fontSize,
     required this.fontWeight,
     required this.strokeWidth,
-    required this.tick,
   });
 
   @override
@@ -29,15 +25,6 @@ final class StaticDanmakuPainter extends CustomPainter {
     for (int i = 0; i < danmakuItems.length; i++) {
       final item = danmakuItems[i];
       if (item != null) {
-        item
-          ..drawTick ??= tick
-          ..drawParagraphIfNeeded(
-            fontSize,
-            fontWeight,
-            strokeWidth,
-          )
-          ..xPosition = (size.width - item.width) / 2;
-
         BaseDanmakuPainter.paintImg(
           canvas,
           item,
