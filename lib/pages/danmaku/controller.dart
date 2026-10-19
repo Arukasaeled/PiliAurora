@@ -2,13 +2,12 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io' show File;
 
-import 'package:flutter/foundation.dart' show compute;
-
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
+import 'package:pili_aurora/pages/danmaku/file_reader.dart';
 import 'package:pili_aurora/pages/danmaku/raw_cache.dart';
 import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
@@ -320,11 +319,16 @@ class PlDanmakuController {
       await DanmakuWorkQuota.instance.runWithLease(
         length * 16,
         (lease) async {
-          final bytes = await file.readAsBytes();
-          if (bytes.isEmpty || _disposed) return;
-          final response = await compute(DmSegMobileReply.fromBuffer, bytes);
+          final elements = <DanmakuElem>[];
+          await for (final batch in readDanmakuFile(
+            file,
+            token: _lifetimeWork,
+          )) {
+            if (_disposed) return;
+            elements.addAll(batch);
+          }
           if (_disposed) return;
-          await handleDanmaku(response.elems, lease: lease);
+          await handleDanmaku(elements, lease: lease);
         },
         token: _lifetimeWork,
       );
