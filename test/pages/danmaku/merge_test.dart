@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
+import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
+import 'package:pili_aurora/models/user/danmaku_rule.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 DanmakuElem _dm(
@@ -21,6 +23,53 @@ DanmakuElem _dm(
 );
 
 void main() {
+  test('worker snapshots filters, marks own messages and preserves disabled merge order', () async {
+    final filter = RuleFilter(
+      ['blocked'],
+      [RegExp('pattern', caseSensitive: false)],
+      {'uid'},
+    );
+    final rules = DanmakuProcessingRules(
+      merge: false,
+      selfHash: 'own',
+      fileSource: false,
+      segmentIndex: 0,
+      filter: filter,
+    );
+    filter.dmFilterString.clear();
+    filter.dmRegExp.clear();
+    filter.dmUid.clear();
+    final input = [
+      _dm('late', 200),
+      _dm('early', 100),
+      _dm('blocked', 101),
+      _dm('PATTERN', 102),
+      _dm('uid blocked', 103)..midHash = 'uid',
+      _dm('blocked own', 104)..midHash = 'own',
+      _dm('blocked stale own', 105, self: true),
+      _dm('other segment', 360000),
+    ];
+    final result = await processDanmakuInBackground(input, rules: rules);
+    expect(result.map((e) => e.content), ['late', 'early', 'blocked own']);
+    expect(result.last.isSelf, isTrue);
+    expect(result.every((e) => e.count == 0), isTrue);
+    expect(input[5].isSelf, isFalse);
+    expect(input[6].isSelf, isTrue);
+  });
+
+  test('filtering spans batches before duplicate admission', () async {
+    final input = [
+      for (var i = 0; i < 600; i++) _dm(i.isEven ? 'blocked' : 'keep', i),
+    ];
+    final result = await processDanmakuInBackground(
+      input,
+      rules: DanmakuProcessingRules(filter: RuleFilter(['blocked'], [], {})),
+    );
+    expect(result.single.content, 'keep');
+    expect(result.single.count, 300);
+    expect(input.every((e) => e.count == 0), isTrue);
+  });
+
   test(
     'worker batches reconcile earlier counts and match stable full merge',
     () async {

@@ -10,6 +10,7 @@ import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
 import 'package:pili_aurora/pages/danmaku/raw_cache.dart';
+import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
@@ -214,43 +215,27 @@ class PlDanmakuController {
     if (_disposed) return;
     final revision = _ruleRevision;
     final workToken = _ruleWork;
-    final filtered = <DanmakuElem>[];
     final retained = _isFileSource ? <DanmakuElem>[] : null;
     final segmentBuckets = segmentIndex == null
         ? null
         : <int, List<DanmakuElem>>{};
     final maxElementsPerBucket = _cache.maxElementsPerBucket;
 
-    final filters = _plPlayerController.filters;
-    final shouldFilter = filters.count != 0;
-    var processedCount = 0;
-    for (final raw in elems) {
-      if (++processedCount % 128 == 0) {
-        await Future<void>.delayed(Duration.zero);
-        if (_disposed || revision != _ruleRevision) return;
-      }
-      final element = DanmakuElem.fromBuffer(raw.writeToBuffer());
-      if (!_isFileSource &&
-          (segmentIndex == null ||
-              DmUtils.calcSegment(element.progress) != segmentIndex)) {
-        continue;
-      }
-      if (_isLogin) {
-        element.isSelf = element.midHash == _plPlayerController.midHash;
-      }
-
-      if (!element.isSelf && shouldFilter && filters.remove(element)) continue;
-      filtered.add(element);
-    }
+    final rules = DanmakuProcessingRules(
+      merge: _mergeDanmaku,
+      fileSource: _isFileSource,
+      segmentIndex: segmentIndex,
+      selfHash: _isLogin ? _plPlayerController.midHash : null,
+      filter: _plPlayerController.filters,
+    );
     final List<DanmakuElem> processed;
     try {
-      processed = _mergeDanmaku
-          ? await mergeDanmakuInBackground(
-              filtered,
-              lease: lease,
-              token: workToken,
-            )
-          : filtered;
+      processed = await processDanmakuInBackground(
+        elems,
+        rules: rules,
+        lease: lease,
+        token: workToken,
+      );
     } on DanmakuWorkCancelled {
       return;
     }

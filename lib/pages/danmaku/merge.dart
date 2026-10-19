@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 import 'package:pili_aurora/pages/danmaku/element_size.dart';
+import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
 
 int estimateDanmakuWorkBytes(List<DanmakuElem> elements) => elements.fold<int>(
   0,
@@ -19,7 +20,21 @@ Future<List<DanmakuElem>> mergeDanmakuInBackground(
   DanmakuWorkToken? token,
   DanmakuWorkLease? lease,
 }) {
-  Future<List<DanmakuElem>> merge() => _mergeInWorker(elements, token);
+  return processDanmakuInBackground(
+    elements,
+    rules: DanmakuProcessingRules(),
+    token: token,
+    lease: lease,
+  );
+}
+
+Future<List<DanmakuElem>> processDanmakuInBackground(
+  List<DanmakuElem> elements, {
+  required DanmakuProcessingRules rules,
+  DanmakuWorkToken? token,
+  DanmakuWorkLease? lease,
+}) {
+  Future<List<DanmakuElem>> merge() => _mergeInWorker(elements, token, rules);
   return lease != null
       ? lease.execute(merge)
       : DanmakuWorkQuota.instance.run(
@@ -33,7 +48,8 @@ Future<List<DanmakuElem>> mergeDanmakuInBackground(
 const _mergeBatchElements = 256;
 const _mergeBatchBytes = 512 * 1024;
 
-void _mergeWorker(SendPort output) {
+void _mergeWorker((SendPort, DanmakuProcessingRules) request) {
+  final (output, rules) = request;
   final input = ReceivePort();
   final cursor = DanmakuMergeCursor();
   output.send(input.sendPort);
@@ -41,7 +57,14 @@ void _mergeWorker(SendPort output) {
     if (message == null) {
       input.close();
     } else {
-      output.send(cursor.appendDelta(message as List<DanmakuElem>));
+      final filtered = (message as List<DanmakuElem>)
+          .where(rules.retain)
+          .toList();
+      output.send(
+        rules.merge
+            ? cursor.appendDelta(filtered)
+            : DanmakuMergeDelta(filtered, const {}),
+      );
     }
   });
 }
@@ -93,10 +116,13 @@ Future<List<int>> _orderedIndices(
 Future<List<DanmakuElem>> _mergeInWorker(
   List<DanmakuElem> elements,
   DanmakuWorkToken? token,
+  DanmakuProcessingRules rules,
 ) async {
   if (elements.isEmpty) return [];
   // 仅排序来源索引；protobuf 对象按有界批次复制到 worker。
-  final order = await _orderedIndices(elements, token);
+  final order = rules.merge
+      ? await _orderedIndices(elements, token)
+      : List.generate(elements.length, (index) => index);
   final output = ReceivePort();
   final events = StreamIterator<dynamic>(output);
   Isolate? worker;
@@ -116,7 +142,7 @@ Future<List<DanmakuElem>> _mergeInWorker(
   try {
     worker = await Isolate.spawn(
       _mergeWorker,
-      output.sendPort,
+      (output.sendPort, rules),
       onError: output.sendPort,
       onExit: output.sendPort,
     );
