@@ -13,6 +13,7 @@ class DanmakuMeasuredCandidate<T> {
     required this.payload,
     this.estimatedBytes = 0,
     this.selfSend = false,
+    this.renderable = true,
   });
 
   final Object identity;
@@ -23,6 +24,7 @@ class DanmakuMeasuredCandidate<T> {
   final T payload;
   final int estimatedBytes;
   final bool selfSend;
+  final bool renderable;
 }
 
 class DanmakuArrangement<T> {
@@ -130,7 +132,8 @@ class DanmakuWindowPlanner<T> {
   ) {
     DanmakuArrangement<T> rejected() =>
         DanmakuArrangement(candidate, null, -1, false);
-    if (width <= 0 ||
+    if (!candidate.renderable ||
+        width <= 0 ||
         trackHeight <= 0 ||
         trackCount <= 0 ||
         option.duration <= 0 ||
