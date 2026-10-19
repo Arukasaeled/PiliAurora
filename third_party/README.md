@@ -44,6 +44,8 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 
 平台构建覆盖编译和打包，后台通知、GPU/MediaCodec、窗口主题和 WebView 退出由人工实机回归覆盖。`third_party` 的上游检查告警如实记录，不靠关闭检查或削弱测试来清零。
 
+media_kit 的 seek 提交回执与落点完成分离；完成事件携带观察序号及原生文件身份，播放层维护等待和超时隔离。实现修订见该包的 [UPSTREAM.md](media_kit/UPSTREAM.md)。
+
 ## 原生二进制与 SDK
 
 Windows 各构建模式使用 [mpv 预编译包](mpv/README.md)。源码、重建脚本、许可与 `prebuilt/` 中的归档和摘要均纳入 Git；工具链、编译缓存与解压目录保存在 `build/`。应用 CI 直接校验并使用预编译包，独立原生库工作流负责从固定源码重建。打包收集 libmpv、ANGLE 的 DLL 依赖闭包，并随应用交付许可与包来源记录。

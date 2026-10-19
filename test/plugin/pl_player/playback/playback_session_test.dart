@@ -12,6 +12,85 @@ import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('暂停加载进入 ready 后主动取得首个媒体锚点', () async {
+    final runtime = _SamplingRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    const anchor = PlaybackMediaAnchor(
+      positionUs: 0,
+      observedAtUs: 1000000,
+      effectiveRate: 1,
+      advancing: false,
+      ready: true,
+      continuity: 1,
+      validForUs: 500000,
+    );
+    runtime.onSample = () => runtime._events.add(
+      PlaybackRuntimeMediaAnchor(
+        runtimeId: runtime.runtimeId,
+        loadId: session.loadId,
+        seekSequence: 0,
+        anchor: anchor,
+      ),
+    );
+    await owner.load(_plan('paused'), start: PlaybackStartPolicy.pause);
+    expect(session.currentMediaAnchor, same(anchor));
+    owner.close();
+    await runtime.released;
+  });
+
+  test('seek 等待原生资格时暂停可执行，较新目标替换旧等待', () async {
+    final runtime = _GatedRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('gate'), start: PlaybackStartPolicy.play);
+    final first = owner.seek(const Duration(seconds: 2));
+    expect((await owner.setPlaying(false)).outcome, CommandOutcome.applied);
+    final second = owner.seek(const Duration(seconds: 3));
+    expect((await first).outcome, CommandOutcome.superseded);
+    expect(runtime.seekCalls, isEmpty);
+    runtime.unblock();
+    expect((await second).outcome, CommandOutcome.applied);
+    expect(runtime.seekCalls, [const Duration(seconds: 3)]);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('seek 资格等待超时释放订阅，迟到完成仍可开启后续提交', () async {
+    final runtime = _GatedRuntime();
+    final session = PlaybackSession(
+      runtime: runtime,
+      commandBudget: const Duration(milliseconds: 30),
+    );
+    final owner = session.attach();
+    await owner.load(_plan('gate'), start: PlaybackStartPolicy.play);
+    final result = await owner.seek(const Duration(seconds: 2));
+    expect(result.outcome, CommandOutcome.failed);
+    expect(result.failure?.category, PlaybackFailureCategory.timeout);
+    expect(runtime.changes.hasListener, isFalse);
+    expect(runtime.seekCalls, isEmpty);
+    runtime.unblock();
+    expect(
+      (await owner.seek(const Duration(seconds: 3))).outcome,
+      CommandOutcome.applied,
+    );
+    expect(runtime.changes.hasListener, isFalse);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('关闭使外部 seek 等待立即结束，无需原生落点完成', () async {
+    final runtime = _GatedRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('gate'), start: PlaybackStartPolicy.play);
+    final seek = owner.seek(const Duration(seconds: 2));
+    owner.close();
+    expect((await seek).outcome, CommandOutcome.superseded);
+    await runtime.released;
+    expect(runtime.seekCalls, isEmpty);
+  });
+
   test('媒体时钟独立发布，丢弃其他 runtime、旧加载和旧 seek 的采样', () async {
     final runtime = _FakeRuntime();
     final session = PlaybackSession(runtime: runtime);
@@ -965,4 +1044,25 @@ class _FakeRuntime implements PlaybackRuntimePort {
     unawaited(_events.close());
     return const PlaybackShutdownResult.released();
   }
+}
+
+class _GatedRuntime extends _FakeRuntime implements PlaybackSeekSubmissionGate {
+  final changes = StreamController<void>.broadcast(sync: true);
+  bool blocked = true;
+  void unblock() {
+    blocked = false;
+    changes.add(null);
+  }
+
+  @override
+  bool get seekSubmissionBlocked => blocked;
+  @override
+  Stream<void> get seekSubmissionChanges => changes.stream;
+}
+
+class _SamplingRuntime extends _FakeRuntime
+    implements PlaybackMediaClockSampler {
+  void Function()? onSample;
+  @override
+  void sampleMediaClock() => onSample?.call();
 }

@@ -80,6 +80,7 @@ class PlaybackSession implements PlaybackMediaClock {
   int _requestId = 0;
   int _loadId = 0;
   int _seekSequence = 0;
+  Completer<void>? _seekWaitCancelled;
   PlaybackMediaAnchor? _mediaAnchor;
   final _mediaAnchors = StreamController<PlaybackMediaAnchor?>.broadcast(
     sync: true,
@@ -92,6 +93,9 @@ class PlaybackSession implements PlaybackMediaClock {
   Stream<PlaybackMediaAnchor?> get mediaAnchors => _mediaAnchors.stream;
 
   void _invalidateMediaAnchor() {
+    final waiting = _seekWaitCancelled;
+    _seekWaitCancelled = null;
+    if (waiting != null && !waiting.isCompleted) waiting.complete();
     if (_mediaAnchor == null) return;
     _mediaAnchor = null;
     _mediaAnchors.add(null);
@@ -519,6 +523,9 @@ class PlaybackSession implements PlaybackMediaClock {
           return;
         }
         _phase = PlaybackPhase.ready;
+        if (_runtime case final PlaybackMediaClockSampler sampler) {
+          sampler.sampleMediaClock();
+        }
         _stage = PlaybackStage.observing;
         _failure = null;
         _observeHealth(_now());
@@ -931,11 +938,46 @@ class PlaybackSession implements PlaybackMediaClock {
     final load = _loadId;
     final seekSequence = ++_seekSequence;
     _invalidateMediaAnchor();
+    final deadline = _now() + commandBudget;
+    if (_runtime case final PlaybackSeekSubmissionGate gate) {
+      final cancelled = Completer<void>();
+      _seekWaitCancelled = cancelled;
+      final ready = Completer<void>();
+      void checkReady() {
+        if (!gate.seekSubmissionBlocked && !ready.isCompleted) ready.complete();
+      }
+
+      final subscription = gate.seekSubmissionChanges.listen(
+        (_) => checkReady(),
+      );
+      checkReady();
+      try {
+        await Future.any([ready.future, cancelled.future])
+            .timeout(commandBudget);
+      } on TimeoutException {
+        return _commandResult(
+          const PlaybackOperationResult<
+            PlaybackRuntimeCommandResult
+          >.timedOut(),
+          'seek',
+          PlaybackStage.observing,
+        );
+      } finally {
+        await subscription.cancel();
+        if (identical(_seekWaitCancelled, cancelled)) _seekWaitCancelled = null;
+      }
+      if (cancelled.isCompleted ||
+          !_isCommandCurrent(owner, request, load) ||
+          seekSequence != _seekSequence) {
+        return const CommandResult.superseded();
+      }
+    }
     final result = await _operations.submit<PlaybackRuntimeCommandResult>(
       slot: PlaybackOperationSlot.seek,
-      deadline: _now() + commandBudget,
+      deadline: deadline,
       operation: (operation) {
         if (!_isCommandCurrent(owner, request, load) ||
+            seekSequence != _seekSequence ||
             !operation.isCurrent()) {
           throw const _PlaybackSuperseded();
         }
@@ -955,6 +997,7 @@ class PlaybackSession implements PlaybackMediaClock {
             registerCancellation: (_) {},
             isCurrent: () =>
                 _isCommandCurrent(owner, request, load) &&
+                seekSequence == _seekSequence &&
                 operation.isCurrent(),
           ),
         );
