@@ -20,6 +20,65 @@ DanmakuElem _dm(
 );
 
 void main() {
+  test('ordered batches preserve anchors and update earlier counts', () {
+    final cursor = DanmakuMergeCursor();
+    final first = cursor.appendOrdered([
+      _dm('相同内容', 0),
+      _dm('固定项', 1, mode: 5),
+    ]);
+    final second = cursor.appendOrdered([
+      _dm('相同内容', 20000),
+      _dm('相同内容', 20001),
+      _dm('相同内容', 20001, self: true),
+    ]);
+    expect(first.map((e) => e.count), [2, 1]);
+    expect(second.map((e) => e.progress), [20001, 20001]);
+    expect(second.map((e) => e.count), [1, 1]);
+  });
+
+  test('batch partition does not alter dense matching or result order', () {
+    final input = List.generate(
+      5000,
+      (i) => _dm(
+        i % 3 == 0 ? '重复的长弹幕内容' : '独立条目编号$i',
+        i * 11,
+        mode: i % 31 == 0 ? 7 : 1,
+        self: i % 43 == 0,
+        pool: i % 7 == 0 ? 3 : 0,
+      ),
+    );
+    List<List<int>> run(int batchSize) {
+      final cursor = DanmakuMergeCursor();
+      final result = <DanmakuElem>[];
+      for (var start = 0; start < input.length; start += batchSize) {
+        result.addAll(
+          cursor.appendOrdered([
+            for (var i = start; i < min(start + batchSize, input.length); i++)
+              DanmakuElem.fromBuffer(input[i].writeToBuffer()),
+          ]),
+        );
+      }
+      return result.map((e) => e.writeToBuffer()).toList();
+    }
+
+    final expected = run(input.length);
+    for (final size in [1, 7, 256, 1024]) {
+      expect(run(size), expected, reason: 'batchSize=$size');
+    }
+  });
+
+  test('unordered append fails before modifying existing merge state', () {
+    final cursor = DanmakuMergeCursor();
+    final first = cursor.appendOrdered([_dm('重复', 100)]).single;
+    expect(
+      () => cursor.appendOrdered([_dm('重复', 101), _dm('重复', 99)]),
+      throwsArgumentError,
+    );
+    expect(first.count, 1);
+    cursor.appendOrdered([_dm('重复', 101)]);
+    expect(first.count, 2);
+  });
+
   test(
     'merges repeated rating pool text while preserving different scores',
     () {

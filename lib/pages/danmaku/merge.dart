@@ -46,90 +46,15 @@ class DanmakuMerger {
         final time = a.$2.progress.compareTo(b.$2.progress);
         return time == 0 ? a.$1.compareTo(b.$1) : time;
       });
-    final groups = Queue<_MergeGroup>();
-    final exact = <(int, String), _MergeGroup>{};
-    final lengths = <(int, int), Queue<_MergeGroup>>{};
-    final normalizedTexts = <String, String>{};
+    final cursor = DanmakuMergeCursor();
     final result = <DanmakuElem>[];
-    final matcher = _DistanceMatcher();
-
-    String normalizedText(String content) {
-      final cached = normalizedTexts[content];
-      if (cached != null) return cached;
-      final text = normalize(content);
-      // 重复原文复用归一化结果；缓存限界，分散文本不会持续增加匹配状态。
-      if (normalizedTexts.length >= _maxGroups) {
-        normalizedTexts.remove(normalizedTexts.keys.first);
-      }
-      normalizedTexts[content] = text;
-      return text;
-    }
-
-    void evict() {
-      final group = groups.removeFirst();
-      final key = (group.element.mode, group.text);
-      if (identical(exact[key], group)) exact.remove(key);
-      final lengthKey = (group.element.mode, group.runes.length);
-      final candidates = lengths[lengthKey]!..removeFirst();
-      if (candidates.isEmpty) lengths.remove(lengthKey);
-    }
-
-    for (final (_, element) in ordered) {
-      element.count = 1;
-      // 互动池包含评分数字等普通文字弹幕，沿用普通池的合并规则。
-      if (element.isSelf ||
-          (element.pool != 0 && element.pool != 3) ||
-          element.mode < 1 ||
-          element.mode > 6) {
-        result.add(element);
-        continue;
-      }
-      while (groups.isNotEmpty &&
-          element.progress - groups.first.element.progress >
-              windowMilliseconds) {
-        evict();
-      }
-      final text = normalizedText(element.content);
-      final key = (element.mode, text);
-      var match = exact[key];
-      if (match != null) {
-        match.element.count++;
-        continue;
-      }
-      final runes = text.runes.toList();
-      // 语义特征每条提取一次，不随候选数量重复执行正则匹配。
-      final meaning = _meaning.allMatches(text).map((m) => m[0]).join();
-      if (runes.length >= 8 && runes.length <= 200) {
-        final distance = math.min(2, runes.length ~/ 8).clamp(1, 2);
-        var checked = 0;
-        search:
-        for (
-          var length = runes.length - distance;
-          length <= runes.length + distance;
-          length++
-        ) {
-          for (final candidate
-              in lengths[(element.mode, length)] ?? const <_MergeGroup>[]) {
-            if (++checked > 64) break search;
-            // 数字与否定词保留语义，避免把不同时间、比分或相反观点合并。
-            if (meaning == candidate.meaning &&
-                matcher.withinDistance(runes, candidate.runes, distance)) {
-              match = candidate;
-              break search;
-            }
-          }
-        }
-      }
-      if (match != null) {
-        match.element.count++;
-        continue;
-      }
-      final group = _MergeGroup(element, text, runes, meaning);
-      if (groups.length >= _maxGroups) evict();
-      groups.add(group);
-      exact[key] = group;
-      (lengths[(element.mode, runes.length)] ??= Queue()).add(group);
-      result.add(element);
+    for (var start = 0; start < ordered.length; start += 256) {
+      final end = math.min(start + 256, ordered.length);
+      result.addAll(
+        cursor.appendOrdered([
+          for (var index = start; index < end; index++) ordered[index].$2,
+        ]),
+      );
     }
     return result;
   }
@@ -145,6 +70,112 @@ class DanmakuMerger {
         .replaceAll(_punctuation, '')
         .replaceAllMapped(_repeated, (match) => '${match[1]}${match[1]}');
     return normalized.isEmpty ? text.trim() : normalized;
+  }
+}
+
+/// 有序批次共用窗口状态。返回本批新增项；后续匹配会更新此前返回项的 count。
+/// 同时间条目保持调用方顺序，每次独立重算创建新的游标。
+class DanmakuMergeCursor {
+  final _groups = Queue<_MergeGroup>();
+  final _exact = <(int, String), _MergeGroup>{};
+  final _lengths = <(int, int), Queue<_MergeGroup>>{};
+  final _normalizedTexts = <String, String>{};
+  final _matcher = _DistanceMatcher();
+
+  int? _lastProgress;
+
+  List<DanmakuElem> appendOrdered(List<DanmakuElem> elements) {
+    var previous = _lastProgress;
+    for (final element in elements) {
+      if (previous != null && element.progress < previous) {
+        throw ArgumentError('合并批次必须沿媒体时间有序追加');
+      }
+      previous = element.progress;
+    }
+    _lastProgress = previous;
+    final result = <DanmakuElem>[];
+    String normalizedText(String content) {
+      final cached = _normalizedTexts[content];
+      if (cached != null) return cached;
+      final text = DanmakuMerger.normalize(content);
+      // 重复原文复用归一化结果；缓存限界，分散文本不会持续增加匹配状态。
+      if (_normalizedTexts.length >= DanmakuMerger._maxGroups) {
+        _normalizedTexts.remove(_normalizedTexts.keys.first);
+      }
+      _normalizedTexts[content] = text;
+      return text;
+    }
+
+    void evict() {
+      final group = _groups.removeFirst();
+      final key = (group.element.mode, group.text);
+      if (identical(_exact[key], group)) _exact.remove(key);
+      final lengthKey = (group.element.mode, group.runes.length);
+      final candidates = _lengths[lengthKey]!..removeFirst();
+      if (candidates.isEmpty) _lengths.remove(lengthKey);
+    }
+
+    for (final element in elements) {
+      element.count = 1;
+      // 互动池包含评分数字等普通文字弹幕，沿用普通池的合并规则。
+      if (element.isSelf ||
+          (element.pool != 0 && element.pool != 3) ||
+          element.mode < 1 ||
+          element.mode > 6) {
+        result.add(element);
+        continue;
+      }
+      while (_groups.isNotEmpty &&
+          element.progress - _groups.first.element.progress >
+              DanmakuMerger.windowMilliseconds) {
+        evict();
+      }
+      final text = normalizedText(element.content);
+      final key = (element.mode, text);
+      var match = _exact[key];
+      if (match != null) {
+        match.element.count++;
+        continue;
+      }
+      final runes = text.runes.toList();
+      // 语义特征每条提取一次，不随候选数量重复执行正则匹配。
+      final meaning = DanmakuMerger._meaning
+          .allMatches(text)
+          .map((m) => m[0])
+          .join();
+      if (runes.length >= 8 && runes.length <= 200) {
+        final distance = math.min(2, runes.length ~/ 8).clamp(1, 2);
+        var checked = 0;
+        search:
+        for (
+          var length = runes.length - distance;
+          length <= runes.length + distance;
+          length++
+        ) {
+          for (final candidate
+              in _lengths[(element.mode, length)] ?? const <_MergeGroup>[]) {
+            if (++checked > 64) break search;
+            // 数字与否定词保留语义，避免把不同时间、比分或相反观点合并。
+            if (meaning == candidate.meaning &&
+                _matcher.withinDistance(runes, candidate.runes, distance)) {
+              match = candidate;
+              break search;
+            }
+          }
+        }
+      }
+      if (match != null) {
+        match.element.count++;
+        continue;
+      }
+      final group = _MergeGroup(element, text, runes, meaning);
+      if (_groups.length >= DanmakuMerger._maxGroups) evict();
+      _groups.add(group);
+      _exact[key] = group;
+      (_lengths[(element.mode, runes.length)] ??= Queue()).add(group);
+      result.add(element);
+    }
+    return result;
   }
 }
 
