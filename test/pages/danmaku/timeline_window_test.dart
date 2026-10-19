@@ -18,6 +18,27 @@ DanmakuWindowItem<String> _item(
 );
 
 void main() {
+  test('partial boundary results render without granting complete cached query coverage', () {
+    final window = DanmakuTimelineWindow<String>();
+    expect(
+      window.extend(
+        [_item('first', 0, 100)],
+        generation: window.generation,
+        preparedUntilUs: 0,
+      ),
+      isTrue,
+    );
+    expect(window.contains(0), isFalse);
+    expect(window.visibleAt(0), isNull);
+    expect(window.visibleAt(0, allowUnprepared: true)!.single.payload, 'first');
+    window.extend(
+      [_item('second', 0, 100)],
+      generation: window.generation,
+      preparedUntilUs: 100,
+    );
+    expect(window.visibleAt(50)!.map((e) => e.payload), ['first', 'second']);
+  });
+
   test(
     'half-open intervals survive skipped frame buckets and cached backseek',
     () {

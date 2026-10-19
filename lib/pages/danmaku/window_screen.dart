@@ -100,16 +100,13 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     );
     if (position == null) return;
     final renderer = widget.renderer;
-    if (_continuity != anchor!.continuity ||
-        (renderer.validUntilUs > renderer.validFromUs &&
-            (position < renderer.validFromUs ||
-                position >= renderer.validUntilUs))) {
+    if (_continuity != anchor!.continuity || position < renderer.validFromUs) {
       renderer.reset(position);
       _continuity = anchor.continuity;
     }
     _lastPositionUs = position;
     widget.prepareFrame(renderer, position);
-    renderer.present(position);
+    renderer.present(position, allowUnprepared: true);
     _syncTicker();
   }
 

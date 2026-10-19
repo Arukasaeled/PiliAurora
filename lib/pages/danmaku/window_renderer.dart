@@ -65,6 +65,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   int activeBytes = 0;
   bool _disposed = false;
   int get activeCount => _active.length;
+  bool hasPrepared(Object identity) => _planner.window.hasIdentity(identity);
   int get generation => _planner.window.generation;
   int get validFromUs => _planner.window.validFromUs;
   int get validUntilUs => _planner.window.validUntilUs;
@@ -114,10 +115,13 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     );
   }
 
-  bool present(int mediaUs) {
+  bool present(int mediaUs, {bool allowUnprepared = false}) {
     if (_disposed) return false;
     _mediaUs = math.max(0, mediaUs);
-    final visible = _planner.window.visibleAt(mediaUs);
+    final visible = _planner.window.visibleAt(
+      mediaUs,
+      allowUnprepared: allowUnprepared,
+    );
     final desired = {
       for (final item
           in visible ??
@@ -236,7 +240,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
         .map((item) => item.identity)
         .toSet();
     _unavailable.removeWhere((identity) => !retained.contains(identity));
-    present(_mediaUs);
+    present(_mediaUs, allowUnprepared: true);
   }
 
   @override

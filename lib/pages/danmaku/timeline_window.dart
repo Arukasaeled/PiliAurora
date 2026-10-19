@@ -43,6 +43,7 @@ class DanmakuTimelineWindow<T> {
   int get validUntilUs => _validUntilUs;
   int get length => _items.length;
   int get estimatedBytes => _bytes;
+  bool hasIdentity(Object identity) => _items.containsKey(identity);
   List<DanmakuWindowItem<T>> get preparedItems => List.unmodifiable(_starts);
 
   bool contains(int positionUs) =>
@@ -59,7 +60,8 @@ class DanmakuTimelineWindow<T> {
     _clearActive();
   }
 
-  /// 整批获准后扩展前沿；失败时调用方缩小准备批次，旧结果保持有效。
+  /// 整批获准后扩展完整前沿；边界项可先加入，后续补齐同一时间戳。
+  /// 失败时调用方缩小准备批次，旧结果保持有效。
   bool extend(
     Iterable<DanmakuWindowItem<T>> additions, {
     required int generation,
@@ -75,7 +77,7 @@ class DanmakuTimelineWindow<T> {
       if (item.startUs < 0 ||
           item.endUs <= item.startUs ||
           item.estimatedBytes < 0 ||
-          item.startUs >= preparedUntilUs) {
+          item.startUs > preparedUntilUs) {
         throw ArgumentError('编排结果必须具有有效区间、预算并位于准备前沿内');
       }
       if (item.endUs <= _validFromUs ||
@@ -113,9 +115,16 @@ class DanmakuTimelineWindow<T> {
     return true;
   }
 
-  /// 正向热帧仅消费新入场和到期事件；域内回跳按索引恢复完整可见集合。
-  List<DanmakuWindowItem<T>>? visibleAt(int positionUs) {
-    if (!contains(positionUs)) return null;
+  /// 正向热帧仅消费新入场和到期事件；域内回跳恢复完整可见集合。
+  /// allowUnprepared 用于顺播呈现尚未补齐前沿时的已知项，不扩大缓存回查域。
+  List<DanmakuWindowItem<T>>? visibleAt(
+    int positionUs, {
+    bool allowUnprepared = false,
+  }) {
+    if (positionUs < _validFromUs ||
+        (!allowUnprepared && !contains(positionUs))) {
+      return null;
+    }
     if (_positionUs == null || positionUs < _positionUs!) {
       _clearActive();
       var lower = 0;

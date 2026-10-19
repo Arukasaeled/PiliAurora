@@ -82,7 +82,7 @@ class DanmakuWindowPlanner<T> {
     int? previous;
     for (final candidate in candidates) {
       if (candidate.sourceUs < 0 ||
-          candidate.sourceUs >= preparedUntilUs ||
+          candidate.sourceUs > preparedUntilUs ||
           (previous != null && candidate.sourceUs < previous) ||
           !candidate.width.isFinite ||
           candidate.width < 0 ||
