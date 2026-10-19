@@ -34,6 +34,7 @@ import 'package:pili_aurora/plugin/pl_player/utils/android_decode_recovery.dart'
 import 'package:pili_aurora/plugin/pl_player/utils/preview_image_cache.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_playback_runtime.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/super_resolution_policy.dart';
@@ -705,6 +706,7 @@ class PlPlayerController
   }
 
   late final PlaybackSession _session = PlaybackSession(runtime: _runtime);
+  PlaybackMediaClock get mediaClock => _session;
   PlaybackNetworkRecovery? _networkRecovery;
   PlaybackAudioRecovery? _audioRecovery;
   PlaybackBackgroundPolicy? _backgroundPolicy;
