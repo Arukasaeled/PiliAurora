@@ -6,22 +6,25 @@ abstract final class GrpcDecodePolicy {
   static const isolateSize = 256 * 1024;
 
   static bool shouldUseIsolate(Uint8List data) {
-    if (data.length > isolateSize) return true;
-    if (data.length < 5 || data[0] != 1) return false;
+    return estimatedDecodedBytes(data) > isolateSize;
+  }
+
+  static int estimatedDecodedBytes(Uint8List data) {
+    if (data.length < 5 || data[0] != 1) return data.length;
     final frameLength = ByteData.sublistView(
       data,
       1,
       5,
     ).getUint32(0, Endian.big);
-    if (frameLength < 18 || frameLength > data.length - 5) return false;
+    if (frameLength < 18 || frameLength > data.length - 5) return data.length;
     const start = 5;
-    if (data[start] != 0x1f || data[start + 1] != 0x8b) return false;
+    if (data[start] != 0x1f || data[start + 1] != 0x8b) return data.length;
     final end = start + frameLength;
     final expandedLength = ByteData.sublistView(
       data,
       end - 4,
       end,
     ).getUint32(0, Endian.little);
-    return expandedLength > isolateSize;
+    return expandedLength > data.length ? expandedLength : data.length;
   }
 }

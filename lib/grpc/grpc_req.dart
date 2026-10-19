@@ -8,6 +8,7 @@ import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, compute;
@@ -59,6 +60,7 @@ abstract final class GrpcReq {
     GeneratedMessage request,
     T Function(Uint8List) grpcParser, {
     bool isolate = false,
+    bool danmakuWork = false,
     Account? account,
     bool retry = true,
   }) async {
@@ -95,9 +97,16 @@ abstract final class GrpcReq {
           details: {'bytes': data.length, 'background': background},
         );
         try {
-          final LoadingState<T> result = background
+          Future<LoadingState<T>> decode() async => background
               ? await compute(_parse<T>, (data, grpcParser))
               : _parse<T>((data, grpcParser));
+          final result = danmakuWork
+              ? await DanmakuWorkQuota.instance.run(
+                  data.length +
+                      GrpcDecodePolicy.estimatedDecodedBytes(data) * 4,
+                  decode,
+                )
+              : await decode();
           operation?.finish(error: result is Error ? result.errMsg : null);
           return result;
         } catch (error) {

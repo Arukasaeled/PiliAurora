@@ -4,11 +4,19 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 /// 仅传递弹幕数据，分段合并和本地文件合并均在后台完成。
 Future<List<DanmakuElem>> mergeDanmakuInBackground(
   List<DanmakuElem> elements,
-) => Isolate.run(() => DanmakuMerger().merge(elements));
+) => DanmakuWorkQuota.instance.run(
+  elements.fold<int>(
+    0,
+    (bytes, element) =>
+        bytes + 256 + element.content.length * 8 + element.midHash.length * 2,
+  ),
+  () => Isolate.run(() => DanmakuMerger().merge(elements)),
+);
 
 /// 合并窗口以首条弹幕为锚点，避免连续刷屏把后续整段内容吞掉。
 class DanmakuMerger {

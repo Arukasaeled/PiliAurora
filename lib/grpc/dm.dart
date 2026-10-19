@@ -19,6 +19,7 @@ abstract final class DmGrpc {
       ),
       DmSegMobileReply.fromBuffer,
       isolate: true,
+      danmakuWork: true,
     );
   }
 
