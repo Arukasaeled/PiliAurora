@@ -11,6 +11,7 @@ import 'package:pili_aurora/grpc/grpc_req.dart';
 import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/models/user/danmaku_rule.dart';
 import 'package:pili_aurora/pages/danmaku/controller.dart';
+import 'package:pili_aurora/pages/danmaku/raw_cache.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -87,6 +88,29 @@ void main() {
     await Future.wait(waiting);
     await ready.timeout(const Duration(seconds: 5));
     expect(controller.peekBufferedDanmaku(0, 1000).single.content, '屏蔽内容');
+  });
+
+  test('规则更新后已淘汰的原始段成为缺失，保留段按新规则重算', () async {
+    final player = _Player(mergeDanmaku: false);
+    final controller = PlDanmakuController(
+      1,
+      player,
+      false,
+      rawCache: DanmakuRawCache(maxBytes: 700),
+    );
+    addTearDown(controller.dispose);
+    await controller.handleDanmaku([_dm('屏蔽内容', 100)], segmentIndex: 0);
+    await controller.handleDanmaku([_dm('屏蔽内容', 360100)], segmentIndex: 1);
+    player.filters = RuleFilter.empty();
+    await controller.refreshRules();
+    expect(
+      controller.readRange(0, 1000000).coverage.single.state,
+      DanmakuCoverageState.missing,
+    );
+    expect(
+      controller.peekBufferedDanmaku(360000, 361000).single.content,
+      '屏蔽内容',
+    );
   });
 
   test('规则失效先清空缓存，再从原始输入恢复被屏蔽内容', () async {

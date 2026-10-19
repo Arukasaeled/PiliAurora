@@ -9,6 +9,7 @@ import 'package:pili_aurora/services/danmaku/work_quota.dart';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
+import 'package:pili_aurora/pages/danmaku/raw_cache.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
@@ -24,8 +25,10 @@ class PlDanmakuController {
   PlDanmakuController(
     this._cid,
     this._plPlayerController,
-    this._isFileSource,
-  ) : _mergeDanmaku = _plPlayerController.mergeDanmaku {
+    this._isFileSource, {
+    DanmakuRawCache? rawCache,
+  }) : _mergeDanmaku = _plPlayerController.mergeDanmaku,
+       _rawSegments = rawCache ?? DanmakuRawCache() {
     _quotaSubscription = DanmakuWorkQuota.instance.available.listen((_) {
       if (_disposed) return;
       if (_retryFile) {
@@ -41,6 +44,8 @@ class PlDanmakuController {
       'danmaku.$hashCode',
       () => {
         'elements': _cache.elementCount,
+        'rawSegments': _rawSegments.length,
+        'rawEstimatedBytes': _rawSegments.estimatedBytes,
         'processWorkQuota': DanmakuWorkQuota.instance.snapshot,
         'buckets': _cache.bucketCount,
         'pendingSegments': _requestedSeg.length,
@@ -72,7 +77,7 @@ class PlDanmakuController {
 
   final _changes = StreamController<DanmakuSourceChange>.broadcast(sync: true);
   Stream<DanmakuSourceChange> get changes => _changes.stream;
-  final _rawSegments = <int, List<DanmakuElem>>{};
+  final DanmakuRawCache _rawSegments;
   List<DanmakuElem>? _rawFile;
   int _ruleRevision = 0;
   final _invalidatedSegments = <int>{};
@@ -178,10 +183,10 @@ class PlDanmakuController {
     if (_isFileSource) {
       _rawFile = elems;
     } else if (segmentIndex != null) {
-      _rawSegments[segmentIndex] = elems;
-      while (_rawSegments.length > _cache.maxSegments) {
-        _rawSegments.remove(_rawSegments.keys.first);
-      }
+      _rawSegments.retain(segmentIndex, elems);
+      _invalidatedSegments.removeWhere(
+        (segment) => _rawSegments[segment] == null,
+      );
     }
     try {
       if (lease != null) {
@@ -191,6 +196,7 @@ class PlDanmakuController {
           estimateDanmakuWorkBytes(elems),
           (lease) => _processDanmaku(elems, segmentIndex, lease),
           token: _ruleWork,
+          waitingBytes: estimateDanmakuWorkBytes(elems),
         );
       }
     } on DanmakuWorkBusy {

@@ -5,14 +5,14 @@ import 'dart:typed_data';
 
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
 
-/// 仅传递弹幕数据，分段合并和本地文件合并均在后台完成。
 int estimateDanmakuWorkBytes(List<DanmakuElem> elements) => elements.fold<int>(
   0,
-  (bytes, element) =>
-      bytes + 512 + element.content.length * 16 + element.midHash.length * 4,
+  (bytes, element) => bytes + estimateDanmakuElementBytes(element) * 4,
 );
 
+/// 分段与文件合并共用后台路径，已获配批次沿用其处理预留。
 Future<List<DanmakuElem>> mergeDanmakuInBackground(
   List<DanmakuElem> elements, {
   DanmakuWorkToken? token,
