@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -18,8 +19,7 @@ Future<List<DanmakuElem>> mergeDanmakuInBackground(
   DanmakuWorkToken? token,
   DanmakuWorkLease? lease,
 }) {
-  Future<List<DanmakuElem>> merge() =>
-      Isolate.run(() => DanmakuMerger().merge(elements));
+  Future<List<DanmakuElem>> merge() => _mergeInWorker(elements, token);
   return lease != null
       ? lease.execute(merge)
       : DanmakuWorkQuota.instance.run(
@@ -28,6 +28,139 @@ Future<List<DanmakuElem>> mergeDanmakuInBackground(
           token: token,
           waitingBytes: estimateDanmakuWorkBytes(elements),
         );
+}
+
+const _mergeBatchElements = 256;
+const _mergeBatchBytes = 512 * 1024;
+
+void _mergeWorker(SendPort output) {
+  final input = ReceivePort();
+  final cursor = DanmakuMergeCursor();
+  output.send(input.sendPort);
+  input.listen((message) {
+    if (message == null) {
+      input.close();
+    } else {
+      output.send(cursor.appendDelta(message as List<DanmakuElem>));
+    }
+  });
+}
+
+Future<List<int>> _orderedIndices(
+  List<DanmakuElem> elements,
+  DanmakuWorkToken? token,
+) async {
+  var order = List.generate(elements.length, (index) => index);
+  int compare(int a, int b) {
+    final time = elements[a].progress.compareTo(elements[b].progress);
+    return time == 0 ? a.compareTo(b) : time;
+  }
+
+  for (var start = 0; start < order.length; start += _mergeBatchElements) {
+    final end = math.min(start + _mergeBatchElements, order.length);
+    final run = order.sublist(start, end)..sort(compare);
+    order.setRange(start, end, run);
+    await Future<void>.delayed(Duration.zero);
+    if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+  }
+  var buffer = List<int>.filled(order.length, 0);
+  for (var width = _mergeBatchElements; width < order.length; width *= 2) {
+    var processed = 0;
+    for (var start = 0; start < order.length; start += width * 2) {
+      final middle = math.min(start + width, order.length);
+      final end = math.min(start + width * 2, order.length);
+      var left = start;
+      var right = middle;
+      for (var target = start; target < end; target++) {
+        buffer[target] =
+            right >= end ||
+                (left < middle && compare(order[left], order[right]) <= 0)
+            ? order[left++]
+            : order[right++];
+        if (++processed % 4096 == 0) {
+          await Future<void>.delayed(Duration.zero);
+          if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+        }
+      }
+    }
+    final previous = order;
+    order = buffer;
+    buffer = previous;
+  }
+  return order;
+}
+
+Future<List<DanmakuElem>> _mergeInWorker(
+  List<DanmakuElem> elements,
+  DanmakuWorkToken? token,
+) async {
+  if (elements.isEmpty) return [];
+  // 仅排序来源索引；protobuf 对象按有界批次复制到 worker。
+  final order = await _orderedIndices(elements, token);
+  final output = ReceivePort();
+  final events = StreamIterator<dynamic>(output);
+  Isolate? worker;
+  SendPort? input;
+  var exited = false;
+  Future<dynamic> next() async {
+    if (!await events.moveNext()) throw StateError('弹幕合并 worker 通道已关闭');
+    final event = events.current;
+    if (event == null) {
+      exited = true;
+      throw StateError('弹幕合并 worker 提前退出');
+    }
+    if (event is List) throw StateError('弹幕合并 worker 执行失败');
+    return event;
+  }
+
+  try {
+    worker = await Isolate.spawn(
+      _mergeWorker,
+      output.sendPort,
+      onError: output.sendPort,
+      onExit: output.sendPort,
+    );
+    input = await next() as SendPort;
+    final result = <DanmakuElem>[];
+    var start = 0;
+    while (start < order.length) {
+      if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+      final batch = <DanmakuElem>[];
+      var bytes = 0;
+      while (start < order.length && batch.length < _mergeBatchElements) {
+        final element = elements[order[start]];
+        final size = estimateDanmakuElementBytes(element) * 4;
+        if (batch.isNotEmpty && bytes + size > _mergeBatchBytes) break;
+        batch.add(element);
+        bytes += size;
+        start++;
+      }
+      input.send(batch);
+      final delta = await next() as DanmakuMergeDelta;
+      result.addAll(delta.additions);
+      for (final update in delta.counts.entries) {
+        result[update.key].count = update.value;
+      }
+    }
+    if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+    return result;
+  } finally {
+    input?.send(null);
+    // 配额一直保留到 worker 的真实退出通知。
+    if (worker != null && !exited) {
+      while (await events.moveNext()) {
+        if (events.current == null) break;
+      }
+    }
+    await events.cancel();
+    output.close();
+  }
+}
+
+class DanmakuMergeDelta {
+  const DanmakuMergeDelta(this.additions, this.counts);
+  final List<DanmakuElem> additions;
+  final Map<int, int> counts;
 }
 
 /// 合并窗口以首条弹幕为锚点，避免连续刷屏把后续整段内容吞掉。
@@ -83,8 +216,21 @@ class DanmakuMergeCursor {
   final _matcher = _DistanceMatcher();
 
   int? _lastProgress;
+  int _nextIndex = 0;
 
-  List<DanmakuElem> appendOrdered(List<DanmakuElem> elements) {
+  DanmakuMergeDelta appendDelta(List<DanmakuElem> elements) {
+    final counts = <int, int>{};
+    final additions = _appendOrdered(elements, counts);
+    return DanmakuMergeDelta(additions, counts);
+  }
+
+  List<DanmakuElem> appendOrdered(List<DanmakuElem> elements) =>
+      _appendOrdered(elements, null);
+
+  List<DanmakuElem> _appendOrdered(
+    List<DanmakuElem> elements,
+    Map<int, int>? counts,
+  ) {
     var previous = _lastProgress;
     for (final element in elements) {
       if (previous != null && element.progress < previous) {
@@ -123,6 +269,7 @@ class DanmakuMergeCursor {
           element.mode < 1 ||
           element.mode > 6) {
         result.add(element);
+        _nextIndex++;
         continue;
       }
       while (_groups.isNotEmpty &&
@@ -135,6 +282,7 @@ class DanmakuMergeCursor {
       var match = _exact[key];
       if (match != null) {
         match.element.count++;
+        counts?[match.index] = match.element.count;
         continue;
       }
       final runes = text.runes.toList();
@@ -166,9 +314,10 @@ class DanmakuMergeCursor {
       }
       if (match != null) {
         match.element.count++;
+        counts?[match.index] = match.element.count;
         continue;
       }
-      final group = _MergeGroup(element, text, runes, meaning);
+      final group = _MergeGroup(element, text, runes, meaning, _nextIndex++);
       if (_groups.length >= DanmakuMerger._maxGroups) evict();
       _groups.add(group);
       _exact[key] = group;
@@ -241,7 +390,8 @@ class _DistanceMatcher {
 }
 
 class _MergeGroup {
-  _MergeGroup(this.element, this.text, this.runes, this.meaning);
+  _MergeGroup(this.element, this.text, this.runes, this.meaning, this.index);
+  final int index;
   final DanmakuElem element;
   final String text;
   final List<int> runes;

@@ -213,6 +213,7 @@ class PlDanmakuController {
   ) async {
     if (_disposed) return;
     final revision = _ruleRevision;
+    final workToken = _ruleWork;
     final filtered = <DanmakuElem>[];
     final retained = _isFileSource ? <DanmakuElem>[] : null;
     final segmentBuckets = segmentIndex == null
@@ -244,7 +245,11 @@ class PlDanmakuController {
     final List<DanmakuElem> processed;
     try {
       processed = _mergeDanmaku
-          ? await mergeDanmakuInBackground(filtered, lease: lease)
+          ? await mergeDanmakuInBackground(
+              filtered,
+              lease: lease,
+              token: workToken,
+            )
           : filtered;
     } on DanmakuWorkCancelled {
       return;

@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 DanmakuElem _dm(
   String text,
@@ -20,6 +21,46 @@ DanmakuElem _dm(
 );
 
 void main() {
+  test(
+    'worker batches reconcile earlier counts and match stable full merge',
+    () async {
+      final input = List.generate(
+        1100,
+        (i) => _dm(
+          i % 4 == 0 ? '相同长弹幕内容' : '原始条目$i',
+          i * 11,
+          mode: i % 19 == 0 ? 7 : 1,
+          self: i % 37 == 0,
+        ),
+      )..shuffle(Random(19));
+      final expected = DanmakuMerger().merge([
+        for (final element in input)
+          DanmakuElem.fromBuffer(element.writeToBuffer()),
+      ]);
+      final actual = await mergeDanmakuInBackground(input);
+      expect(
+        actual.map((e) => e.writeToBuffer()),
+        expected.map((e) => e.writeToBuffer()),
+      );
+      expect(input.every((e) => e.count == 0), isTrue);
+    },
+  );
+
+  test(
+    'cancelled background work finishes before its quota is released',
+    () async {
+      final token = DanmakuWorkToken();
+      final pending = mergeDanmakuInBackground(
+        List.generate(600, (i) => _dm('重复', i)),
+        token: token,
+      );
+      Timer.run(token.cancel);
+      await expectLater(pending, throwsA(isA<DanmakuWorkCancelled>()));
+      expect(DanmakuWorkQuota.instance.snapshot['runningTasks'], 0);
+      expect(await DanmakuWorkQuota.instance.run(1, () => 42), 42);
+    },
+  );
+
   test('ordered batches preserve anchors and update earlier counts', () {
     final cursor = DanmakuMergeCursor();
     final first = cursor.appendOrdered([
