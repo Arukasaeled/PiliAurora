@@ -64,6 +64,31 @@ void main() {
     expect(second.readRange(0, 1000000).isLoaded, isTrue);
   });
 
+  test('等待队列满时保留来源需求，容量恢复后处理最新规则', () async {
+    final quota = DanmakuWorkQuota.instance;
+    final gate = Completer<void>();
+    final running = quota.run(1, () => gate.future);
+    final waiting = List.generate(
+      quota.maxWaitingTasks,
+      (_) => quota.run(1, () {}, waitingBytes: 1),
+    );
+    final player = _Player(mergeDanmaku: false);
+    final controller = PlDanmakuController(1, player, false);
+    addTearDown(controller.dispose);
+    await controller.handleDanmaku([_dm('屏蔽内容', 100)], segmentIndex: 0);
+    expect(controller.readRange(0, 1000000).isLoaded, isFalse);
+    player.filters = RuleFilter.empty();
+    await controller.refreshRules();
+    final ready = controller.changes.firstWhere(
+      (e) => e.kind == DanmakuSourceChangeKind.ready,
+    );
+    gate.complete();
+    await running;
+    await Future.wait(waiting);
+    await ready.timeout(const Duration(seconds: 5));
+    expect(controller.peekBufferedDanmaku(0, 1000).single.content, '屏蔽内容');
+  });
+
   test('规则失效先清空缓存，再从原始输入恢复被屏蔽内容', () async {
     final player = _Player();
     final controller = PlDanmakuController(1, player, false);

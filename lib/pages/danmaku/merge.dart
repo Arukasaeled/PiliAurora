@@ -26,6 +26,7 @@ Future<List<DanmakuElem>> mergeDanmakuInBackground(
           estimateDanmakuWorkBytes(elements),
           merge,
           token: token,
+          waitingBytes: estimateDanmakuWorkBytes(elements),
         );
 }
 

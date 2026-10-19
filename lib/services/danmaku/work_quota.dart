@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'dart:collection';
 
+class DanmakuWorkBusy implements Exception {
+  const DanmakuWorkBusy();
+}
+
 class DanmakuWorkCancelled implements Exception {
   const DanmakuWorkCancelled();
 }
@@ -36,15 +40,38 @@ class DanmakuWorkLease {
 
 /// 解码与合并共用进程配额；页面失效不提前释放仍在运行的任务。
 class DanmakuWorkQuota {
-  DanmakuWorkQuota({this.maxTasks = 1, this.maxBytes = 64 * 1024 * 1024})
-    : assert(maxTasks > 0),
-      assert(maxBytes > 0);
+  DanmakuWorkQuota({
+    this.maxTasks = 1,
+    this.maxBytes = 64 * 1024 * 1024,
+    this.maxWaitingTasks = 16,
+    this.maxWaitingBytes = 8 * 1024 * 1024,
+  }) : assert(maxTasks > 0),
+       assert(maxBytes > 0),
+       assert(maxWaitingTasks > 0),
+       assert(maxWaitingBytes > 0);
 
   static final instance = DanmakuWorkQuota();
 
   final int maxTasks;
   final int maxBytes;
-  final _waiting = Queue<({int bytes, Completer<void> ready})>();
+  final int maxWaitingTasks;
+  final int maxWaitingBytes;
+  final _available = StreamController<void>.broadcast();
+  Stream<void> get available => _available.stream;
+  final _waiting =
+      Queue<({int bytes, int waitingBytes, Completer<void> ready})>();
+  int _waitingBytes = 0;
+
+  bool get hasWaitingCapacity =>
+      _waiting.length < maxWaitingTasks &&
+      _waitingBytes + 256 <= maxWaitingBytes;
+
+  Map<String, int> get snapshot => {
+    'runningTasks': _tasks,
+    'reservedBytes': _bytes,
+    'waitingTasks': _waiting.length,
+    'waitingBytes': _waitingBytes,
+  };
   int _tasks = 0;
   int _bytes = 0;
 
@@ -52,27 +79,51 @@ class DanmakuWorkQuota {
     int estimatedBytes,
     FutureOr<T> Function() work, {
     DanmakuWorkToken? token,
+    int waitingBytes = 256,
   }) {
-    return runWithLease(estimatedBytes, (_) => work(), token: token);
+    return runWithLease(
+      estimatedBytes,
+      (_) => work(),
+      token: token,
+      waitingBytes: waitingBytes,
+    );
   }
 
   Future<T> runWithLease<T>(
     int estimatedBytes,
     FutureOr<T> Function(DanmakuWorkLease) work, {
     DanmakuWorkToken? token,
+    int waitingBytes = 256,
   }) async {
     if (estimatedBytes < 0) throw ArgumentError.value(estimatedBytes);
     if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
-    final ticket = (bytes: estimatedBytes, ready: Completer<void>());
+    if (waitingBytes < 0) throw ArgumentError.value(waitingBytes);
+    final startsImmediately =
+        _waiting.isEmpty &&
+        _tasks < maxTasks &&
+        (_tasks == 0 || _bytes + estimatedBytes <= maxBytes);
+    if (!startsImmediately &&
+        (_waiting.length >= maxWaitingTasks ||
+            _waitingBytes + waitingBytes > maxWaitingBytes)) {
+      throw const DanmakuWorkBusy();
+    }
+    final ticket = (
+      bytes: estimatedBytes,
+      waitingBytes: waitingBytes,
+      ready: Completer<void>(),
+    );
     void cancelWaiting() {
       if (_waiting.remove(ticket)) {
+        _waitingBytes -= ticket.waitingBytes;
         ticket.ready.completeError(const DanmakuWorkCancelled());
         _drain();
+        _available.add(null);
       }
     }
 
     token?._listeners.add(cancelWaiting);
     _waiting.add(ticket);
+    _waitingBytes += ticket.waitingBytes;
     _drain();
     try {
       await ticket.ready.future;
@@ -88,6 +139,7 @@ class DanmakuWorkQuota {
       _tasks--;
       _bytes -= ticket.bytes;
       _drain();
+      _available.add(null);
     }
   }
 
@@ -97,6 +149,7 @@ class DanmakuWorkQuota {
       // 大文件独占执行，避免超过预算的单项永久等待。
       if (_tasks > 0 && _bytes + ticket.bytes > maxBytes) return;
       _waiting.removeFirst();
+      _waitingBytes -= ticket.waitingBytes;
       _tasks++;
       _bytes += ticket.bytes;
       ticket.ready.complete();

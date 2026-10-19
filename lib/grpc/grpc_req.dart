@@ -116,10 +116,13 @@ abstract final class GrpcReq {
                     return decoded;
                   },
                   token: workToken,
+                  waitingBytes: data.length + 256,
                 )
               : await decode();
           operation?.finish(error: result is Error ? result.errMsg : null);
           return result;
+        } on DanmakuWorkBusy {
+          return const Error('弹幕处理等待额度已满');
         } on DanmakuWorkCancelled {
           return const Error('弹幕任务已失效');
         } catch (error) {

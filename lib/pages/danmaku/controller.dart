@@ -26,10 +26,22 @@ class PlDanmakuController {
     this._plPlayerController,
     this._isFileSource,
   ) : _mergeDanmaku = _plPlayerController.mergeDanmaku {
+    _quotaSubscription = DanmakuWorkQuota.instance.available.listen((_) {
+      if (_disposed) return;
+      if (_retryFile) {
+        _retryFile = false;
+        initFileDmIfNeeded();
+      }
+      if (_retryProcessing) {
+        _retryProcessing = false;
+        unawaited(_scheduleReprocess());
+      }
+    });
     _unregisterDiagnostics = Diagnostics.instance.register(
       'danmaku.$hashCode',
       () => {
         'elements': _cache.elementCount,
+        'processWorkQuota': DanmakuWorkQuota.instance.snapshot,
         'buckets': _cache.bucketCount,
         'pendingSegments': _requestedSeg.length,
         'localFile': _isFileSource,
@@ -40,6 +52,9 @@ class PlDanmakuController {
   }
 
   late final void Function() _unregisterDiagnostics;
+  late final StreamSubscription<void> _quotaSubscription;
+  bool _retryProcessing = false;
+  bool _retryFile = false;
 
   final int _cid;
   final PlPlayerController _plPlayerController;
@@ -82,6 +97,10 @@ class PlDanmakuController {
         ruleRevision: _ruleRevision,
       ),
     );
+    return _scheduleReprocess();
+  }
+
+  Future<void> _scheduleReprocess() {
     return _reprocessing ??= _reprocess().whenComplete(
       () => _reprocessing = null,
     );
@@ -107,6 +126,7 @@ class PlDanmakuController {
   void dispose() {
     _unregisterDiagnostics();
     _disposed = true;
+    unawaited(_quotaSubscription.cancel());
     _lifetimeWork.cancel();
     _ruleWork.cancel();
     _cache.clear();
@@ -118,10 +138,13 @@ class PlDanmakuController {
   }
 
   Future<void> queryDanmaku(int segmentIndex) async {
-    if (_isFileSource || _disposed) {
+    if (_isFileSource ||
+        _disposed ||
+        !DanmakuWorkQuota.instance.hasWaitingCapacity) {
       return;
     }
-    if (_requestedSeg.contains(segmentIndex) ||
+    if (_requestedSeg.length >= _cache.maxSegments ||
+        _requestedSeg.contains(segmentIndex) ||
         _cache.containsSegment(segmentIndex)) {
       return;
     }
@@ -170,6 +193,8 @@ class PlDanmakuController {
           token: _ruleWork,
         );
       }
+    } on DanmakuWorkBusy {
+      _retryProcessing = true;
     } on DanmakuWorkCancelled {
       return;
     }
@@ -307,6 +332,9 @@ class PlDanmakuController {
         },
         token: _lifetimeWork,
       );
+    } on DanmakuWorkBusy {
+      _fileDmLoaded = false;
+      _retryFile = true;
     } on DanmakuWorkCancelled {
       return;
     } catch (e, s) {

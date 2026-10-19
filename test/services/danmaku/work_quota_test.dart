@@ -4,6 +4,41 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 void main() {
+  test(
+    'waiting count and bytes reject excess work, cancellation returns capacity',
+    () async {
+      final quota = DanmakuWorkQuota(maxWaitingTasks: 1, maxWaitingBytes: 100);
+      final done = Completer<void>();
+      final first = quota.run(1, () => done.future);
+      final token = DanmakuWorkToken();
+      final waiting = quota.run(1, () => 1, waitingBytes: 80, token: token);
+      expect(quota.snapshot['waitingTasks'], 1);
+      expect(quota.snapshot['waitingBytes'], 80);
+      await expectLater(
+        quota.run(1, () => 2, waitingBytes: 1),
+        throwsA(isA<DanmakuWorkBusy>()),
+      );
+      final cancelled = expectLater(
+        waiting,
+        throwsA(isA<DanmakuWorkCancelled>()),
+      );
+      token.cancel();
+      await cancelled;
+      expect(quota.snapshot['waitingBytes'], 0);
+      await expectLater(
+        quota.run(1, () => 3, waitingBytes: 101),
+        throwsA(isA<DanmakuWorkBusy>()),
+      );
+      final available = quota.available.first;
+      final next = quota.run(1, () => 4, waitingBytes: 100);
+      done.complete();
+      await first;
+      await available;
+      expect(await next, 4);
+      expect(quota.snapshot.values, everyElement(0));
+    },
+  );
+
   test('lease spans child stages and expires after result transfer', () async {
     final quota = DanmakuWorkQuota();
     late DanmakuWorkLease saved;
