@@ -194,6 +194,44 @@ void main() {
     expect(converted, 120);
   });
 
+  test('special candidates keep the per-bucket cap across ready replays', () {
+    final source = _Source()
+      ..load([for (var i = 0; i < 6; i++) _dm('script$i', 0)..mode = 7]);
+    final renderer = _renderer();
+    var converted = 0;
+    final coordinator = DanmakuWindowCoordinator(
+      source: source,
+      renderer: renderer,
+      preparePerFrame: 120,
+      contentOf: (element) {
+        converted++;
+        return SpecialDanmakuContentItem<void>(
+          element.content,
+          duration: 1000,
+          color: const Color(0xffffffff),
+          fontSize: 16,
+          translateXTween: ConstantTween<double>(.25),
+          translateYTween: ConstantTween<double>(.25),
+        );
+      },
+    );
+    addTearDown(renderer.dispose);
+    addTearDown(coordinator.dispose);
+    addTearDown(source.events.close);
+    coordinator.prepareFrame(renderer, 0);
+    renderer.present(0, allowUnprepared: true);
+    expect(converted, 4);
+    expect(renderer.activeSpecialCount, 4);
+    source.events.add(
+      const DanmakuSourceChange(
+        kind: DanmakuSourceChangeKind.ready,
+        ruleRevision: 0,
+      ),
+    );
+    coordinator.prepareFrame(renderer, 16000);
+    expect(converted, 4);
+  });
+
   testWidgets(
     'source ready drives a mounted media window without position callbacks',
     (tester) async {

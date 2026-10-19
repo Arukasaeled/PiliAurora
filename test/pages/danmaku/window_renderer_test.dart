@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/painting.dart';
+import 'package:flutter/animation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
@@ -28,8 +29,112 @@ Future<List<int>> _draw(void Function(Canvas) paint) async {
   return result;
 }
 
+SpecialDanmakuContentItem<void> _special({
+  int duration = 2000,
+  double fontSize = 20,
+}) => SpecialDanmakuContentItem<void>(
+  'special',
+  duration: duration,
+  color: const Color(0xffffffff),
+  fontSize: fontSize,
+  alphaTween: Tween<double>(begin: .2, end: .8),
+  translateXTween: Tween<double>(begin: .1, end: .6),
+  translateYTween: ConstantTween<double>(.25),
+  rotateZ: .2,
+  translationStartDelay: 400,
+  translationDuration: 1000,
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final ratio in [1.0, 2.0]) {
+    test(
+      'special script pixels match existing renderer at DPR $ratio',
+      () async {
+        final old = WindowsDanmakuRenderer<void>(
+          option: _option,
+          size: _size,
+          devicePixelRatio: ratio,
+        );
+        final next = DanmakuWindowRenderer<void>(
+          option: _option,
+          size: _size,
+          devicePixelRatio: ratio,
+        );
+        addTearDown(old.dispose);
+        addTearDown(next.dispose);
+        old
+          ..add(_special())
+          ..advance(const Duration(milliseconds: 500));
+        next
+          ..prepare(
+            [DanmakuWindowContent('special', 1000000, _special())],
+            generation: next.generation,
+            preparedUntilUs: 4000000,
+          )
+          ..present(1500000);
+        expect(next.activeSpecialCount, 1);
+        expect(
+          await _pixels(next),
+          await _draw((canvas) => old.paint(canvas, _size)),
+        );
+        final bytes = next.activeBytes;
+        next.present(1500000);
+        expect(next.activeBytes, bytes);
+        next.present(3000000);
+        expect(next.activeBytes, 0);
+      },
+    );
+  }
+
+  test('special quota follows exact lifetimes and future entries do not occupy slots', () {
+    final renderer = DanmakuWindowRenderer<void>(option: _option, size: _size);
+    addTearDown(renderer.dispose);
+    renderer
+      ..prepare(
+        [
+          for (var index = 0; index < 33; index++)
+            DanmakuWindowContent(index, 0, _special(duration: 10000)),
+          DanmakuWindowContent('future', 10000000, _special(duration: 10000)),
+        ],
+        generation: renderer.generation,
+        preparedUntilUs: 20000000,
+      )
+      ..present(9994000);
+    expect(renderer.activeSpecialCount, 32);
+    renderer.present(9999000);
+    expect(renderer.activeSpecialCount, 32);
+    renderer.present(10000000);
+    expect(renderer.activeSpecialCount, 1);
+    renderer.present(20000000);
+    expect(renderer.activeBytes, 0);
+  });
+
+  test('special resource budget and invalid script measurements reject without active references', () {
+    final renderer = DanmakuWindowRenderer<void>(
+      option: _option,
+      size: _size,
+      maxActiveBytes: 1,
+    );
+    addTearDown(renderer.dispose);
+    renderer
+      ..prepare(
+        [
+          DanmakuWindowContent(
+            'invalid',
+            0,
+            _special(fontSize: double.infinity),
+          ),
+          DanmakuWindowContent('budget', 0, _special()),
+        ],
+        generation: renderer.generation,
+        preparedUntilUs: 3000000,
+      )
+      ..present(500000);
+    expect(renderer.activeSpecialCount, 0);
+    expect(renderer.activeBytes, 0);
+  });
 
   for (final ratio in [1.0, 2.0]) {
     test('window pixels match the existing renderer at DPR $ratio', () async {

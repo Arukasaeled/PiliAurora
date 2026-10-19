@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:pili_aurora/pages/danmaku/arrangement.dart';
 import 'package:pili_aurora/pages/danmaku/raster_cache.dart';
+import 'package:pili_aurora/pages/danmaku/render_guard.dart';
+import 'package:pili_aurora/pages/danmaku/special_frame.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_window.dart';
 
 class DanmakuWindowContent<T> {
@@ -16,9 +18,11 @@ class DanmakuWindowContent<T> {
 }
 
 class _ActiveRaster<T> {
-  _ActiveRaster(this.item, this.image);
+  _ActiveRaster(this.item, this.image, {this.specialBounds});
   final DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>> item;
   final ui.Image image;
+  final Rect? specialBounds;
+  DanmakuSpecialFrame? specialFrame;
   int get bytes => image.width * image.height * 4;
 }
 
@@ -32,7 +36,8 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     this.maxActiveBytes = danmakuActiveRasterBytes,
     int rasterCacheMaxBytes = 16 * 1024 * 1024,
     int rasterCacheMaxEntries = 512,
-  }) : rasters = DanmakuRasterCache(
+  }) : _size = size,
+       rasters = DanmakuRasterCache(
          option: option,
          devicePixelRatio: devicePixelRatio,
          fontFamily: fontFamily,
@@ -56,6 +61,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     );
   }
 
+  final Size _size;
   final DanmakuRasterCache rasters;
   late final DanmakuWindowPlanner<DanmakuContentItem<T>> _planner;
   final int maxActiveBytes;
@@ -65,6 +71,8 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   int activeBytes = 0;
   bool _disposed = false;
   int get activeCount => _active.length;
+  int get activeSpecialCount =>
+      _active.values.where((item) => item.specialBounds != null).length;
   bool hasPrepared(Object identity) => _planner.window.hasIdentity(identity);
   int get generation => _planner.window.generation;
   int get validFromUs => _planner.window.validFromUs;
@@ -91,9 +99,24 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
         candidates.add(previous);
         continue;
       }
-      final raster = input.content.type == DanmakuItemType.special
+      final special = input.content is SpecialDanmakuContentItem<T>
+          ? input.content as SpecialDanmakuContentItem<T>
+          : null;
+      final hidden = rasters.option.hideWhat(input.content.type);
+      final raster = hidden || input.content.type == DanmakuItemType.special
           ? null
           : rasters.get(input.content);
+      final renderable =
+          !hidden &&
+          (special == null
+              ? raster != null
+              : DanmakuRenderGuard.canRasterizeSpecial(
+                  special,
+                  rasters.devicePixelRatio,
+                  rasters.option.strokeWidth,
+                  rasters.option.fontWeight,
+                  fontFamily: rasters.fontFamily,
+                ));
       candidates.add(
         DanmakuMeasuredCandidate(
           identity: input.identity,
@@ -103,7 +126,8 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
           type: input.content.type,
           payload: input.content,
           selfSend: input.content.selfSend,
-          renderable: raster != null,
+          renderable: renderable,
+          specialDurationUs: special == null ? null : special.duration * 1000,
           estimatedBytes: input.content.text.length * 2,
         ),
       );
@@ -140,6 +164,26 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
         continue;
       }
       final content = item.payload.candidate.payload;
+      if (content is SpecialDanmakuContentItem<T>) {
+        final raster = rasters.textRenderer.rasterizeSpecial(
+          content: content,
+          strokeWidth: rasters.option.strokeWidth,
+          fontWeight: rasters.option.fontWeight,
+        );
+        final bytes = raster.image.width * raster.image.height * 4;
+        if (activeBytes + bytes > maxActiveBytes) {
+          raster.image.dispose();
+          _unavailable.add(item.identity);
+          continue;
+        }
+        _active[item.identity] = _ActiveRaster(
+          item,
+          raster.image,
+          specialBounds: raster.bounds,
+        );
+        activeBytes += bytes;
+        continue;
+      }
       final raster = rasters.get(content);
       if (raster == null || activeBytes + raster.bytes > maxActiveBytes) {
         _unavailable.add(item.identity);
@@ -153,6 +197,19 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       final active = _ActiveRaster(item, image.clone());
       _active[item.identity] = active;
       activeBytes += active.bytes;
+    }
+    for (final active in _active.values) {
+      if (active.specialBounds != null) {
+        active.specialFrame = DanmakuSpecialFrame.evaluate(
+          content:
+              active.item.payload.candidate.payload
+                  as SpecialDanmakuContentItem<T>,
+          rasterBounds: active.specialBounds!,
+          size: _size,
+          sourceUs: active.item.sourceUs,
+          mediaUs: _mediaUs,
+        );
+      }
     }
     final ordered = {
       for (final identity in desired.keys)
@@ -169,6 +226,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     Offset point,
   ) {
     for (final active in _active.values.toList().reversed) {
+      if (active.specialBounds != null) continue;
       final motion = active.item.payload.trajectory!;
       final bounds = Rect.fromLTWH(
         motion.xAt(_mediaUs / 1000),
@@ -200,6 +258,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     }
     final paint = Paint();
     for (final active in _active.values) {
+      if (active.specialBounds != null) continue;
       final motion = active.item.payload.trajectory!;
       final position = Offset(motion.xAt(_mediaUs / 1000), motion.y);
       if (active.image.width == motion.width.ceil()) {
@@ -214,6 +273,26 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
             active.image.height.toDouble(),
           ),
           Rect.fromLTWH(position.dx, position.dy, motion.width, motion.height),
+          paint,
+        );
+      }
+    }
+    for (final active in _active.values) {
+      final frame = active.specialFrame;
+      if (frame == null) continue;
+      paint.color = frame.color;
+      if (active.image.width == frame.bounds.width.ceil()) {
+        canvas.drawImage(active.image, frame.bounds.topLeft, paint);
+      } else {
+        canvas.drawImageRect(
+          active.image,
+          Rect.fromLTWH(
+            0,
+            0,
+            active.image.width.toDouble(),
+            active.image.height.toDouble(),
+          ),
+          frame.bounds,
           paint,
         );
       }

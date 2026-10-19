@@ -14,6 +14,7 @@ class DanmakuMeasuredCandidate<T> {
     this.estimatedBytes = 0,
     this.selfSend = false,
     this.renderable = true,
+    this.specialDurationUs,
   });
 
   final Object identity;
@@ -25,6 +26,7 @@ class DanmakuMeasuredCandidate<T> {
   final int estimatedBytes;
   final bool selfSend;
   final bool renderable;
+  final int? specialDurationUs;
 }
 
 class DanmakuArrangement<T> {
@@ -134,12 +136,29 @@ class DanmakuWindowPlanner<T> {
         DanmakuArrangement(candidate, null, -1, false);
     if (!candidate.renderable ||
         width <= 0 ||
-        trackHeight <= 0 ||
+        option.hideWhat(candidate.type)) {
+      return rejected();
+    }
+    if (candidate.type == DanmakuItemType.special) {
+      final duration = candidate.specialDurationUs;
+      if (duration == null || duration <= 0) return rejected();
+      final start = candidate.sourceUs / 1000;
+      final motion = DanmakuTrajectory(
+        startMs: start,
+        endMs: start + duration / 1000,
+        startX: 0,
+        y: 0,
+        width: candidate.width,
+        height: candidate.height,
+        velocity: 0,
+      );
+      if (!_withinCapacity(motion, existing, special: true)) return rejected();
+      return DanmakuArrangement(candidate, motion, -1, false);
+    }
+    if (trackHeight <= 0 ||
         trackCount <= 0 ||
         option.duration <= 0 ||
-        option.staticDuration <= 0 ||
-        candidate.type == DanmakuItemType.special ||
-        option.hideWhat(candidate.type)) {
+        option.staticDuration <= 0) {
       return rejected();
     }
     var scrolling = candidate.type == DanmakuItemType.scroll;
@@ -181,7 +200,10 @@ class DanmakuWindowPlanner<T> {
       for (final item in existing) {
         final old = item.payload;
         final oldMotion = old.trajectory;
-        if (oldMotion == null) continue;
+        if (oldMotion == null ||
+            old.candidate.type == DanmakuItemType.special) {
+          continue;
+        }
         final late = motion.startMs < oldMotion.startMs;
         if (DanmakuGeometry.blocks(
           late ? oldMotion : motion,
@@ -233,17 +255,29 @@ class DanmakuWindowPlanner<T> {
     }
     if (track < 0) return rejected();
     final motion = trajectory(track, scrolling);
-    // 前瞻结果尚未入场；额度取共同存活区间的峰值，而非窗口总条数。
-    final events = <(double, int)>[];
+    if (!_withinCapacity(motion, existing, special: false)) return rejected();
+    return DanmakuArrangement(candidate, motion, track, scrolling);
+  }
+
+  bool _withinCapacity(
+    DanmakuTrajectory motion,
+    Iterable<DanmakuWindowItem<DanmakuArrangement<T>>> existing, {
+    required bool special,
+  }) {
+    // 前瞻条目按共同存活区间计入总额度和独立的高级额度。
+    final events = <(double, int, int)>[];
     for (final item in existing) {
       final other = item.payload.trajectory;
       if (other == null) continue;
       final start = math.max(motion.startMs, other.startMs);
       final end = math.min(motion.endMs, other.endMs);
+      final advanced = item.payload.candidate.type == DanmakuItemType.special
+          ? 1
+          : 0;
       if (start < end) {
         events
-          ..add((start, 1))
-          ..add((end, -1));
+          ..add((start, 1, advanced))
+          ..add((end, -1, -advanced));
       }
     }
     events.sort((a, b) {
@@ -251,11 +285,16 @@ class DanmakuWindowPlanner<T> {
       return time == 0 ? a.$2.compareTo(b.$2) : time;
     });
     var active = 1;
-    if (active > maxActive) return rejected();
+    var advanced = special ? 1 : 0;
+    if (active > maxActive) return false;
     for (final event in events) {
       active += event.$2;
-      if (active > maxActive) return rejected();
+      advanced += event.$3;
+      if (active > maxActive ||
+          advanced > DanmakuDisplayLimits.maxActiveSpecial) {
+        return false;
+      }
     }
-    return DanmakuArrangement(candidate, motion, track, scrolling);
+    return true;
   }
 }

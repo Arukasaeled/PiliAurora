@@ -133,9 +133,14 @@ class DanmakuWindowCoordinator<T> {
           DanmakuDisplayLimits.maxPerBatch,
         );
         final candidates = <DanmakuWindowContent<T>>[];
+        var specials = 0;
         for (var index = 0; index < count; index++) {
           final entry = eligible[index * eligible.length ~/ count];
           final element = entry.element;
+          if (element.mode == 7 &&
+              ++specials > DanmakuDisplayLimits.maxSpecialPerBatch) {
+            continue;
+          }
           final key = (
             element.idStr,
             element.id,
