@@ -1112,18 +1112,7 @@ class PlaybackSession {
   Future<CommandResult> _reloadForConfiguration(PlaybackOwner owner) async {
     final plan = _currentPlan;
     if (plan == null) return const CommandResult.noMedia();
-    final position = plan.timeline.kind == PlaybackTimelineKind.live
-        ? null
-        : (_actual.position ?? plan.reloadPosition ?? plan.startPosition);
-    final reloadPlan = PlaybackPlan(
-      contentKey: plan.contentKey,
-      source: plan.source,
-      timeline: plan.timeline,
-      configuration: _desiredConfiguration,
-      startPosition: position,
-      reloadPosition: position,
-      metadata: plan.metadata,
-    );
+    final reloadPlan = _planForReload(plan);
     final result = await _load(
       owner,
       reloadPlan,
@@ -1221,6 +1210,61 @@ class PlaybackSession {
     return Future.value(const CommandResult.applied());
   }
 
+  PlaybackPlan _planForReload(PlaybackPlan plan) {
+    // 状态快照按状态变化发布，续播位置在真正提交重载时向运行时采样。
+    final position = plan.timeline.kind == PlaybackTimelineKind.live
+        ? null
+        : (_currentPlan?.contentKey == plan.contentKey
+                  ? _runtime.position ?? _actual.position
+                  : null) ??
+              plan.reloadPosition ??
+              plan.startPosition;
+    return PlaybackPlan(
+      contentKey: plan.contentKey,
+      source: plan.source,
+      timeline: plan.timeline,
+      configuration: _desiredConfiguration,
+      startPosition: position,
+      reloadPosition: position,
+      metadata: plan.metadata,
+    );
+  }
+
+  Future<CommandResult> _reloadAudio(PlaybackOwner owner) async {
+    final rejection = _rejectCommand(owner);
+    if (rejection != null) return rejection;
+    if (_currentPlan == null) return const CommandResult.noMedia();
+    if (owner._requiresLoad || _phase != PlaybackPhase.ready) {
+      return const CommandResult.notReady();
+    }
+    final request = _requestId;
+    final load = _loadId;
+    final result = await _operations.submit<PlaybackRuntimeCommandResult>(
+      slot: PlaybackOperationSlot.audioTrack,
+      deadline: _now() + commandBudget,
+      operation: (operation) async {
+        bool isCurrent() =>
+            _isCommandCurrent(owner, request, load) && operation.isCurrent();
+        if (!isCurrent()) throw const _PlaybackSuperseded();
+        final result = await _runtime.reloadAudio(
+          PlaybackExecutionContext(
+            requestId: request,
+            runtimeId: _runtime.runtimeId,
+            loadId: load,
+            deadline: operation.deadline,
+            monotonicNow: _now,
+            cancelled: Future<void>.value(),
+            registerCancellation: (_) {},
+            isCurrent: isCurrent,
+          ),
+        );
+        if (!isCurrent()) throw const _PlaybackSuperseded();
+        return result;
+      },
+    );
+    return _commandResult(result, 'reloadAudio', PlaybackStage.observing);
+  }
+
   Future<LoadResult> _recover(PlaybackOwner owner, PlaybackPlan plan) {
     final rejection = _rejectLoad(owner);
     if (rejection != null) return Future.value(rejection);
@@ -1239,7 +1283,7 @@ class PlaybackSession {
     if (_recoveryIncident == incident) incident.deferredPlan = null;
     return _load(
       owner,
-      plan.withConfiguration(_desiredConfiguration),
+      _planForReload(plan),
       start: PlaybackStartPolicy.preserve,
       automaticRecovery: true,
     );
@@ -1336,18 +1380,7 @@ class PlaybackSession {
     final plan = _currentPlan;
     if (plan == null) return Future.value(const LoadResult.noMedia());
     _recoveryIncident = null;
-    final reloadPosition = plan.timeline.kind == PlaybackTimelineKind.live
-        ? null
-        : (_actual.position ?? plan.reloadPosition ?? plan.startPosition);
-    final retryPlan = PlaybackPlan(
-      contentKey: plan.contentKey,
-      source: plan.source,
-      timeline: plan.timeline,
-      configuration: _desiredConfiguration,
-      startPosition: reloadPosition,
-      reloadPosition: reloadPosition,
-      metadata: plan.metadata,
-    );
+    final retryPlan = _planForReload(plan);
     return _load(owner, retryPlan, start: PlaybackStartPolicy.preserve);
   }
 
@@ -2000,6 +2033,8 @@ class PlaybackOwner {
       _session._setPlaying(this, playing);
 
   Future<CommandResult> seek(Duration target) => _session._seek(this, target);
+
+  Future<CommandResult> reloadAudio() => _session._reloadAudio(this);
 
   Future<CommandResult> setPlaybackSpeed(
     double value, {

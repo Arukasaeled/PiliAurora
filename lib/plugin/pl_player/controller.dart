@@ -1320,7 +1320,11 @@ class PlPlayerController
       isCurrent: () => _session.isCurrent(revision),
       readState: () {
         final player = _videoPlayerController;
-        if (player == null || player.disposed) return null;
+        if (player == null ||
+            player.disposed ||
+            (!isLive && player.state.completed)) {
+          return null;
+        }
         return (
           buffering: isBuffering.value,
           position: player.state.position,
@@ -1410,26 +1414,11 @@ class PlPlayerController
       },
       repairAudio: () {
         if (processing) return null;
-        final player = _videoPlayerController;
-        final currentPlan = currentPlaybackPlan;
-        final audio = currentPlan?.source.currentAudioSource;
-        if (player == null ||
-            currentPlan == null ||
-            currentPlan.configuration.audioOnly ||
-            audio == null) {
-          return Future.value(false);
-        }
-        final nextSource = currentPlan.source.advanceCandidate(audioOnly: true);
-        if (nextSource == null) return Future.value(false);
-        final nextPlan = currentPlan.withSource(nextSource);
-        _currentPlan = nextPlan;
         final owner = _activeOwner;
         if (owner == null || !owner.isActive) return Future.value(false);
-        return owner
-            .recover(nextPlan)
-            .then(
-              (result) => result.outcome == LoadOutcome.ready,
-            );
+        return owner.reloadAudio().then(
+          (result) => result.outcome == CommandOutcome.applied,
+        );
       },
       reload: () => refreshPlayer(
         tryNextCdn: true,

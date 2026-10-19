@@ -295,6 +295,8 @@ class _AcceptanceRuntime implements PlaybackRuntimePort {
   @override
   final int runtimeId = 73;
   @override
+  Duration? position;
+  @override
   bool get shaderChangeRequiresRendererReset => false;
   final StreamController<PlaybackRuntimeEvent> _events =
       StreamController<PlaybackRuntimeEvent>.broadcast(sync: true);
@@ -375,6 +377,11 @@ class _AcceptanceRuntime implements PlaybackRuntimePort {
   @override
   Future<PlaybackRuntimeCommandResult> setAudioTrack(
     int? trackId,
+    PlaybackExecutionContext context,
+  ) async => const PlaybackRuntimeCommandResult();
+
+  @override
+  Future<PlaybackRuntimeCommandResult> reloadAudio(
     PlaybackExecutionContext context,
   ) async => const PlaybackRuntimeCommandResult();
 
