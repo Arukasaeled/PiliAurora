@@ -59,3 +59,9 @@ class DanmakuSourceChange {
   /// null 表示整个来源，包括已离开当前读取范围的内容。
   final int? endUs;
 }
+
+abstract interface class DanmakuTimelineSource {
+  Stream<DanmakuSourceChange> get changes;
+  DanmakuTimelineRange readRange(int startUs, int endUs);
+  Future<void> ensureRange(int startUs, int endUs);
+}

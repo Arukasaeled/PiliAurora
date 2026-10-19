@@ -44,6 +44,42 @@ void main() {
   });
   tearDownAll(() => Request.dio.close(force: true));
 
+  test('范围需求跨段请求、复用已加载段并限制单次扩展', () async {
+    final adapter = _DmAdapter();
+    Request.dio.httpClientAdapter = adapter;
+    final controller = PlDanmakuController(
+      1,
+      _Player(mergeDanmaku: false),
+      false,
+    );
+    addTearDown(controller.dispose);
+    await controller.ensureRange(359999000, 360000001);
+    expect(adapter.calls, 2);
+    expect(controller.readRange(359999000, 360000001).isLoaded, isTrue);
+    await controller.ensureRange(359999000, 360000001);
+    await controller.ensureRange(100, 100);
+    expect(adapter.calls, 2);
+    await controller.ensureRange(0, 3600000000);
+    expect(adapter.calls, 4);
+  });
+
+  test('规则重算期间的范围需求复用原始数据，不重复回源', () async {
+    final adapter = _DmAdapter();
+    Request.dio.httpClientAdapter = adapter;
+    final controller = PlDanmakuController(
+      1,
+      _Player(mergeDanmaku: false),
+      false,
+    );
+    addTearDown(controller.dispose);
+    await controller.ensureRange(0, 1000000);
+    final rebuilding = controller.refreshRules();
+    await controller.ensureRange(0, 1000000);
+    await rebuilding;
+    expect(adapter.calls, 1);
+    expect(controller.readRange(0, 1000000).isLoaded, isTrue);
+  });
+
   test('多个来源响应在同一预留内串行处理直到缓存提交', () async {
     final adapter = _DmAdapter();
     Request.dio.httpClientAdapter = adapter;

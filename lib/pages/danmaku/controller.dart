@@ -21,7 +21,7 @@ import 'package:pili_aurora/utils/utils.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:path/path.dart' as path;
 
-class PlDanmakuController {
+class PlDanmakuController implements DanmakuTimelineSource {
   PlDanmakuController(
     this._cid,
     this._plPlayerController,
@@ -76,6 +76,7 @@ class PlDanmakuController {
   var _ruleWork = DanmakuWorkToken();
 
   final _changes = StreamController<DanmakuSourceChange>.broadcast(sync: true);
+  @override
   Stream<DanmakuSourceChange> get changes => _changes.stream;
   final DanmakuRawCache _rawSegments;
   List<DanmakuElem>? _rawFile;
@@ -146,6 +147,11 @@ class PlDanmakuController {
     if (_isFileSource ||
         _disposed ||
         !DanmakuWorkQuota.instance.hasWaitingCapacity) {
+      return;
+    }
+    if (_invalidatedSegments.contains(segmentIndex) &&
+        _rawSegments[segmentIndex] != null) {
+      await _scheduleReprocess();
       return;
     }
     if (_requestedSeg.length >= _cache.maxSegments ||
@@ -280,6 +286,27 @@ class PlDanmakuController {
     return _cache.getAt(progress);
   }
 
+  @override
+  Future<void> ensureRange(int startUs, int endUs) async {
+    if (startUs < 0 || endUs < startUs) throw ArgumentError('弹幕请求范围无效');
+    if (_disposed || startUs == endUs) return;
+    if (_isFileSource) {
+      initFileDmIfNeeded();
+      return;
+    }
+    const segmentUs = DmUtils.segLength * 1000;
+    final first = startUs ~/ segmentUs;
+    final last = ((endUs - 1) ~/ segmentUs).clamp(
+      first,
+      first + _cache.maxSegments - 1,
+    );
+    await Future.wait([
+      for (var segment = first; segment <= last; segment++)
+        queryDanmaku(segment),
+    ]);
+  }
+
+  @override
   DanmakuTimelineRange readRange(int startUs, int endUs) => _cache.readRange(
     startUs,
     endUs,
