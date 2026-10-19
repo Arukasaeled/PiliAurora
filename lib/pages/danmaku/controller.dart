@@ -5,6 +5,7 @@ import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
+import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/utils/accounts.dart';
@@ -145,8 +146,13 @@ class PlDanmakuController {
     return _cache.getAt(progress);
   }
 
-  Iterable<DanmakuElem> peekBufferedDanmaku(int start, int end) =>
-      _cache.peekRange(start, end);
+  DanmakuTimelineRange readRange(int startUs, int endUs) =>
+      _cache.readRange(startUs, endUs);
+
+  Iterable<DanmakuElem> peekBufferedDanmaku(int start, int end) => readRange(
+    start * 1000,
+    end * 1000,
+  ).entries.take(64).map((entry) => entry.element);
 
   bool _fileDmLoaded = false;
 

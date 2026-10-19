@@ -1,7 +1,9 @@
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/utils/danmaku_utils.dart';
+import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 
 /// 按 100 毫秒分桶保存弹幕，按分段淘汰以避免只留下不完整分段。
 class DanmakuCache {
@@ -23,6 +25,62 @@ class DanmakuCache {
   final _loadedSegments = <int>{};
   int _elementCount = 0;
 
+  int _revision = 0;
+  bool _fileComplete = false;
+
+  DanmakuTimelineRange readRange(int startUs, int endUs) {
+    if (startUs < 0 || endUs < startUs) {
+      throw ArgumentError('弹幕范围需满足 0 <= startUs <= endUs');
+    }
+    final coverage = <DanmakuRangeCoverage>[];
+    const segmentUs = 360 * Duration.microsecondsPerSecond;
+    var cursor = startUs;
+    while (cursor < endUs) {
+      final segment = cursor ~/ segmentUs;
+      final end = math.min(endUs, (segment + 1) * segmentUs);
+      final state = _fileComplete || _loadedSegments.contains(segment)
+          ? DanmakuCoverageState.loaded
+          : DanmakuCoverageState.missing;
+      if (coverage.isNotEmpty && coverage.last.state == state) {
+        final previous = coverage.removeLast();
+        coverage.add(DanmakuRangeCoverage(previous.startUs, end, state));
+      } else {
+        coverage.add(DanmakuRangeCoverage(cursor, end, state));
+      }
+      cursor = end;
+    }
+    final entries = <DanmakuTimelineEntry>[];
+    final keys =
+        _buckets.keys
+            .where(
+              (bucket) =>
+                  bucket * 100000 < endUs && (bucket + 1) * 100000 > startUs,
+            )
+            .toList()
+          ..sort();
+    for (final bucket in keys) {
+      // indexed 保留同一时间戳的来源顺序，避免排序算法改变入场次序。
+      final ordered = _buckets[bucket]!.indexed.toList()
+        ..sort((a, b) {
+          final time = a.$2.progress.compareTo(b.$2.progress);
+          return time == 0 ? a.$1.compareTo(b.$1) : time;
+        });
+      for (final (_, element) in ordered) {
+        final entry = DanmakuTimelineEntry(element);
+        if (entry.positionUs >= startUs && entry.positionUs < endUs) {
+          entries.add(entry);
+        }
+      }
+    }
+    return DanmakuTimelineRange(
+      startUs: startUs,
+      endUs: endUs,
+      revision: _revision,
+      entries: entries,
+      coverage: coverage,
+    );
+  }
+
   int get bucketCount => _buckets.length;
   int get elementCount => _elementCount;
   bool containsSegment(int segment) => _loadedSegments.contains(segment);
@@ -42,6 +100,8 @@ class DanmakuCache {
   }
 
   void clear() {
+    _revision++;
+    _fileComplete = false;
     _buckets.clear();
     _segmentBuckets.clear();
     _segmentOrder.clear();
@@ -62,6 +122,7 @@ class DanmakuCache {
 
   void addSegmentBuckets(int segment, Map<int, List<DanmakuElem>> buckets) {
     if (_loadedSegments.contains(segment)) return;
+    _revision++;
     _loadedSegments.add(segment);
     _segmentOrder.addLast(segment);
     final segmentBuckets = _segmentBuckets[segment] = <int>{};
@@ -83,6 +144,8 @@ class DanmakuCache {
   }
 
   void addFileElements(Iterable<DanmakuElem> elements) {
+    _revision++;
+    _fileComplete = true;
     for (final element in elements) {
       final segment = DmUtils.calcSegment(element.progress);
       if (_loadedSegments.add(segment)) {

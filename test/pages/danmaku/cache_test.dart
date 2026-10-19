@@ -1,5 +1,6 @@
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
+import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 DanmakuElem _element(int progress, int id) => DanmakuElem(
@@ -8,6 +9,63 @@ DanmakuElem _element(int progress, int id) => DanmakuElem(
 );
 
 void main() {
+  test('微秒范围按时间和原始次序排序，遵守半开边界', () {
+    final first = _element(101, 1);
+    final second = _element(101, 2);
+    final cache = DanmakuCache()
+      ..addSegmentBuckets(0, {
+        1: [_element(199, 3), first, _element(100, 0), second],
+        2: [_element(200, 4)],
+      });
+    final range = cache.readRange(100001, 200000);
+    expect(range.entries.map((entry) => entry.positionUs), [
+      101000,
+      101000,
+      199000,
+    ]);
+    expect(range.entries.take(2).map((entry) => entry.element), [
+      first,
+      second,
+    ]);
+    expect(range.isLoaded, isTrue);
+    expect(range.entries.clear, throwsUnsupportedError);
+    expect(cache.readRange(200000, 200000).entries, isEmpty);
+  });
+
+  test('覆盖区分已加载空段与缺失段，修订随写入和淘汰变化', () {
+    final cache = DanmakuCache(maxSegments: 1);
+    final missing = cache.readRange(359999999, 360000001);
+    expect(missing.isLoaded, isFalse);
+    cache.addSegmentBuckets(0, {});
+    final partial = cache.readRange(359999999, 360000001);
+    expect(partial.entries, isEmpty);
+    expect(partial.coverage.map((range) => range.state), [
+      DanmakuCoverageState.loaded,
+      DanmakuCoverageState.missing,
+    ]);
+    expect(partial.coverage.first.endUs, 360000000);
+    expect(partial.revision, greaterThan(missing.revision));
+    cache.addSegmentBuckets(1, {});
+    final evicted = cache.readRange(0, 720000000);
+    expect(evicted.coverage.map((range) => range.state), [
+      DanmakuCoverageState.missing,
+      DanmakuCoverageState.loaded,
+    ]);
+    expect(evicted.revision, greaterThan(partial.revision));
+    expect(partial.coverage.first.state, DanmakuCoverageState.loaded);
+    cache.clear();
+    expect(cache.readRange(360000000, 360000001).isLoaded, isFalse);
+  });
+
+  test('完整本地文件的空白范围已覆盖，clear 撤销覆盖', () {
+    final cache = DanmakuCache()..addFileElements([]);
+    expect(cache.readRange(0, 900000000).isLoaded, isTrue);
+    cache.clear();
+    expect(cache.readRange(0, 1).isLoaded, isFalse);
+    expect(() => cache.readRange(-1, 1), throwsArgumentError);
+    expect(() => cache.readRange(2, 1), throwsArgumentError);
+  });
+
   test(
     'lookahead respects bounds and limit without changing eviction order',
     () {
