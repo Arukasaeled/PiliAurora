@@ -11,6 +11,7 @@ abstract final class DmGrpc {
     required int segmentIndex,
     int type = 1,
     DanmakuWorkToken? workToken,
+    Future<void> Function(DmSegMobileReply, DanmakuWorkLease)? consume,
   }) {
     return GrpcReq.request(
       GrpcUrl.dmSegMobile,
@@ -23,6 +24,7 @@ abstract final class DmGrpc {
       isolate: true,
       danmakuWork: true,
       workToken: workToken,
+      consume: consume,
     );
   }
 

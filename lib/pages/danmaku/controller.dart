@@ -2,11 +2,12 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io' show File;
 
+import 'package:flutter/foundation.dart' show compute;
+
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
-import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
@@ -126,20 +127,20 @@ class PlDanmakuController {
     }
     _requestedSeg.add(segmentIndex);
     try {
-      final res = await DmGrpc.dmSegMobile(
+      await DmGrpc.dmSegMobile(
         cid: _cid,
         segmentIndex: segmentIndex + 1,
         workToken: _lifetimeWork,
+        consume: (response, lease) async {
+          if (_disposed) return;
+          if (response.state == 1) _plPlayerController.dmState.add(_cid);
+          await handleDanmaku(
+            response.elems,
+            segmentIndex: segmentIndex,
+            lease: lease,
+          );
+        },
       );
-      if (_disposed) return;
-
-      if (res case Success(:final response)) {
-        if (response.state == 1) {
-          _plPlayerController.dmState.add(_cid);
-        }
-        // 合并完成并写入缓存前仍算请求中，避免播放时钟重复请求同一分段。
-        await handleDanmaku(response.elems, segmentIndex: segmentIndex);
-      }
     } finally {
       _requestedSeg.remove(segmentIndex);
     }
@@ -148,9 +149,9 @@ class PlDanmakuController {
   Future<void> handleDanmaku(
     List<DanmakuElem> elems, {
     int? segmentIndex,
+    DanmakuWorkLease? lease,
   }) async {
     if (_disposed) return;
-    final revision = _ruleRevision;
     if (_isFileSource) {
       _rawFile = elems;
     } else if (segmentIndex != null) {
@@ -159,6 +160,28 @@ class PlDanmakuController {
         _rawSegments.remove(_rawSegments.keys.first);
       }
     }
+    try {
+      if (lease != null) {
+        await lease.execute(() => _processDanmaku(elems, segmentIndex, lease));
+      } else {
+        await DanmakuWorkQuota.instance.runWithLease(
+          estimateDanmakuWorkBytes(elems),
+          (lease) => _processDanmaku(elems, segmentIndex, lease),
+          token: _ruleWork,
+        );
+      }
+    } on DanmakuWorkCancelled {
+      return;
+    }
+  }
+
+  Future<void> _processDanmaku(
+    List<DanmakuElem> elems,
+    int? segmentIndex,
+    DanmakuWorkLease lease,
+  ) async {
+    if (_disposed) return;
+    final revision = _ruleRevision;
     final filtered = <DanmakuElem>[];
     final retained = _isFileSource ? <DanmakuElem>[] : null;
     final segmentBuckets = segmentIndex == null
@@ -168,7 +191,12 @@ class PlDanmakuController {
 
     final filters = _plPlayerController.filters;
     final shouldFilter = filters.count != 0;
+    var processedCount = 0;
     for (final raw in elems) {
+      if (++processedCount % 128 == 0) {
+        await Future<void>.delayed(Duration.zero);
+        if (_disposed || revision != _ruleRevision) return;
+      }
       final element = DanmakuElem.fromBuffer(raw.writeToBuffer());
       if (!_isFileSource &&
           (segmentIndex == null ||
@@ -185,7 +213,7 @@ class PlDanmakuController {
     final List<DanmakuElem> processed;
     try {
       processed = _mergeDanmaku
-          ? await mergeDanmakuInBackground(filtered, token: _ruleWork)
+          ? await mergeDanmakuInBackground(filtered, lease: lease)
           : filtered;
     } on DanmakuWorkCancelled {
       return;
@@ -267,10 +295,20 @@ class PlDanmakuController {
         ),
       );
       if (!file.existsSync()) return;
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) return;
-      final elem = DmSegMobileReply.fromBuffer(bytes).elems;
-      await handleDanmaku(elem);
+      final length = await file.length();
+      await DanmakuWorkQuota.instance.runWithLease(
+        length * 16,
+        (lease) async {
+          final bytes = await file.readAsBytes();
+          if (bytes.isEmpty || _disposed) return;
+          final response = await compute(DmSegMobileReply.fromBuffer, bytes);
+          if (_disposed) return;
+          await handleDanmaku(response.elems, lease: lease);
+        },
+        token: _lifetimeWork,
+      );
+    } on DanmakuWorkCancelled {
+      return;
     } catch (e, s) {
       Utils.reportError(e, s);
     }

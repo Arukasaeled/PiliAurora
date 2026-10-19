@@ -23,9 +23,20 @@ class DanmakuWorkToken {
   }
 }
 
+/// 同一批次后续阶段复用获配资格，直到结果整理结束。
+class DanmakuWorkLease {
+  DanmakuWorkLease._();
+  bool _active = true;
+
+  Future<T> execute<T>(FutureOr<T> Function() work) async {
+    if (!_active) throw StateError('来源处理额度已归还');
+    return await work();
+  }
+}
+
 /// 解码与合并共用进程配额；页面失效不提前释放仍在运行的任务。
 class DanmakuWorkQuota {
-  DanmakuWorkQuota({this.maxTasks = 2, this.maxBytes = 64 * 1024 * 1024})
+  DanmakuWorkQuota({this.maxTasks = 1, this.maxBytes = 64 * 1024 * 1024})
     : assert(maxTasks > 0),
       assert(maxBytes > 0);
 
@@ -40,6 +51,14 @@ class DanmakuWorkQuota {
   Future<T> run<T>(
     int estimatedBytes,
     FutureOr<T> Function() work, {
+    DanmakuWorkToken? token,
+  }) {
+    return runWithLease(estimatedBytes, (_) => work(), token: token);
+  }
+
+  Future<T> runWithLease<T>(
+    int estimatedBytes,
+    FutureOr<T> Function(DanmakuWorkLease) work, {
     DanmakuWorkToken? token,
   }) async {
     if (estimatedBytes < 0) throw ArgumentError.value(estimatedBytes);
@@ -60,10 +79,12 @@ class DanmakuWorkQuota {
     } finally {
       token?._listeners.remove(cancelWaiting);
     }
+    final lease = DanmakuWorkLease._();
     try {
       if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
-      return await work();
+      return await work(lease);
     } finally {
+      lease._active = false;
       _tasks--;
       _bytes -= ticket.bytes;
       _drain();

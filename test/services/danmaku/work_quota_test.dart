@@ -4,6 +4,30 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 void main() {
+  test('lease spans child stages and expires after result transfer', () async {
+    final quota = DanmakuWorkQuota();
+    late DanmakuWorkLease saved;
+    final entered = Completer<void>();
+    final finish = Completer<void>();
+    var nextStarted = false;
+    final first = quota.runWithLease(1, (lease) {
+      saved = lease;
+      return lease.execute(() async {
+        entered.complete();
+        await finish.future;
+        return 42;
+      });
+    });
+    await entered.future;
+    final next = quota.run(1, () => nextStarted = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(nextStarted, isFalse);
+    finish.complete();
+    expect(await first, 42);
+    await next;
+    await expectLater(saved.execute(() => 0), throwsStateError);
+  });
+
   test('cancelled waiting work never starts or blocks later work', () async {
     final quota = DanmakuWorkQuota(maxTasks: 1);
     final done = Completer<void>();

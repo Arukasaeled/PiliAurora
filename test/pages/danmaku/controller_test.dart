@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
@@ -40,6 +42,27 @@ void main() {
     Request.dio.httpClientAdapter.close(force: true);
   });
   tearDownAll(() => Request.dio.close(force: true));
+
+  test('多个来源响应在同一预留内串行处理直到缓存提交', () async {
+    final adapter = _DmAdapter();
+    Request.dio.httpClientAdapter = adapter;
+    final first = _HoldingController();
+    final second = _HoldingController();
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+    final firstRequest = first.queryDanmaku(0);
+    await first.entered.future;
+    final secondRequest = second.queryDanmaku(0);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(second.entered.isCompleted, isFalse);
+    first.resume.complete();
+    await firstRequest;
+    await second.entered.future;
+    expect(first.readRange(0, 1000000).isLoaded, isTrue);
+    second.resume.complete();
+    await secondRequest;
+    expect(second.readRange(0, 1000000).isLoaded, isTrue);
+  });
 
   test('规则失效先清空缓存，再从原始输入恢复被屏蔽内容', () async {
     final player = _Player();
@@ -253,10 +276,11 @@ class _HoldingController extends PlDanmakuController {
   Future<void> handleDanmaku(
     List<DanmakuElem> elems, {
     int? segmentIndex,
+    DanmakuWorkLease? lease,
   }) async {
     entered.complete();
     await resume.future;
-    await super.handleDanmaku(elems, segmentIndex: segmentIndex);
+    await super.handleDanmaku(elems, segmentIndex: segmentIndex, lease: lease);
   }
 }
 

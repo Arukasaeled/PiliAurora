@@ -62,6 +62,7 @@ abstract final class GrpcReq {
     bool isolate = false,
     bool danmakuWork = false,
     DanmakuWorkToken? workToken,
+    Future<void> Function(T, DanmakuWorkLease)? consume,
     Account? account,
     bool retry = true,
   }) async {
@@ -102,10 +103,18 @@ abstract final class GrpcReq {
               ? await compute(_parse<T>, (data, grpcParser))
               : _parse<T>((data, grpcParser));
           final result = danmakuWork
-              ? await DanmakuWorkQuota.instance.run(
+              ? await DanmakuWorkQuota.instance.runWithLease(
                   data.length +
-                      GrpcDecodePolicy.estimatedDecodedBytes(data) * 4,
-                  decode,
+                      GrpcDecodePolicy.estimatedDecodedBytes(data) * 16,
+                  (lease) async {
+                    final decoded = await decode();
+                    if (!(workToken?.isCancelled ?? false)) {
+                      if (decoded case Success(:final response)) {
+                        await consume?.call(response, lease);
+                      }
+                    }
+                    return decoded;
+                  },
                   token: workToken,
                 )
               : await decode();
