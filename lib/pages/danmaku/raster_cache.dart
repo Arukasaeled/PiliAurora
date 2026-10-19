@@ -1,7 +1,18 @@
 import 'dart:ui' as ui;
+import 'dart:math' as math;
+
+import 'package:flutter/painting.dart' as painting;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:canvas_danmaku/text_renderer.dart' as canvas_danmaku;
+
+const danmakuActiveRasterBytes =
+    int.fromEnvironment(
+      'WINDOWS_DANMAKU_MAX_ACTIVE_BYTES_MIB',
+      defaultValue: 96,
+    ) *
+    1024 *
+    1024;
 
 typedef DanmakuRasterKey = (String, int, bool, bool, int?, double);
 
@@ -49,6 +60,33 @@ class DanmakuRasterCache {
       devicePixelRatio: devicePixelRatio,
       fontFamily: fontFamily,
     );
+  }
+
+  double measureTrackHeight() {
+    final painter = painting.TextPainter(
+      text: painting.TextSpan(
+        text: '弹幕',
+        style: painting.TextStyle(
+          fontSize: option.fontSize,
+          fontWeight: ui.FontWeight.values[option.fontWeight],
+          fontFamily: fontFamily,
+          height: option.lineHeight,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    final paragraph = textRenderer.generateParagraph(
+      content: DanmakuContentItem('弹幕'),
+      fontSize: option.fontSize,
+      fontWeight: option.fontWeight,
+    );
+    final height = math.max(
+      painter.height,
+      paragraph.height + option.strokeWidth,
+    );
+    painter.dispose();
+    paragraph.dispose();
+    return height;
   }
 
   final int maxEntries;

@@ -58,7 +58,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
     'WINDOWS_DANMAKU_MAX_ACTIVE_BYTES_MIB',
     defaultValue: 96,
   );
-  static const maxActiveBytes = maxActiveBytesMiB * 1024 * 1024;
+  static const maxActiveBytes = danmakuActiveRasterBytes;
   static const maxActiveItems = DanmakuDisplayLimits.maxActive;
   static const maxPendingPrewarm = 64;
   // 实验性实现，仅通过编译参数启用。
@@ -159,30 +159,7 @@ class WindowsDanmakuRenderer<T> extends ChangeNotifier {
   };
 
   void _layoutTracks() {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: '弹幕',
-        style: TextStyle(
-          fontSize: _option.fontSize,
-          fontWeight: FontWeight.values[_option.fontWeight],
-          fontFamily: rasters.fontFamily,
-          height: _option.lineHeight,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    final paragraph = rasters.textRenderer.generateParagraph(
-      content: DanmakuContentItem<T>('弹幕'),
-      fontSize: _option.fontSize,
-      fontWeight: _option.fontWeight,
-    );
-    _trackHeight = math.max(
-      painter.height,
-      paragraph.height + _option.strokeWidth,
-    );
-    painter.dispose();
-    paragraph.dispose();
+    _trackHeight = rasters.measureTrackHeight();
     final count = _size.isEmpty || _trackHeight <= 0
         ? 0
         : math.max(
