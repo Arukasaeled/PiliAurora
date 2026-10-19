@@ -28,7 +28,12 @@ class DanmakuCache {
   int _revision = 0;
   bool _fileComplete = false;
 
-  DanmakuTimelineRange readRange(int startUs, int endUs) {
+  DanmakuTimelineRange readRange(
+    int startUs,
+    int endUs, {
+    int ruleRevision = 0,
+    DanmakuCoverageState Function(int segment)? missingState,
+  }) {
     if (startUs < 0 || endUs < startUs) {
       throw ArgumentError('弹幕范围需满足 0 <= startUs <= endUs');
     }
@@ -40,7 +45,7 @@ class DanmakuCache {
       final end = math.min(endUs, (segment + 1) * segmentUs);
       final state = _fileComplete || _loadedSegments.contains(segment)
           ? DanmakuCoverageState.loaded
-          : DanmakuCoverageState.missing;
+          : missingState?.call(segment) ?? DanmakuCoverageState.missing;
       if (coverage.isNotEmpty && coverage.last.state == state) {
         final previous = coverage.removeLast();
         coverage.add(DanmakuRangeCoverage(previous.startUs, end, state));
@@ -76,6 +81,7 @@ class DanmakuCache {
       startUs: startUs,
       endUs: endUs,
       revision: _revision,
+      ruleRevision: ruleRevision,
       entries: entries,
       coverage: coverage,
     );

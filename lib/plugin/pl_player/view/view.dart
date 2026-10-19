@@ -271,6 +271,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   @override
   void initState() {
     super.initState();
+    plPlayerController.addDanmakuRuleListener(_removeDmAction);
 
     _controlsListener = plPlayerController.showControls.listen(
       _onControlChanged,
@@ -441,6 +442,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   @override
   void dispose() {
+    plPlayerController.removeDanmakuRuleListener(_removeDmAction);
     _unregisterVideoDiagnostics?.call();
     _danmakuListener?.cancel();
     _tapGestureRecognizer.dispose();

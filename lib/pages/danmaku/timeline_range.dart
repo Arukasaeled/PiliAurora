@@ -8,7 +8,7 @@ class DanmakuTimelineEntry {
   int get positionUs => element.progress * Duration.microsecondsPerMillisecond;
 }
 
-enum DanmakuCoverageState { loaded, missing }
+enum DanmakuCoverageState { loaded, missing, invalidated }
 
 class DanmakuRangeCoverage {
   const DanmakuRangeCoverage(this.startUs, this.endUs, this.state);
@@ -24,6 +24,7 @@ class DanmakuTimelineRange {
     required this.startUs,
     required this.endUs,
     required this.revision,
+    this.ruleRevision = 0,
     required Iterable<DanmakuTimelineEntry> entries,
     required Iterable<DanmakuRangeCoverage> coverage,
   }) : entries = List.unmodifiable(entries),
@@ -32,10 +33,29 @@ class DanmakuTimelineRange {
   final int startUs;
   final int endUs;
   final int revision;
+  final int ruleRevision;
   final List<DanmakuTimelineEntry> entries;
   final List<DanmakuRangeCoverage> coverage;
 
   bool get isLoaded => coverage.every(
     (range) => range.state == DanmakuCoverageState.loaded,
   );
+}
+
+enum DanmakuSourceChangeKind { invalidated, ready }
+
+class DanmakuSourceChange {
+  const DanmakuSourceChange({
+    required this.kind,
+    required this.ruleRevision,
+    this.startUs = 0,
+    this.endUs,
+  });
+
+  final DanmakuSourceChangeKind kind;
+  final int ruleRevision;
+  final int startUs;
+
+  /// null 表示整个来源，包括已离开当前读取范围的内容。
+  final int? endUs;
 }

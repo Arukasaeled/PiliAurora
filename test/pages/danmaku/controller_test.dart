@@ -9,6 +9,7 @@ import 'package:pili_aurora/grpc/grpc_req.dart';
 import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/models/user/danmaku_rule.dart';
 import 'package:pili_aurora/pages/danmaku/controller.dart';
+import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
@@ -17,9 +18,9 @@ class _Player implements PlPlayerController {
   _Player({this.mergeDanmaku = true});
 
   @override
-  final bool mergeDanmaku;
+  bool mergeDanmaku;
   @override
-  final RuleFilter filters = RuleFilter(['屏蔽'], [], {});
+  RuleFilter filters = RuleFilter(['屏蔽'], [], {});
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -39,6 +40,97 @@ void main() {
     Request.dio.httpClientAdapter.close(force: true);
   });
   tearDownAll(() => Request.dio.close(force: true));
+
+  test('规则失效先清空缓存，再从原始输入恢复被屏蔽内容', () async {
+    final player = _Player();
+    final controller = PlDanmakuController(1, player, false);
+    addTearDown(controller.dispose);
+    final raw = [_dm('屏蔽内容', 100), _dm('保留', 200)];
+    await controller.handleDanmaku(raw, segmentIndex: 0);
+    expect(controller.peekBufferedDanmaku(0, 1000).map((e) => e.content), [
+      '保留',
+    ]);
+    final events = <DanmakuSourceChange>[];
+    final subscription = controller.changes.listen((event) {
+      events.add(event);
+      if (event.kind == DanmakuSourceChangeKind.invalidated) {
+        expect(controller.peekBufferedDanmaku(0, 1000), isEmpty);
+        expect(
+          controller.readRange(0, 1000000).coverage.single.state,
+          DanmakuCoverageState.invalidated,
+        );
+      }
+    });
+    addTearDown(subscription.cancel);
+    player.filters = RuleFilter.empty();
+    final pending = controller.refreshRules();
+    expect(events.single.kind, DanmakuSourceChangeKind.invalidated);
+    await pending;
+    expect(events.map((event) => event.kind), [
+      DanmakuSourceChangeKind.invalidated,
+      DanmakuSourceChangeKind.ready,
+    ]);
+    expect(events.last.ruleRevision, events.first.ruleRevision);
+    expect(
+      controller.readRange(0, 1000000).ruleRevision,
+      events.last.ruleRevision,
+    );
+    expect(controller.peekBufferedDanmaku(0, 1000).map((e) => e.content), [
+      '屏蔽内容',
+      '保留',
+    ]);
+    expect(raw.every((element) => element.count == 0), isTrue);
+  });
+
+  test('连续规则变化撤销旧合并结果，最新修订单独发布就绪', () async {
+    final player = _Player();
+    final controller = PlDanmakuController(1, player, false);
+    addTearDown(controller.dispose);
+    final events = <DanmakuSourceChange>[];
+    final subscription = controller.changes.listen(events.add);
+    addTearDown(subscription.cancel);
+    final old = controller.handleDanmaku([
+      _dm('内容', 100),
+      _dm('内容', 101),
+    ], segmentIndex: 0);
+    final first = controller.refreshRules();
+    player.filters = RuleFilter(['内容'], [], {});
+    final latest = controller.refreshRules();
+    await Future.wait([old, first, latest]);
+    final ready = events.where(
+      (event) => event.kind == DanmakuSourceChangeKind.ready,
+    );
+    expect(ready, hasLength(1));
+    expect(ready.single.ruleRevision, 2);
+    expect(controller.peekBufferedDanmaku(0, 1000), isEmpty);
+    expect(controller.readRange(0, 1000000).isLoaded, isTrue);
+  });
+
+  test('重算途中卸载后不发布就绪也不回写缓存', () async {
+    final controller = PlDanmakuController(1, _Player(), false);
+    await controller.handleDanmaku([_dm('重复', 100)], segmentIndex: 0);
+    final events = <DanmakuSourceChange>[];
+    final subscription = controller.changes.listen(events.add);
+    final pending = controller.refreshRules();
+    controller.dispose();
+    await pending;
+    expect(events.map((event) => event.kind), [
+      DanmakuSourceChangeKind.invalidated,
+    ]);
+    expect(controller.peekBufferedDanmaku(0, 1000), isEmpty);
+    await subscription.cancel();
+  });
+
+  test('本地来源重算恢复原始条目并可取消合并', () async {
+    final player = _Player();
+    final controller = PlDanmakuController(1, player, true);
+    addTearDown(controller.dispose);
+    await controller.handleDanmaku([_dm('重复', 100), _dm('重复', 101)]);
+    expect(controller.peekBufferedDanmaku(0, 1000).single.count, 2);
+    player.mergeDanmaku = false;
+    await controller.refreshRules();
+    expect(controller.peekBufferedDanmaku(0, 1000), hasLength(2));
+  });
 
   test(
     'segment stays pending until processing finishes, then uses cached data',

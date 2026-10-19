@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:io' show File;
 
@@ -39,7 +40,7 @@ class PlDanmakuController {
 
   final int _cid;
   final PlPlayerController _plPlayerController;
-  final bool _mergeDanmaku;
+  bool _mergeDanmaku;
   final bool _isFileSource;
 
   late final _isLogin = Accounts.main.isLogin;
@@ -49,11 +50,62 @@ class PlDanmakuController {
   final Set<int> _requestedSeg = HashSet();
   bool _disposed = false;
 
+  final _changes = StreamController<DanmakuSourceChange>.broadcast(sync: true);
+  Stream<DanmakuSourceChange> get changes => _changes.stream;
+  final _rawSegments = <int, List<DanmakuElem>>{};
+  List<DanmakuElem>? _rawFile;
+  int _ruleRevision = 0;
+  final _invalidatedSegments = <int>{};
+  bool _fileInvalidated = false;
+  Future<void>? _reprocessing;
+
+  /// 接受规则时先同步失效；重算仅提交当前修订的结果。
+  Future<void> refreshRules() {
+    if (_disposed) return Future.value();
+    _ruleRevision++;
+    _mergeDanmaku = _plPlayerController.mergeDanmaku;
+    _cache.clear();
+    _invalidatedSegments
+      ..clear()
+      ..addAll(_rawSegments.keys);
+    _fileInvalidated = _isFileSource;
+    _changes.add(
+      DanmakuSourceChange(
+        kind: DanmakuSourceChangeKind.invalidated,
+        ruleRevision: _ruleRevision,
+      ),
+    );
+    return _reprocessing ??= _reprocess().whenComplete(
+      () => _reprocessing = null,
+    );
+  }
+
+  Future<void> _reprocess() async {
+    var revision = -1;
+    while (!_disposed && revision != _ruleRevision) {
+      revision = _ruleRevision;
+      if (_isFileSource) {
+        final raw = _rawFile;
+        if (raw != null) await handleDanmaku(raw);
+      } else {
+        for (final segment in _rawSegments.keys.toList()) {
+          if (_disposed || revision != _ruleRevision) break;
+          final raw = _rawSegments[segment];
+          if (raw != null) await handleDanmaku(raw, segmentIndex: segment);
+        }
+      }
+    }
+  }
+
   void dispose() {
     _unregisterDiagnostics();
     _disposed = true;
     _cache.clear();
     _requestedSeg.clear();
+    _rawSegments.clear();
+    _rawFile = null;
+    _invalidatedSegments.clear();
+    unawaited(_changes.close());
   }
 
   Future<void> queryDanmaku(int segmentIndex) async {
@@ -89,6 +141,15 @@ class PlDanmakuController {
     int? segmentIndex,
   }) async {
     if (_disposed) return;
+    final revision = _ruleRevision;
+    if (_isFileSource) {
+      _rawFile = elems;
+    } else if (segmentIndex != null) {
+      _rawSegments[segmentIndex] = elems;
+      while (_rawSegments.length > _cache.maxSegments) {
+        _rawSegments.remove(_rawSegments.keys.first);
+      }
+    }
     final filtered = <DanmakuElem>[];
     final retained = _isFileSource ? <DanmakuElem>[] : null;
     final segmentBuckets = segmentIndex == null
@@ -98,7 +159,8 @@ class PlDanmakuController {
 
     final filters = _plPlayerController.filters;
     final shouldFilter = filters.count != 0;
-    for (final element in elems) {
+    for (final raw in elems) {
+      final element = DanmakuElem.fromBuffer(raw.writeToBuffer());
       if (!_isFileSource &&
           (segmentIndex == null ||
               DmUtils.calcSegment(element.progress) != segmentIndex)) {
@@ -114,7 +176,7 @@ class PlDanmakuController {
     final processed = _mergeDanmaku
         ? await mergeDanmakuInBackground(filtered)
         : filtered;
-    if (_disposed) return;
+    if (_disposed || revision != _ruleRevision) return;
     for (final element in processed) {
       if (_isFileSource) {
         retained!.add(element);
@@ -127,9 +189,19 @@ class PlDanmakuController {
     if (_isFileSource) {
       // 本地文件无法回源，保留完整弹幕。
       _cache.addFileElements(retained!);
+      _fileInvalidated = false;
     } else if (segmentIndex != null) {
       _cache.addSegmentBuckets(segmentIndex, segmentBuckets!);
+      _invalidatedSegments.remove(segmentIndex);
     }
+    _changes.add(
+      DanmakuSourceChange(
+        kind: DanmakuSourceChangeKind.ready,
+        ruleRevision: revision,
+        startUs: segmentIndex == null ? 0 : segmentIndex * 360000000,
+        endUs: segmentIndex == null ? null : (segmentIndex + 1) * 360000000,
+      ),
+    );
   }
 
   List<DanmakuElem>? getCurrentDanmaku(int progress) {
@@ -146,8 +218,15 @@ class PlDanmakuController {
     return _cache.getAt(progress);
   }
 
-  DanmakuTimelineRange readRange(int startUs, int endUs) =>
-      _cache.readRange(startUs, endUs);
+  DanmakuTimelineRange readRange(int startUs, int endUs) => _cache.readRange(
+    startUs,
+    endUs,
+    ruleRevision: _ruleRevision,
+    missingState: (segment) =>
+        _fileInvalidated || _invalidatedSegments.contains(segment)
+        ? DanmakuCoverageState.invalidated
+        : DanmakuCoverageState.missing,
+  );
 
   Iterable<DanmakuElem> peekBufferedDanmaku(int start, int end) => readRange(
     start * 1000,

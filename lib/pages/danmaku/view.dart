@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/controller.dart';
+import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
 import 'package:pili_aurora/pages/danmaku/frame_rate_setting.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
@@ -61,6 +63,10 @@ class _PlDanmakuState extends State<PlDanmaku> {
   int _lastPreparedPosition = -1;
   int latestAddedPosition = -1;
 
+  StreamSubscription<DanmakuSourceChange>? _sourceChanges;
+
+  void _refreshRules() => unawaited(_plDanmakuController.refreshRules());
+
   @override
   void initState() {
     super.initState();
@@ -69,6 +75,14 @@ class _PlDanmakuState extends State<PlDanmaku> {
       playerController,
       widget.isFileSource,
     );
+    _sourceChanges = _plDanmakuController.changes.listen((change) {
+      if (change.kind == DanmakuSourceChangeKind.invalidated) {
+        _controller?.clear();
+        latestAddedPosition = -1;
+        _lastPreparedPosition = -1;
+      }
+    });
+    playerController.addDanmakuRuleListener(_refreshRules);
     if (playerController.enableShowDanmaku.value) {
       if (widget.isFileSource) {
         _plDanmakuController.initFileDmIfNeeded();
@@ -256,6 +270,8 @@ class _PlDanmakuState extends State<PlDanmaku> {
     playerController
       ..removePositionListener(videoPositionListen)
       ..removeStatusLister(playerListener);
+    playerController.removeDanmakuRuleListener(_refreshRules);
+    unawaited(_sourceChanges?.cancel());
     _plDanmakuController.dispose();
     _controller = null;
     _windowsRenderer = null;

@@ -395,7 +395,20 @@ class PlPlayerController
 
   // 弹幕相关配置
   late final enableTapDm = PlatformUtils.isMobile && Pref.enableTapDm;
-  late RuleFilter filters = Pref.danmakuFilterRule;
+  late RuleFilter _filters = Pref.danmakuFilterRule;
+  RuleFilter get filters => _filters;
+  set filters(RuleFilter value) {
+    _filters = value;
+    for (final listener in _danmakuRuleListeners.toList()) {
+      listener();
+    }
+  }
+
+  final _danmakuRuleListeners = <VoidCallback>{};
+  void addDanmakuRuleListener(VoidCallback listener) =>
+      _danmakuRuleListeners.add(listener);
+  void removeDanmakuRuleListener(VoidCallback listener) =>
+      _danmakuRuleListeners.remove(listener);
   // 关联弹幕控制器
   DanmakuController<DanmakuExtra>? danmakuController;
   bool showDanmaku = true;
