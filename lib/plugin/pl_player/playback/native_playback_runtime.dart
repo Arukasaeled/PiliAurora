@@ -24,7 +24,11 @@ import 'package:pili_aurora/services/windows_video_output_limit.dart';
 ///
 /// Session 将所有业务命令送入此对象；这里串行化真正触碰 Player 的操作，
 /// 并以原生 entry ID、hook 和输出令牌建立每份媒体的生命周期边界。
-class NativePlaybackRuntime implements PlaybackRuntimePort {
+class NativePlaybackRuntime
+    implements
+        PlaybackRuntimePort,
+        PlaybackSeekSubmissionGate,
+        PlaybackMediaClockSampler {
   NativePlaybackRuntime({
     required this.configuration,
     required this.diagnosticsExtra,
@@ -93,6 +97,23 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   int _mediaClockSeekSequence = 0;
   int _mediaClockContinuity = 0;
   bool _mediaClockSeekPending = false;
+  bool _seekSubmissionBlocked = false;
+  final _seekSubmissionChanges = StreamController<void>.broadcast(sync: true);
+  Timer? _seekObservationTimeout;
+
+  @override
+  bool get seekSubmissionBlocked => _seekSubmissionBlocked;
+  @override
+  Stream<void> get seekSubmissionChanges => _seekSubmissionChanges.stream;
+
+  void _releaseSeekObservation() {
+    _seekObservationTimeout?.cancel();
+    _seekObservationTimeout = null;
+    if (!_seekSubmissionBlocked) return;
+    _seekSubmissionBlocked = false;
+    _seekSubmissionChanges.add(null);
+  }
+
   bool _buffering = false;
   bool _playing = false;
   bool? _hasVideo;
@@ -150,9 +171,30 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     if (player == null) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
+    if (_mediaClockSeekPending) {
+      return const PlaybackRuntimeCommandResult(applied: false);
+    }
     _mediaClockSeekSequence = context.seekSequence;
     _mediaClockSeekPending = true;
-    await player.seek(target);
+    _seekSubmissionBlocked = true;
+    _seekObservationTimeout = Timer(const Duration(seconds: 5), () {
+      _seekObservationTimeout = null;
+      _diagnostics?.event(
+        'media.seek.observation.timeout',
+        details: {
+          'loadId': context.loadId,
+          'seekSequence': context.seekSequence,
+        },
+      );
+    });
+    try {
+      await player.seek(target, observationId: context.seekSequence);
+    } catch (_) {
+      _mediaClockSeekPending = false;
+      _releaseSeekObservation();
+      sampleMediaClock();
+      rethrow;
+    }
     if (!context.isCurrent()) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
@@ -170,7 +212,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
     await player.setRate(value);
-    _sampleMediaClock();
+    sampleMediaClock();
     if (!context.isCurrent()) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
@@ -327,6 +369,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   @override
   Future<PlaybackShutdownResult> shutdown() {
     _shutdownRequested = true;
+    _releaseSeekObservation();
     return _shutdownFuture ??= _serialize(_shutdown);
   }
 
@@ -507,6 +550,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         _mediaClockSeekSequence = context.seekSequence;
         _mediaClockContinuity++;
         _mediaClockSeekPending = false;
+        _releaseSeekObservation();
         _activePlan = plan;
         final binding = pending.binding;
         if (binding != null) _activeBinding = binding;
@@ -846,7 +890,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     }
   }
 
-  void _sampleMediaClock() {
+  @override
+  void sampleMediaClock() {
     final player = _player;
     final binding = _activeBinding;
     if (player == null ||
@@ -882,16 +927,16 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
 
   void _subscribePlayerState(Player player) {
     _subscriptions.addAll([
-      player.stream.position.listen((_) => _sampleMediaClock()),
-      player.stream.completed.listen((_) => _sampleMediaClock()),
+      player.stream.position.listen((_) => sampleMediaClock()),
+      player.stream.completed.listen((_) => sampleMediaClock()),
       player.stream.playing.listen((value) {
         _playing = value;
-        _sampleMediaClock();
+        sampleMediaClock();
         _emitActual(_activeBinding?.loadId);
       }),
       player.stream.buffering.listen((value) {
         _buffering = value;
-        _sampleMediaClock();
+        sampleMediaClock();
         _emitActual(_activeBinding?.loadId);
       }),
       player.stream.duration.listen((_) => _emitActual(_activeBinding?.loadId)),
@@ -1040,6 +1085,19 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
 
   void _handleNativeEvent(NativePlayerEvent event) {
     switch (event) {
+      case NativeSeekCompleted(:final playlistEntryId, :final observationId):
+        final binding = _activeBinding;
+        if (!_mediaClockSeekPending ||
+            binding == null ||
+            binding.retiring ||
+            binding.entryId != playlistEntryId ||
+            observationId != _mediaClockSeekSequence) {
+          return;
+        }
+        _mediaClockSeekPending = false;
+        _mediaClockContinuity++;
+        _releaseSeekObservation();
+        sampleMediaClock();
       case NativeStartFile(:final playlistEntryId):
         final pending = _pendingLoad;
         if (pending == null || playlistEntryId == null) {
@@ -1927,6 +1985,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     if (!_events.isClosed) unawaited(_events.close());
     _frameTimings.clearPhase();
     videoDisplaySyncActive.value = false;
+    unawaited(_seekSubmissionChanges.close());
     _frameTimings.dispose();
     videoDisplaySyncActive.dispose();
     _videoControllerListenable.dispose();

@@ -200,7 +200,7 @@
     },
     {
       "name": "media_kit",
-      "version": "1.1.11+piliaurora.2",
+      "version": "1.1.11+piliaurora.3",
       "upstream_version": "1.1.11",
       "path": "third_party/media_kit",
       "source": {

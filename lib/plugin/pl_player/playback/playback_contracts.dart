@@ -675,6 +675,15 @@ class PlaybackShutdownResult {
 }
 
 /// Session 面向运行时的 seam；生产 adapter 是 NativePlaybackRuntime。
+abstract interface class PlaybackMediaClockSampler {
+  void sampleMediaClock();
+}
+
+abstract interface class PlaybackSeekSubmissionGate {
+  bool get seekSubmissionBlocked;
+  Stream<void> get seekSubmissionChanges;
+}
+
 abstract interface class PlaybackRuntimePort {
   int get runtimeId;
 

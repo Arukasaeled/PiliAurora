@@ -99,3 +99,14 @@ final class NativeEventBatchDrained extends NativePlayerEvent {
 
   final int batchId;
 }
+
+/// 由同一 reader 的命令回执、SEEK、PLAYBACK_RESTART 顺序确认。
+final class NativeSeekCompleted extends NativePlayerEvent {
+  const NativeSeekCompleted({
+    required this.playlistEntryId,
+    required this.observationId,
+  });
+
+  final int playlistEntryId;
+  final int observationId;
+}
