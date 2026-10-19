@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io' show File;
 
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
+
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
 import 'package:pili_aurora/http/loading_state.dart';
@@ -49,6 +51,8 @@ class PlDanmakuController {
   // 请求中的分段单独记录；成功加载后由缓存记录，淘汰后允许重新请求。
   final Set<int> _requestedSeg = HashSet();
   bool _disposed = false;
+  final _lifetimeWork = DanmakuWorkToken();
+  var _ruleWork = DanmakuWorkToken();
 
   final _changes = StreamController<DanmakuSourceChange>.broadcast(sync: true);
   Stream<DanmakuSourceChange> get changes => _changes.stream;
@@ -62,6 +66,8 @@ class PlDanmakuController {
   /// 接受规则时先同步失效；重算仅提交当前修订的结果。
   Future<void> refreshRules() {
     if (_disposed) return Future.value();
+    _ruleWork.cancel();
+    _ruleWork = DanmakuWorkToken();
     _ruleRevision++;
     _mergeDanmaku = _plPlayerController.mergeDanmaku;
     _cache.clear();
@@ -100,6 +106,8 @@ class PlDanmakuController {
   void dispose() {
     _unregisterDiagnostics();
     _disposed = true;
+    _lifetimeWork.cancel();
+    _ruleWork.cancel();
     _cache.clear();
     _requestedSeg.clear();
     _rawSegments.clear();
@@ -121,6 +129,7 @@ class PlDanmakuController {
       final res = await DmGrpc.dmSegMobile(
         cid: _cid,
         segmentIndex: segmentIndex + 1,
+        workToken: _lifetimeWork,
       );
       if (_disposed) return;
 
@@ -173,9 +182,14 @@ class PlDanmakuController {
       if (!element.isSelf && shouldFilter && filters.remove(element)) continue;
       filtered.add(element);
     }
-    final processed = _mergeDanmaku
-        ? await mergeDanmakuInBackground(filtered)
-        : filtered;
+    final List<DanmakuElem> processed;
+    try {
+      processed = _mergeDanmaku
+          ? await mergeDanmakuInBackground(filtered, token: _ruleWork)
+          : filtered;
+    } on DanmakuWorkCancelled {
+      return;
+    }
     if (_disposed || revision != _ruleRevision) return;
     for (final element in processed) {
       if (_isFileSource) {

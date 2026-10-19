@@ -61,6 +61,7 @@ abstract final class GrpcReq {
     T Function(Uint8List) grpcParser, {
     bool isolate = false,
     bool danmakuWork = false,
+    DanmakuWorkToken? workToken,
     Account? account,
     bool retry = true,
   }) async {
@@ -105,10 +106,13 @@ abstract final class GrpcReq {
                   data.length +
                       GrpcDecodePolicy.estimatedDecodedBytes(data) * 4,
                   decode,
+                  token: workToken,
                 )
               : await decode();
           operation?.finish(error: result is Error ? result.errMsg : null);
           return result;
+        } on DanmakuWorkCancelled {
+          return const Error('弹幕任务已失效');
         } catch (error) {
           operation?.finish(error: error);
           rethrow;
