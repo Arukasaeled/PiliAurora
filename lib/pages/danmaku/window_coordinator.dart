@@ -50,6 +50,7 @@ class DanmakuWindowCoordinator<T> {
   bool requestFailed = false;
   bool _needsPreparation = false;
   bool get needsPreparation => !_disposed && _needsPreparation;
+  double _effectiveRate = 1;
 
   void _changed(DanmakuSourceChange change) {
     if (_disposed) return;
@@ -79,11 +80,27 @@ class DanmakuWindowCoordinator<T> {
     }
   }
 
-  void prepareFrame(DanmakuWindowRenderer<T> target, int mediaUs) {
+  void prepareFrame(
+    DanmakuWindowRenderer<T> target,
+    int mediaUs, {
+    double effectiveRate = 1,
+  }) {
     if (_disposed || !identical(target, renderer)) return;
+    if (!effectiveRate.isFinite || effectiveRate <= 0) {
+      throw ArgumentError.value(effectiveRate, 'effectiveRate');
+    }
+    // 时间余量按真实时间维持，窗口条目/字节及逐帧布局预算优先。
+    final mediaAheadUs = (aheadUs * effectiveRate).clamp(1, 30000000).ceil();
+    final mediaRefillUs = (refillUs * effectiveRate)
+        .clamp(1, mediaAheadUs)
+        .ceil();
+    if (_effectiveRate != effectiveRate) {
+      _effectiveRate = effectiveRate;
+      _refilling = false;
+    }
     _needsPreparation = false;
     if (_lastMediaUs != null &&
-        mediaUs - _lastMediaUs! > aheadUs &&
+        mediaUs - _lastMediaUs! > mediaAheadUs &&
         (mediaUs < renderer.validFromUs || mediaUs >= renderer.validUntilUs)) {
       renderer.reset(mediaUs);
     }
@@ -106,12 +123,12 @@ class DanmakuWindowCoordinator<T> {
       _dirtyUs = null;
       _pending = null;
       _refilling = true;
-      _targetUntilUs = math.max(_targetUntilUs, mediaUs + aheadUs);
+      _targetUntilUs = math.max(_targetUntilUs, mediaUs + mediaAheadUs);
     }
     if (!_refilling) {
-      if (_pending == null && _nextBucketUs - mediaUs >= refillUs) return;
+      if (_pending == null && _nextBucketUs - mediaUs >= mediaRefillUs) return;
       _refilling = true;
-      _targetUntilUs = mediaUs + aheadUs;
+      _targetUntilUs = mediaUs + mediaAheadUs;
     }
     if (!_requesting &&
         (_lastRequestUs == null ||

@@ -26,10 +26,11 @@ PlaybackMediaAnchor _anchor({
   int continuity = 0,
   bool advancing = true,
   int validFor = 10000000,
+  double rate = 1,
 }) => PlaybackMediaAnchor(
   positionUs: position,
   observedAtUs: observed,
-  effectiveRate: 1,
+  effectiveRate: rate,
   advancing: advancing,
   ready: true,
   continuity: continuity,
@@ -65,6 +66,32 @@ void _prepare(DanmakuWindowRenderer<void> renderer, int position) {
 }
 
 void main() {
+  testWidgets('preparation receives the observed media rate', (tester) async {
+    final clock = _Clock(_anchor(rate: 2));
+    final renderer = _renderer();
+    addTearDown(renderer.dispose);
+    addTearDown(clock.events.close);
+    final rates = <double>[];
+    await tester.pumpWidget(
+      _host(
+        DanmakuWindowScreen<void>(
+          renderer: renderer,
+          clock: clock,
+          size: const Size(320, 120),
+          monotonicUs: () => 0,
+          prepareFrame: (r, p, {required effectiveRate}) {
+            rates.add(effectiveRate);
+            _prepare(r, p);
+          },
+        ),
+      ),
+    );
+    expect(rates.last, 2);
+    clock.emit(_anchor(rate: .5, advancing: false));
+    expect(rates.last, .5);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
     'frame time uses media anchor; pause freezes and invalidation clears',
     (tester) async {
@@ -81,7 +108,7 @@ void main() {
             clock: clock,
             size: const Size(320, 120),
             monotonicUs: () => now,
-            prepareFrame: (r, p) {
+            prepareFrame: (r, p, {required effectiveRate}) {
               positions.add(p);
               _prepare(r, p);
             },
@@ -130,7 +157,7 @@ void main() {
             clock: clock,
             size: const Size(320, 120),
             monotonicUs: () => now,
-            prepareFrame: (r, p) {
+            prepareFrame: (r, p, {required effectiveRate}) {
               positions.add(p);
               _prepare(r, p);
             },
@@ -171,7 +198,7 @@ void main() {
             inputChanges: updates.stream,
             size: const Size(320, 120),
             monotonicUs: () => 0,
-            prepareFrame: (r, p) {
+            prepareFrame: (r, p, {required effectiveRate}) {
               frames++;
               if (ready) _prepare(r, p);
             },
@@ -213,7 +240,7 @@ void main() {
                 opacity: opacity,
                 size: const Size(320, 120),
                 monotonicUs: () => now,
-                prepareFrame: (r, p) {
+                prepareFrame: (r, p, {required effectiveRate}) {
                   positions.add(p);
                   _prepare(r, p);
                 },

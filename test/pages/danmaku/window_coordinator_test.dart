@@ -167,6 +167,40 @@ void main() {
     },
   );
 
+  test(
+    'observed rate scales real-time lookahead without resetting trajectories',
+    () {
+      final source = _Source()..load([]);
+      final renderer = _renderer();
+      final coordinator = DanmakuWindowCoordinator(
+        source: source,
+        renderer: renderer,
+        contentOf: _content,
+      );
+      addTearDown(renderer.dispose);
+      addTearDown(coordinator.dispose);
+      addTearDown(source.events.close);
+      final generation = renderer.generation;
+      for (var i = 0; i < 12; i++) {
+        coordinator.prepareFrame(renderer, 0, effectiveRate: 2);
+      }
+      expect(renderer.validUntilUs, 4000000);
+      expect(coordinator.needsPreparation, isFalse);
+      coordinator.prepareFrame(renderer, 3000000, effectiveRate: 2);
+      expect(coordinator.needsPreparation, isFalse);
+      coordinator.prepareFrame(renderer, 3100000, effectiveRate: 2);
+      expect(coordinator.needsPreparation, isTrue);
+      for (var i = 0; i < 12; i++) {
+        coordinator.prepareFrame(renderer, 3100000, effectiveRate: 2);
+      }
+      expect(renderer.validUntilUs, 7100000);
+      coordinator.prepareFrame(renderer, 3100000, effectiveRate: .5);
+      expect(coordinator.needsPreparation, isFalse);
+      expect(renderer.validUntilUs, 7100000);
+      expect(renderer.generation, generation);
+    },
+  );
+
   test('repeated ready signals preserve fixed bucket sampling', () {
     final source = _Source()
       ..load([for (var i = 0; i < 200; i++) _dm('sample$i', 0)]);

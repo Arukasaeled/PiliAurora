@@ -10,8 +10,9 @@ import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
 
 typedef DanmakuPrepareFrame<T> = void Function(
   DanmakuWindowRenderer<T>,
-  int mediaUs,
-);
+  int mediaUs, {
+  required double effectiveRate,
+});
 
 /// 挂载方持有 renderer；此控件管理媒体订阅、帧调度与绘制挂载。
 class DanmakuWindowScreen<T> extends StatefulWidget {
@@ -107,7 +108,11 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       _continuity = anchor.continuity;
     }
     _lastPositionUs = position;
-    widget.prepareFrame(renderer, position);
+    widget.prepareFrame(
+      renderer,
+      position,
+      effectiveRate: anchor.effectiveRate,
+    );
     renderer.present(position, allowUnprepared: true);
     _syncTicker();
   }
