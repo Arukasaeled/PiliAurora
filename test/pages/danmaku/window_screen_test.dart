@@ -66,6 +66,44 @@ void _prepare(DanmakuWindowRenderer<void> renderer, int position) {
 }
 
 void main() {
+  testWidgets('same-domain clock correction keeps the latest geometry cut', (
+    tester,
+  ) async {
+    final clock = _Clock(_anchor(position: 1000000, advancing: false));
+    final renderer = _renderer();
+    addTearDown(renderer.dispose);
+    addTearDown(clock.events.close);
+    final positions = <int>[];
+    await tester.pumpWidget(
+      _host(
+        DanmakuWindowScreen<void>(
+          renderer: renderer,
+          clock: clock,
+          size: const Size(320, 120),
+          monotonicUs: () => 0,
+          prepareFrame: (r, p, {required effectiveRate}) {
+            positions.add(p);
+            _prepare(r, p);
+          },
+        ),
+      ),
+    );
+    renderer.updateTiming(
+      mediaUs: 1000000,
+      duration: 10,
+      staticDuration: 5,
+      scrollFixedVelocity: false,
+    );
+    final generation = renderer.generation;
+    clock.emit(_anchor(position: 999000, advancing: false));
+    expect(positions.last, 1000000);
+    expect(renderer.generation, generation);
+    clock.emit(_anchor(position: 500000, continuity: 1, advancing: false));
+    expect(renderer.validFromUs, 500000);
+    expect(renderer.generation, greaterThan(generation));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
     'future static content wakes at entry and expiry without continuous frames',
     (tester) async {
@@ -194,7 +232,10 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       expect(positions.last, 200000);
       expect(positions.length, frames);
+      final previousHandle = renderer.interaction;
+      final layouts = renderer.rasters.layouts;
       clock.emit(null);
+      expect(previousHandle.isValid, isFalse);
       expect(renderer.activeCount, 0);
       clock.emit(
         _anchor(
@@ -204,7 +245,8 @@ void main() {
           advancing: false,
         ),
       );
-      expect(renderer.validFromUs, 500000);
+      expect(renderer.validFromUs, 0);
+      expect(renderer.rasters.layouts, layouts);
       expect(positions.last, 500000);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(clock.events.hasListener, isFalse);

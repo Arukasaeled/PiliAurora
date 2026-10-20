@@ -121,6 +121,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
       interaction: () => created.interaction,
       clear: () => created.reset(player.positionInMilliseconds * 1000),
       echo: _echoes.add,
+      seeking: created.suspendPresentation,
       remove: _echoes.remove,
     );
   }

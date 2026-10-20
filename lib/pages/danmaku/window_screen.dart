@@ -101,7 +101,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     _anchor = anchor;
     if (anchor == null || !anchor.ready) {
       _continuity = null;
-      widget.renderer.reset(_lastPositionUs);
+      widget.renderer.suspendPresentation();
     }
     _update();
     _syncTicker();
@@ -112,14 +112,17 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   void _update() {
     if (!_visible) return;
     final anchor = _anchor;
-    final position = anchor?.positionAt(
+    var position = anchor?.positionAt(
       widget.monotonicUs?.call() ?? Timeline.now,
     );
     if (position == null) return;
     final renderer = widget.renderer;
-    if (_continuity != anchor!.continuity || position < renderer.validFromUs) {
-      renderer.reset(position);
+    if (_continuity != anchor!.continuity) {
+      if (!renderer.containsPreparedTime(position)) renderer.reset(position);
       _continuity = anchor.continuity;
+    } else if (position < renderer.validFromUs) {
+      // 同一连续域的轻微校准等待媒体时间追上下界。
+      position = renderer.validFromUs;
     }
     _lastPositionUs = position;
     renderer

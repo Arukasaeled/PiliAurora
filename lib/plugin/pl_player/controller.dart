@@ -436,6 +436,7 @@ class PlPlayerController
     _showDanmaku.value = value;
     if (!value) clearDanmakuDisplay();
   }
+
   Set<int> dmState = <int>{};
   bool get mergeDanmaku => Pref.mergeDanmaku;
   late final String midHash = getCrc32(
@@ -1764,7 +1765,7 @@ class PlPlayerController
   Future<void> seek(Duration position, {bool isSeek = false}) async {
     _audioSeekInProgress = true;
     _audioRecovery?.onPlaybackChanged();
-    clearDanmakuDisplay();
+    danmakuDisplay?.seeking?.call();
     final watch = Stopwatch()..start();
     _diagnostics?.event(
       'playback.seek.begin',

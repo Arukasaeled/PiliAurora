@@ -1030,6 +1030,30 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     canvas.restore();
   }
 
+  bool containsPreparedTime(int mediaUs) => _planner.window.contains(mediaUs);
+
+  /// 等待确认落点时隐藏画面，保留可回查的编排；挂起占位结束后走冷起点。
+  void suspendPresentation() {
+    if (_disposed) return;
+    if (_held != null) {
+      reset(_mediaUs);
+      return;
+    }
+    _interactionEpoch++;
+    final target = _configuration;
+    if (target != null) {
+      target.dispose();
+      target.prepared.clear();
+      target.bytes = 0;
+    }
+    for (final active in _active.values) {
+      active.release();
+    }
+    _active.clear();
+    _unavailable.clear();
+    notifyListeners();
+  }
+
   void reset(int fromUs) {
     // 数据域失效撤回已准备的资源，最新显示配置继续作为下一帧目标。
     final target = _configuration;

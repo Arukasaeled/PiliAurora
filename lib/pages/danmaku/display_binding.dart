@@ -9,11 +9,13 @@ class DanmakuDisplayBinding {
     required this.interaction,
     required this.clear,
     this.echo,
+    this.seeking,
     this.remove,
   });
 
   final DanmakuInteractionHandle<DanmakuExtra> Function() interaction;
   final VoidCallback clear;
+  final VoidCallback? seeking;
   final void Function(DanmakuContentItem<DanmakuExtra>, int mediaUs)? echo;
   final void Function(Object identity)? remove;
 }
