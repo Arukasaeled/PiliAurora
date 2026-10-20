@@ -1059,6 +1059,29 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
 
   bool containsPreparedTime(int mediaUs) => _planner.window.contains(mediaUs);
 
+  /// 来源失效按原始时间撤回；无关活动轨迹和交互继续有效。
+  void invalidateRange(int startUs, {int? endUs}) {
+    if (_disposed) return;
+    if (startUs < 0 || (endUs != null && endUs <= startUs)) {
+      throw ArgumentError('失效范围必须是有效的半开区间');
+    }
+    bool affected(int sourceUs) =>
+        sourceUs >= startUs && (endUs == null || sourceUs < endUs);
+    final retained = [
+      for (final active in _active.values)
+        if (!affected(active.item.sourceUs)) active.item,
+    ];
+    if (!retained.any((item) => item.identity == _held?.identity)) _held = null;
+    // 配置值保留，准备资源基于剩余活动项重新建立。
+    final target = _configuration;
+    if (target != null) {
+      target.dispose();
+      target.prepared.clear();
+      target.bytes = 0;
+    }
+    _replaceActiveDomain(retained);
+  }
+
   /// 等待确认落点时隐藏画面，保留可回查的编排；挂起占位结束后走冷起点。
   void suspendPresentation() {
     if (_disposed) return;
