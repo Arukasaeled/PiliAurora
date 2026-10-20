@@ -8,6 +8,80 @@ import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 void main() {
+  test('source store reuses ordered run after cancellation and replaces changed input', () async {
+    final directory = Directory.systemTemp.createTempSync('pili-sort-reuse-');
+    final file = File('${directory.path}/source.pb');
+    final store = OrderedDanmakuFileStore(temporaryParent: directory);
+    addTearDown(() async {
+      await store.dispose();
+      file.deleteSync();
+      directory.deleteSync();
+    });
+    await file.writeAsBytes(
+      DmSegMobileReply(
+        elems: [
+          for (var i = 0; i < 600; i++)
+            DanmakuElem(content: '$i', progress: 600 - i),
+        ],
+      ).writeToBuffer(),
+    );
+    final first = await store.read(file).expand((batch) => batch).toList();
+    final runDirectory = directory.listSync().whereType<Directory>().single;
+    final sorted = runDirectory.listSync().single as File;
+    final sortedStat = sorted.statSync();
+    final token = DanmakuWorkToken();
+    await expectLater(() async {
+      await for (final _ in store.read(file, token: token)) {
+        token.cancel();
+      }
+    }(), throwsA(isA<DanmakuWorkCancelled>()));
+    final again = await store.read(file).expand((batch) => batch).toList();
+    expect(
+      again.map((e) => e.writeToBuffer()),
+      first.map((e) => e.writeToBuffer()),
+    );
+    expect(runDirectory.existsSync(), isTrue);
+    expect((sorted.statSync()).modified, sortedStat.modified);
+    await file.writeAsBytes(
+      DmSegMobileReply(elems: [DanmakuElem(content: 'changed', progress: 99)])
+          .writeToBuffer(),
+    );
+    final changed = await store.read(file).expand((batch) => batch).toList();
+    expect(changed.single.content, 'changed');
+    expect(runDirectory.existsSync(), isFalse);
+    await store.dispose();
+    expect(directory.listSync(), [isA<File>()]);
+  });
+
+  test(
+    'source release waits for the current reader before deleting its run',
+    () async {
+      final directory = Directory.systemTemp.createTempSync(
+        'pili-sort-release-',
+      );
+      final file = File('${directory.path}/source.pb');
+      await file.writeAsBytes(
+        DmSegMobileReply(
+          elems: [
+            for (var i = 0; i < 600; i++)
+              DanmakuElem(content: '$i', progress: 600 - i),
+          ],
+        ).writeToBuffer(),
+      );
+      final store = OrderedDanmakuFileStore(temporaryParent: directory);
+      Future<void>? releasing;
+      await expectLater(() async {
+        await for (final _ in store.read(file)) {
+          releasing ??= store.dispose();
+        }
+      }(), throwsA(isA<DanmakuWorkCancelled>()));
+      await releasing;
+      expect(directory.listSync(), [isA<File>()]);
+      file.deleteSync();
+      directory.deleteSync();
+    },
+  );
+
   test(
     'external runs preserve stable order, merge counts and clean up',
     () async {
