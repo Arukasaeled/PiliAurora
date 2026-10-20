@@ -83,6 +83,45 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   int get validFromUs => _planner.window.validFromUs;
   int get validUntilUs => _planner.window.validUntilUs;
 
+  /// 类别变化立即移除对应活动项，准入规则变化撤回前方编排。
+  void updateAdmission({
+    required int mediaUs,
+    required bool hideTop,
+    required bool hideBottom,
+    required bool hideScroll,
+    required bool hideSpecial,
+    required bool massiveMode,
+    required bool static2Scroll,
+  }) {
+    if (_disposed) return;
+    if (mediaUs < 0) throw ArgumentError.value(mediaUs);
+    final old = rasters.option;
+    if (old.hideTop == hideTop &&
+        old.hideBottom == hideBottom &&
+        old.hideScroll == hideScroll &&
+        old.hideSpecial == hideSpecial &&
+        old.massiveMode == massiveMode &&
+        old.static2Scroll == static2Scroll) {
+      return;
+    }
+    present(mediaUs, allowUnprepared: true);
+    final next = old.copyWith(
+      hideTop: hideTop,
+      hideBottom: hideBottom,
+      hideScroll: hideScroll,
+      hideSpecial: hideSpecial,
+      massiveMode: massiveMode,
+      static2Scroll: static2Scroll,
+    );
+    final retained = [
+      for (final active in _active.values)
+        if (!next.hideWhat(active.item.payload.candidate.type)) active.item,
+    ];
+    if (!retained.any((item) => item.identity == _held?.identity)) _held = null;
+    rasters.option = _planner.option = next;
+    _replaceActiveDomain(retained);
+  }
+
   /// 在配置生效帧调用；视频倍速由媒体时钟表达，不传入显示时长。
   void updateTiming({
     required int mediaUs,
