@@ -10,6 +10,33 @@ DanmakuElem _element(int progress, int id) => DanmakuElem(
 
 void main() {
   test(
+    'byte budget evicts complete segments and rejects an oversized segment',
+    () {
+      final cache = DanmakuCache(maxBytes: 2600)
+        ..addSegmentBuckets(0, {
+          0: [_element(0, 0)],
+        })
+        ..addSegmentBuckets(1, {
+          3600: [DanmakuElem(progress: 360000, content: 'a' * 600)],
+        });
+      expect(cache.containsSegment(0), isFalse);
+      expect(cache.containsSegment(1), isTrue);
+      expect(cache.estimatedBytes, lessThanOrEqualTo(cache.maxBytes));
+      cache.addSegmentBuckets(2, {
+        7200: [DanmakuElem(progress: 720000, content: 'b' * 2000)],
+      });
+      expect(cache.containsSegment(2), isFalse);
+      expect(
+        cache.readRange(720000000, 720000001).coverage.single.state,
+        DanmakuCoverageState.missing,
+      );
+      expect(cache.containsSegment(1), isTrue);
+      cache.clear();
+      expect(cache.estimatedBytes, 0);
+    },
+  );
+
+  test(
     'dense local range sampling is bounded and stable across sorted writes',
     () {
       final items = [for (var i = 0; i < 10000; i++) _element(50, i)];
