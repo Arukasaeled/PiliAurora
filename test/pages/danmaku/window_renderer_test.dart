@@ -5,6 +5,7 @@ import 'package:flutter/painting.dart';
 import 'package:flutter/animation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
+
 import '../../../tool/experiments/danmaku/baseline/windows_renderer.dart';
 
 const _size = Size(320, 120);
@@ -47,6 +48,225 @@ SpecialDanmakuContentItem<void> _special({
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('new raster pressure preserves current visible image references', () {
+    final renderer = DanmakuWindowRenderer<void>(
+      option: _option,
+      size: _size,
+      maxWorkingSetBytes: 24 * 1024,
+    );
+    addTearDown(renderer.dispose);
+    renderer
+      ..prepare(
+        [DanmakuWindowContent('keep', 0, _text('keep'))],
+        generation: renderer.generation,
+        preparedUntilUs: 3000000,
+      )
+      ..present(500000);
+    final handle = renderer.interaction;
+    final bounds = handle.snapshot.single.bounds;
+    final bytes = renderer.activeBytes;
+    renderer
+      ..prepare(
+        [DanmakuWindowContent('large', 0, _text('oversized current raster'))],
+        generation: renderer.generation,
+        preparedUntilUs: 3000000,
+      )
+      ..present(500000);
+    expect(handle.snapshot.single.identity, 'keep');
+    expect(handle.snapshot.single.bounds, bounds);
+    expect(renderer.activeBytes, bytes);
+    expect(
+      renderer.workingSetBytes,
+      lessThanOrEqualTo(renderer.maxWorkingSetBytes),
+    );
+  });
+
+  test('admission pressure reclaims expired source history while retaining visible resources', () {
+    final renderer = DanmakuWindowRenderer<void>(
+      option: _option.copyWith(massiveMode: true),
+      size: _size,
+      maxWorkingSetBytes: 96 * 1024,
+    );
+    addTearDown(renderer.dispose);
+    DanmakuWindowContent<void> emote(String id, int sourceUs) {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawColor(const Color(0xffff0000), ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      final image = picture.toImageSync(128, 128);
+      picture.dispose();
+      final content = DanmakuContentItem<void>(
+        '[e]',
+        inlineImages: [
+          DanmakuInlineImage(
+            placeholder: '[e]',
+            image: image,
+            width: 16,
+            height: 16,
+          ),
+        ],
+      );
+      addTearDown(content.dispose);
+      return DanmakuWindowContent(id, sourceUs, content);
+    }
+
+    renderer
+      ..prepare(
+        [emote('expired', 0)],
+        generation: renderer.generation,
+        preparedUntilUs: 10000000,
+      )
+      ..present(500000)
+      ..prepare(
+        [DanmakuWindowContent('visible', 1500000, _text('visible'))],
+        generation: renderer.generation,
+        preparedUntilUs: 10000000,
+      )
+      ..present(2500000);
+    final before = renderer.interaction.snapshot.single.bounds;
+    final handle = renderer.interaction;
+    expect(renderer.workingSetBytes, greaterThanOrEqualTo(128 * 128 * 4));
+    expect(
+      renderer.prepare(
+        [emote('new', 2500000)],
+        generation: renderer.generation,
+        preparedUntilUs: 10000000,
+      ),
+      isTrue,
+    );
+    renderer.present(2500000);
+    expect(renderer.hasPrepared('expired'), isFalse);
+    expect(renderer.validFromUs, 2500000);
+    expect(
+      handle.snapshot.firstWhere((item) => item.identity == 'visible').bounds,
+      before,
+    );
+    expect(handle.isValid, isTrue);
+    expect(renderer.activeCount, 2);
+    expect(
+      renderer.workingSetBytes,
+      lessThanOrEqualTo(renderer.maxWorkingSetBytes),
+    );
+  });
+
+  test('independent emote sources are budgeted before layout and survive caller release', () {
+    final renderer = DanmakuWindowRenderer<void>(
+      option: _option.copyWith(massiveMode: true),
+      size: _size,
+      maxWorkingSetBytes: 96 * 1024,
+    );
+    addTearDown(renderer.dispose);
+    DanmakuContentItem<void> content() {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawColor(const Color(0xffff0000), ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      final image = picture.toImageSync(128, 128);
+      picture.dispose();
+      return DanmakuContentItem<void>(
+        '[e]',
+        inlineImages: [
+          DanmakuInlineImage(
+            placeholder: '[e]',
+            image: image,
+            width: 16,
+            height: 16,
+          ),
+        ],
+      );
+    }
+
+    final first = content();
+    expect(
+      renderer.prepare(
+        [DanmakuWindowContent('first', 0, first)],
+        generation: renderer.generation,
+        preparedUntilUs: 3000000,
+      ),
+      isTrue,
+    );
+    renderer.present(500000);
+    first.dispose();
+    expect(renderer.activeCount, 1);
+    expect(renderer.workingSetBytes, greaterThanOrEqualTo(128 * 128 * 4));
+    final before = renderer.rasters.layouts;
+    final second = content();
+    expect(
+      renderer.prepare(
+        [DanmakuWindowContent('second', 0, second)],
+        generation: renderer.generation,
+        preparedUntilUs: 3000000,
+      ),
+      isFalse,
+    );
+    second.dispose();
+    expect(renderer.rasters.layouts, before);
+    expect(
+      renderer.workingSetBytes,
+      lessThanOrEqualTo(renderer.maxWorkingSetBytes),
+    );
+    expect(renderer.statistics['active'], 1);
+    renderer.requestConfiguration(
+      option: renderer.rasters.option.copyWith(fontSize: 24),
+      size: _size,
+      devicePixelRatio: 1,
+    );
+    expect(renderer.prepareConfiguration(), isTrue);
+    renderer.present(500000, allowUnprepared: true);
+    expect(renderer.activeCount, 1);
+    renderer.present(3000000, allowUnprepared: true);
+    renderer.prepare(
+      [],
+      generation: renderer.generation,
+      preparedUntilUs: 3000001,
+    );
+    renderer.trimBefore(3000000);
+    expect(renderer.statistics['active'], 0);
+    expect(renderer.workingSetBytes, lessThan(128 * 128 * 4));
+  });
+
+  test(
+    'rejected emote content can be disposed before statistics and expiry',
+    () {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawColor(const Color(0xffff0000), ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      final image = picture.toImageSync(8, 8);
+      picture.dispose();
+      final item = DanmakuContentItem<void>(
+        '[e]',
+        inlineImages: [
+          DanmakuInlineImage(
+            placeholder: '[e]',
+            image: image,
+            width: 16,
+            height: 16,
+          ),
+        ],
+      );
+      final renderer = DanmakuWindowRenderer<void>(
+        option: _option,
+        size: _size,
+        maxActiveBytes: 1,
+      );
+      addTearDown(renderer.dispose);
+      renderer
+        ..prepare(
+          [DanmakuWindowContent('rejected', 0, item)],
+          generation: renderer.generation,
+          preparedUntilUs: 3000000,
+        )
+        ..present(500000);
+      expect(renderer.activeCount, 0);
+      item.dispose();
+      expect(renderer.statistics['active'], 0);
+      renderer
+        ..present(3000000)
+        ..trimBefore(3000000);
+      expect(renderer.statistics['active'], 0);
+      renderer.reset(3000000);
+      expect(renderer.workingSetBytes, lessThan(renderer.maxWorkingSetBytes));
+    },
+  );
 
   for (final ratio in [1.0, 2.0]) {
     for (final special in [false, true]) {
@@ -100,6 +320,71 @@ void main() {
     }
   }
 
+  test(
+    'inline emote burst shares backing and paint keeps resources unchanged',
+    () async {
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawColor(const Color(0xffff0000), ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      final emote = picture.toImageSync(16, 16);
+      picture.dispose();
+      addTearDown(emote.dispose);
+      final renderer = DanmakuWindowRenderer<void>(
+        option: _option.copyWith(massiveMode: true),
+        size: _size,
+        devicePixelRatio: 2,
+        rasterCacheMaxBytes: 128 * 1024,
+        maxActiveBytes: 128 * 1024,
+        maxWorkingSetBytes: 1024 * 1024,
+      );
+      addTearDown(renderer.dispose);
+      DanmakuContentItem<void> content() => DanmakuContentItem<void>(
+        '[e]',
+        inlineImages: [
+          DanmakuInlineImage(
+            placeholder: '[e]',
+            image: emote.clone(),
+            width: 16,
+            height: 16,
+          ),
+        ],
+      );
+      final inputs = [
+        for (var i = 0; i < 120; i++) DanmakuWindowContent(i, 0, content()),
+      ];
+      renderer
+        ..prepare(
+          inputs,
+          generation: renderer.generation,
+          preparedUntilUs: 3000000,
+        )
+        ..present(500000);
+      for (final input in inputs) {
+        input.content.dispose();
+      }
+      expect(renderer.activeCount, 120);
+      expect(renderer.rasters.rasterizations, 1);
+      expect(renderer.rasters.length, 1);
+      expect(renderer.activeBytes, renderer.rasters.bytes);
+      expect(
+        renderer.workingSetBytes,
+        lessThanOrEqualTo(renderer.maxWorkingSetBytes),
+      );
+      final layouts = renderer.rasters.layouts;
+      final bytes = renderer.workingSetBytes;
+      final pixels = await _pixels(renderer, opacity: .5);
+      expect(pixels.any((byte) => byte != 0), isTrue);
+      expect(await _pixels(renderer, opacity: .5), pixels);
+      expect(renderer.rasters.layouts, layouts);
+      expect(renderer.rasters.rasterizations, 1);
+      expect(renderer.workingSetBytes, bytes);
+      renderer.rasters.clear();
+      expect(await _pixels(renderer, opacity: .5), pixels);
+      renderer.reset(3000000);
+      expect(renderer.activeBytes, 0);
+      expect(emote.debugDisposed, isFalse);
+    },
+  );
 
   for (final ratio in [1.0, 2.0]) {
     test(

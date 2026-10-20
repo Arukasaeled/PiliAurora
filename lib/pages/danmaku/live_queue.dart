@@ -69,6 +69,9 @@ class _Candidate<T> {
 
 /// 候选与解码任务分开计账；过期任务实际完成前继续占槽。
 class LiveDanmakuQueue<T> {
+  static const maxCandidateImageBytes = 256 * 1024;
+  // 候选已保留的图片与下一张解码结果可同时存活。
+  static const taskReservationBytes = 2 * maxCandidateImageBytes;
   LiveDanmakuQueue({
     required this.loadImage,
     required this.admit,
@@ -82,6 +85,7 @@ class LiveDanmakuQueue<T> {
     this.maxResourceBytes = 2 * 1024 * 1024,
     this.maxBatch = 24,
     this.maxWorkUs = 2000,
+    this.canReserveBytes,
   });
   final Future<ui.Image?> Function(LiveEmoteDescriptor) loadImage;
   final bool Function(DanmakuContentItem<T>) admit;
@@ -89,20 +93,37 @@ class LiveDanmakuQueue<T> {
   final int Function() nowUs;
   final int maxCandidates, maxDescriptorBytes, maxAgeUs, resourceWaitUs;
   final int maxTasks, maxResourceBytes, maxBatch, maxWorkUs;
+  final bool Function(int bytes)? canReserveBytes;
   final _queue = Queue<_Candidate<T>>();
   final _identities = <Object>{};
   int _bytes = 0, _tasks = 0, _reserved = 0, _held = 0;
   bool _disposed = false;
   int get candidateCount => _queue.length;
   int get runningTasks => _tasks;
-  int get reservedBytes => _reserved + _held;
+  int get reservedBytes => workingSetBytesExcluding(const []) - _bytes;
+  int get workingSetBytes => _bytes + reservedBytes;
+  int workingSetBytesExcluding(Iterable<ui.Image> sourceImages) {
+    final images = sourceImages.toList();
+    var bytes = _bytes + _reserved;
+    for (final candidate in _queue) {
+      for (final inline in candidate.images) {
+        if (images.any((image) => image.isCloneOf(inline.image))) continue;
+        images.add(inline.image);
+        bytes += inline.image.width * inline.image.height * 4;
+      }
+    }
+    return bytes;
+  }
+
   bool get hasReady => _queue.any(
     (c) =>
         c.ready ||
         (!c.started &&
             (c.message.emotes.isEmpty ||
                 _tasks < maxTasks &&
-                    _reserved + _held + 256 * 1024 <= maxResourceBytes)),
+                    _reserved + _held + taskReservationBytes <=
+                        maxResourceBytes &&
+                    (canReserveBytes?.call(taskReservationBytes) ?? true))),
   );
   int? get nextDeadlineUs {
     int? result;
@@ -131,9 +152,11 @@ class LiveDanmakuQueue<T> {
     }
     while (_queue.isNotEmpty &&
         (_queue.length >= maxCandidates ||
-            _bytes + message.descriptorBytes > maxDescriptorBytes)) {
+            _bytes + message.descriptorBytes > maxDescriptorBytes ||
+            !(canReserveBytes?.call(message.descriptorBytes) ?? true))) {
       _remove(_queue.first);
     }
+    if (!(canReserveBytes?.call(message.descriptorBytes) ?? true)) return;
     _queue.add(_Candidate(message));
     _bytes += message.descriptorBytes;
     wake();
@@ -173,7 +196,8 @@ class LiveDanmakuQueue<T> {
       if (!c.started &&
           c.message.emotes.isNotEmpty &&
           (_tasks >= maxTasks ||
-              _reserved + _held + 256 * 1024 > maxResourceBytes)) {
+              _reserved + _held + taskReservationBytes > maxResourceBytes ||
+              !(canReserveBytes?.call(taskReservationBytes) ?? true))) {
         continue;
       }
       if (++count > maxBatch) break;
@@ -182,7 +206,7 @@ class LiveDanmakuQueue<T> {
           ..started = true
           ..resourceDeadline = nowUs() + resourceWaitUs;
         _tasks++;
-        _reserved += 256 * 1024;
+        _reserved += taskReservationBytes;
         unawaited(_prepare(c, fontSize));
         continue;
       }
@@ -226,7 +250,7 @@ class LiveDanmakuQueue<T> {
             _disposed ||
             nowUs() >= c.resourceDeadline ||
             nowUs() >= c.message.receivedAtUs + maxAgeUs ||
-            bytes + size > 256 * 1024) {
+            bytes + size > maxCandidateImageBytes) {
           image.dispose();
           break;
         }
@@ -247,7 +271,7 @@ class LiveDanmakuQueue<T> {
       // 图片失败沿原候选期限降级。
     } finally {
       _tasks--;
-      _reserved -= 256 * 1024;
+      _reserved -= taskReservationBytes;
       if (!_disposed &&
           !c.done &&
           !c.ready &&

@@ -4,9 +4,180 @@ import 'dart:ui' as ui;
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/pages/danmaku/live_queue.dart';
+import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'queue reservations share the renderer total and stop before decoding',
+    () {
+      var loads = 0;
+      late final LiveDanmakuQueue<void> queue;
+      final renderer = DanmakuWindowRenderer<void>(
+        option: const DanmakuOption(),
+        size: const ui.Size(320, 120),
+        maxWorkingSetBytes: 256 * 1024,
+        additionalWorkingSetBytes: (images) =>
+            queue.workingSetBytesExcluding(images),
+      );
+      addTearDown(renderer.dispose);
+      queue = LiveDanmakuQueue<void>(
+        nowUs: () => 0,
+        loadImage: (_) async {
+          loads++;
+          return null;
+        },
+        admit: (_) => true,
+        wake: () {},
+        canReserveBytes: (bytes) =>
+            renderer.workingSetBytes + bytes <= renderer.maxWorkingSetBytes,
+      );
+      addTearDown(queue.dispose);
+      queue.add(
+        const LiveDanmakuMessage(
+          identity: 'emote',
+          receivedAtUs: 0,
+          text: '[e]',
+          emotes: [LiveEmoteDescriptor('[e]', 'url', 16, 16)],
+        ),
+      );
+      expect(queue.candidateCount, 1);
+      queue.process(running: true, fontSize: 20);
+      expect(loads, 0);
+      expect(queue.runningTasks, 0);
+      expect(queue.hasReady, isFalse);
+      expect(
+        renderer.workingSetBytes,
+        lessThanOrEqualTo(renderer.maxWorkingSetBytes),
+      );
+      queue.clear();
+      expect(renderer.workingSetBytes, 0);
+    },
+  );
+  test(
+    'ready emote transfers its reservation to owned renderer sources',
+    () async {
+      final pending = Completer<ui.Image?>();
+      late final LiveDanmakuQueue<void> queue;
+      final renderer = DanmakuWindowRenderer<void>(
+        option: const DanmakuOption(),
+        size: const ui.Size(320, 120),
+        maxWorkingSetBytes: 768 * 1024,
+        additionalWorkingSetBytes: (images) =>
+            queue.workingSetBytesExcluding(images),
+      );
+      addTearDown(renderer.dispose);
+      queue = LiveDanmakuQueue<void>(
+        nowUs: () => 0,
+        loadImage: (_) => pending.future,
+        admit: (item) {
+          final prepared = renderer.prepare(
+            [DanmakuWindowContent('emote', 0, item)],
+            generation: renderer.generation,
+            preparedUntilUs: 3000000,
+          );
+          renderer.present(500000);
+          item.dispose();
+          return prepared;
+        },
+        wake: () {},
+        canReserveBytes: (bytes) =>
+            renderer.workingSetBytes + bytes <= renderer.maxWorkingSetBytes,
+      );
+      addTearDown(queue.dispose);
+      queue
+        ..add(
+          const LiveDanmakuMessage(
+            identity: 'emote',
+            receivedAtUs: 0,
+            text: '[e]',
+            emotes: [LiveEmoteDescriptor('[e]', 'url', 16, 16)],
+          ),
+        )
+        ..process(running: true, fontSize: 20);
+      expect(queue.runningTasks, 1);
+      expect(
+        renderer.workingSetBytes,
+        greaterThanOrEqualTo(LiveDanmakuQueue.taskReservationBytes),
+      );
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder)
+          .drawColor(const ui.Color(0xffff0000), ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      final image = picture.toImageSync(128, 128);
+      picture.dispose();
+      pending.complete(image);
+      await Future<void>.delayed(Duration.zero);
+      expect(queue.runningTasks, 0);
+      expect(queue.reservedBytes, 128 * 128 * 4);
+      queue.process(running: true, fontSize: 20);
+      expect(image.debugDisposed, isTrue);
+      expect(queue.workingSetBytes, 0);
+      expect(renderer.activeCount, 1);
+      expect(renderer.workingSetBytes, greaterThanOrEqualTo(128 * 128 * 4));
+      expect(
+        renderer.workingSetBytes,
+        lessThanOrEqualTo(renderer.maxWorkingSetBytes),
+      );
+      renderer.reset(3000000);
+      expect(renderer.statistics['active'], 0);
+    },
+  );
+  test(
+    'resource reservation covers retained images and the next decoded image',
+    () async {
+      ui.Image image() {
+        final recorder = ui.PictureRecorder();
+        ui.Canvas(recorder)
+            .drawColor(const ui.Color(0xffff0000), ui.BlendMode.src);
+        final picture = recorder.endRecording();
+        final result = picture.toImageSync(256, 256);
+        picture.dispose();
+        return result;
+      }
+
+      final first = image();
+      final second = image();
+      final next = Completer<ui.Image?>();
+      var requests = 0;
+      final queue = LiveDanmakuQueue<void>(
+        nowUs: () => 0,
+        loadImage: (_) {
+          requests++;
+          return requests == 1 ? Future.value(first) : next.future;
+        },
+        admit: (_) => false,
+        wake: () {},
+      );
+      addTearDown(queue.dispose);
+      queue
+        ..add(
+          const LiveDanmakuMessage(
+            identity: 'pair',
+            receivedAtUs: 0,
+            text: '[a][b]',
+            emotes: [
+              LiveEmoteDescriptor('[a]', 'a', 16, 16),
+              LiveEmoteDescriptor('[b]', 'b', 16, 16),
+            ],
+          ),
+        )
+        ..process(running: true, fontSize: 20);
+      await Future<void>.delayed(Duration.zero);
+      expect(requests, 2);
+      expect(queue.runningTasks, 1);
+      expect(queue.reservedBytes, LiveDanmakuQueue.taskReservationBytes);
+      expect(first.debugDisposed, isFalse);
+      next.complete(second);
+      await Future<void>.delayed(Duration.zero);
+      expect(second.debugDisposed, isTrue);
+      expect(queue.runningTasks, 0);
+      expect(queue.reservedBytes, LiveDanmakuQueue.maxCandidateImageBytes);
+      queue.clear();
+      expect(first.debugDisposed, isTrue);
+      expect(queue.reservedBytes, 0);
+    },
+  );
   test('burst keeps latest candidates and original monotonic expiry', () {
     var now = 0;
     final accepted = <String>[];

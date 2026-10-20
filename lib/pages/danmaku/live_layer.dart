@@ -81,6 +81,11 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         return accepted;
       },
       wake: _wake,
+      canReserveBytes: (bytes) {
+        final renderer = _renderer;
+        return renderer != null &&
+            renderer.workingSetBytes + bytes <= renderer.maxWorkingSetBytes;
+      },
     );
     _unregisterDiagnostics = Diagnostics.instance.register(
       'danmaku.layer.$hashCode',
@@ -91,6 +96,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         'candidates': _queue.candidateCount,
         'resourceTasks': _queue.runningTasks,
         'resourceReservedBytes': _queue.reservedBytes,
+        'candidateWorkingSetBytes': _queue.workingSetBytes,
         'scheduler': _ticker.diagnostics,
       },
     );
@@ -129,6 +135,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         size: widget.size,
         devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
         fontFamily: DefaultTextStyle.of(context).style.fontFamily,
+        additionalWorkingSetBytes: _queue.workingSetBytesExcluding,
       );
       _renderer!.addListener(_rendererChanged);
       widget.createdInteraction?.call(() => _renderer!.interaction, _clear);

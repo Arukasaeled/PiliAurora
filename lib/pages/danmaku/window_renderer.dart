@@ -71,6 +71,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     int rasterCacheMaxBytes = 16 * 1024 * 1024,
     int rasterCacheMaxEntries = 512,
     int? maxWorkingSetBytes,
+    this.additionalWorkingSetBytes,
   }) : maxWorkingSetBytes =
            maxWorkingSetBytes ??
            maxActiveBytes + rasterCacheMaxBytes + 4 * 1024 * 1024,
@@ -397,6 +398,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     _active
       ..clear()
       ..addAll(replacement);
+    _pruneInlineSources();
     _mayOverlap = replacement.isNotEmpty;
     if (!_active.containsKey(_held?.identity)) _held = null;
     for (final raster in target.prepared.values) {
@@ -408,11 +410,94 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
 
   final int maxActiveBytes;
   final int maxWorkingSetBytes;
+  final int Function(Iterable<ui.Image> sourceImages)?
+  additionalWorkingSetBytes;
+  final _inlineContents = <Object, DanmakuContentItem<T>>{};
+  final _sourceImages = <ui.Image>[];
+
+  DanmakuContentItem<T> _retainInlineContent(
+    Object identity,
+    DanmakuContentItem<T> content,
+  ) {
+    if (content.inlineImages.isEmpty) return content;
+    final images = <DanmakuInlineImage>[];
+    for (final inline in content.inlineImages) {
+      final index = _sourceImages.indexWhere(
+        (image) => image.isCloneOf(inline.image),
+      );
+      final image = index < 0 ? inline.image.clone() : _sourceImages[index];
+      if (index < 0) _sourceImages.add(image);
+      images.add(
+        DanmakuInlineImage(
+          placeholder: inline.placeholder,
+          image: image,
+          width: inline.width,
+          height: inline.height,
+        ),
+      );
+    }
+    return _inlineContents[identity] = DanmakuContentItem<T>(
+      content.text,
+      color: content.color,
+      type: content.type,
+      selfSend: content.selfSend,
+      isColorful: content.isColorful,
+      count: content.count,
+      fontSizeScale: content.fontSizeScale,
+      extra: content.extra,
+      inlineImages: images,
+    );
+  }
+
+  void _pruneInlineSources() {
+    final retained = {
+      for (final item in _planner.window.preparedItems)
+        if (item.payload.accepted) item.identity,
+    };
+    _inlineContents.removeWhere((identity, _) => !retained.contains(identity));
+    final used = {
+      for (final content in _inlineContents.values)
+        for (final inline in content.inlineImages) inline.image,
+    };
+    _sourceImages.removeWhere((image) {
+      if (used.contains(image)) return false;
+      image.dispose();
+      return true;
+    });
+  }
+
+  int _additionalInlineSourceBytes(Iterable<DanmakuContentItem<T>> contents) {
+    final images = _sourceImages.toList();
+    var bytes = 0;
+    for (final content in contents) {
+      for (final inline in content.inlineImages) {
+        bytes += 128 + inline.placeholder.length * 2;
+        if (images.any((image) => image.isCloneOf(inline.image))) continue;
+        images.add(inline.image);
+        bytes += inline.image.width * inline.image.height * 4;
+      }
+    }
+    return bytes;
+  }
 
   /// 图片按 backing 计一次，缓存与活动 clone 之间转移不增加总账。
   int get workingSetBytes {
     final target = _configuration;
     var bytes =
+        (additionalWorkingSetBytes?.call(_sourceImages) ?? 0) +
+        _sourceImages.fold<int>(
+          0,
+          (sum, image) => sum + image.width * image.height * 4,
+        ) +
+        _inlineContents.values.fold<int>(
+          0,
+          (sum, content) =>
+              sum +
+              content.inlineImages.fold<int>(
+                0,
+                (bytes, inline) => bytes + 128 + inline.placeholder.length * 2,
+              ),
+        ) +
         rasters.bytes +
         (target?.rasters.bytes ?? 0) +
         _planner.window.estimatedBytes +
@@ -489,12 +574,13 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
         4;
   }
 
-  bool _reserveConfigurationBytes(int bytes) {
+  bool _reserveConfigurationBytes(int bytes, {bool releaseActive = true}) {
     if (workingSetBytes + bytes <= maxWorkingSetBytes) return true;
     // 先取消可回收缓存，再逐批释放旧图片；轨迹与选择留到提交帧。
     rasters.clear();
     _configuration?.rasters.clear();
     if (workingSetBytes + bytes <= maxWorkingSetBytes) return true;
+    if (!releaseActive) return false;
     for (final active in _active.values) {
       if (active.released) continue;
       active.release();
@@ -704,6 +790,38 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       for (final item in _planner.window.preparedItems)
         item.identity: item.payload.candidate,
     };
+    final additions = <Object, DanmakuContentItem<T>>{};
+    for (final input in contents) {
+      if (!known.containsKey(input.identity)) {
+        additions.putIfAbsent(input.identity, () => input.content);
+      }
+    }
+    final descriptionBytes = additions.values.fold<int>(
+      0,
+      (bytes, content) =>
+          bytes +
+          content.text.length * 2 +
+          256 +
+          512 +
+          content.inlineImages.fold<int>(
+            0,
+            (sum, inline) => sum + 128 + inline.placeholder.length * 2,
+          ),
+    );
+    bool hasCapacity() =>
+        workingSetBytes +
+            _additionalInlineSourceBytes(additions.values) +
+            descriptionBytes <=
+        maxWorkingSetBytes;
+    if (!hasCapacity()) {
+      final fromUs = math.min(_mediaUs, validUntilUs);
+      if (fromUs > validFromUs) {
+        _planner.window.trimBefore(fromUs);
+        _pruneInlineSources();
+      }
+      rasters.clear();
+      if (!hasCapacity()) return false;
+    }
     final candidates = <DanmakuMeasuredCandidate<DanmakuContentItem<T>>>[];
     for (final input in contents) {
       final previous = known[input.identity];
@@ -711,13 +829,12 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
         candidates.add(previous);
         continue;
       }
-      final special = input.content is SpecialDanmakuContentItem<T>
-          ? input.content as SpecialDanmakuContentItem<T>
-          : null;
-      final hidden = rasters.option.hideWhat(input.content.type);
-      final raster = hidden || input.content.type == DanmakuItemType.special
+      final content = _retainInlineContent(input.identity, input.content);
+      final special = content is SpecialDanmakuContentItem<T> ? content : null;
+      final hidden = rasters.option.hideWhat(content.type);
+      final raster = hidden || content.type == DanmakuItemType.special
           ? null
-          : rasters.get(input.content);
+          : rasters.get(content);
       final renderable =
           !hidden &&
           (special == null
@@ -729,26 +846,33 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
                   rasters.option.fontWeight,
                   fontFamily: rasters.fontFamily,
                 ));
-      candidates.add(
-        DanmakuMeasuredCandidate(
-          identity: input.identity,
-          sourceUs: input.sourceUs,
-          width: raster?.width ?? 0,
-          height: raster?.height ?? 1,
-          type: input.content.type,
-          payload: input.content,
-          selfSend: input.content.selfSend,
-          renderable: renderable,
-          specialDurationUs: special == null ? null : special.duration * 1000,
-          estimatedBytes: input.content.text.length * 2,
-        ),
+      final candidate = DanmakuMeasuredCandidate(
+        identity: input.identity,
+        sourceUs: input.sourceUs,
+        width: raster?.width ?? 0,
+        height: raster?.height ?? 1,
+        type: content.type,
+        payload: content,
+        selfSend: content.selfSend,
+        renderable: renderable,
+        specialDurationUs: special == null ? null : special.duration * 1000,
+        estimatedBytes:
+            content.text.length * 2 +
+            content.inlineImages.fold<int>(
+              0,
+              (sum, inline) => sum + 128 + inline.placeholder.length * 2,
+            ),
       );
+      candidates.add(candidate);
+      known[input.identity] = candidate;
     }
-    return _planner.prepare(
+    final prepared = _planner.prepare(
       candidates,
       generation: generation,
       preparedUntilUs: preparedUntilUs,
     );
+    _pruneInlineSources();
+    return prepared;
   }
 
   bool present(int mediaUs, {bool allowUnprepared = false}) {
@@ -780,7 +904,10 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       if (_unavailable.contains(item.identity)) continue;
       final content = item.payload.candidate.payload;
       if (content is SpecialDanmakuContentItem<T>) {
-        if (!_reserveConfigurationBytes(_specialBytes(content, rasters))) {
+        if (!_reserveConfigurationBytes(
+          _specialBytes(content, rasters),
+          releaseActive: false,
+        )) {
           _unavailable.add(item.identity);
           continue;
         }
@@ -817,6 +944,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       }
       if (!_reserveConfigurationBytes(
         raster.image == null ? raster.bytes + 512 : 0,
+        releaseActive: false,
       )) {
         _unavailable.add(item.identity);
         continue;
@@ -977,6 +1105,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       generation: _planner.window.generation,
       preparedUntilUs: _mediaUs + 1,
     );
+    _pruneInlineSources();
     _unavailable.clear();
     present(_mediaUs, allowUnprepared: true);
   }
@@ -1121,12 +1250,14 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     _active.clear();
     _unavailable.clear();
     _planner.window.reset(fromUs);
+    _pruneInlineSources();
     _mediaUs = fromUs;
     notifyListeners();
   }
 
   void trimBefore(int fromUs) {
     _planner.window.trimBefore(fromUs);
+    _pruneInlineSources();
     final retained = _planner.window.preparedItems
         .map((item) => item.identity)
         .toSet();
