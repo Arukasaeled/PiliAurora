@@ -66,6 +66,76 @@ void _prepare(DanmakuWindowRenderer<void> renderer, int position) {
 }
 
 void main() {
+  testWidgets(
+    'future static content wakes at entry and expiry without continuous frames',
+    (tester) async {
+      var now = 0;
+      final clock = _Clock(_anchor());
+      final renderer = DanmakuWindowRenderer<void>(
+        option: const DanmakuOption(
+          fontSize: 20,
+          staticDuration: 1,
+          safeArea: false,
+        ),
+        size: const Size(320, 120),
+      );
+      addTearDown(renderer.dispose);
+      addTearDown(clock.events.close);
+      var frames = 0;
+      int? nextPreparation = 1500000;
+      await tester.pumpWidget(
+        _host(
+          DanmakuWindowScreen<void>(
+            renderer: renderer,
+            clock: clock,
+            size: const Size(320, 120),
+            monotonicUs: () => now,
+            nextPreparationUs: () => nextPreparation,
+            prepareFrame: (r, p, {required effectiveRate}) {
+              frames++;
+              if (p >= 1500000) nextPreparation = null;
+              if (r.hasPrepared('fixed')) return;
+              r.prepare(
+                [
+                  DanmakuWindowContent(
+                    'fixed',
+                    1000000,
+                    DanmakuContentItem<void>(
+                      'fixed',
+                      type: DanmakuItemType.top,
+                    ),
+                  ),
+                ],
+                generation: r.generation,
+                preparedUntilUs: 3000000,
+              );
+            },
+          ),
+        ),
+      );
+      expect(renderer.activeCount, 0);
+      expect(tester.hasRunningAnimations, isFalse);
+      final initial = frames;
+      now = 200000;
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(frames, initial);
+      now = 1000000;
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(renderer.activeCount, 1);
+      expect(tester.hasRunningAnimations, isFalse);
+      final afterEntry = frames;
+      now = 1500000;
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(frames, afterEntry + 1);
+      expect(renderer.activeCount, 1);
+      now = 2000000;
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(renderer.activeCount, 0);
+      expect(tester.hasRunningAnimations, isFalse);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('preparation receives the observed media rate', (tester) async {
     final clock = _Clock(_anchor(rate: 2));
     final renderer = _renderer();

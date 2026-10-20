@@ -82,6 +82,24 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   int get generation => _planner.window.generation;
   int get validFromUs => _planner.window.validFromUs;
   int get validUntilUs => _planner.window.validUntilUs;
+  bool get needsContinuousFrames => _active.values.any(
+    (active) =>
+        active.specialBounds != null ||
+        active.item.payload.trajectory!.velocity > 0,
+  );
+
+  int? get nextChangeUs {
+    int? next;
+    for (final item in _planner.window.preparedItems) {
+      if (!item.payload.accepted) continue;
+      for (final time in [item.startUs, item.endUs]) {
+        if (time > _mediaUs && time != 0x7fffffffffffffff) {
+          next = next == null ? time : math.min(time, next);
+        }
+      }
+    }
+    return next;
+  }
 
   /// 类别变化立即移除对应活动项，准入规则变化撤回前方编排。
   void updateAdmission({

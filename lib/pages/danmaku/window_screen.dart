@@ -23,6 +23,7 @@ class DanmakuWindowScreen<T> extends StatefulWidget {
     required this.size,
     required this.prepareFrame,
     this.needsPreparation,
+    this.nextPreparationUs,
     this.inputChanges,
     this.opacity = 1,
     this.frameRate = 0,
@@ -36,6 +37,7 @@ class DanmakuWindowScreen<T> extends StatefulWidget {
   final Size size;
   final DanmakuPrepareFrame<T> prepareFrame;
   final bool Function()? needsPreparation;
+  final int? Function()? nextPreparationUs;
   final Stream<Object?>? inputChanges;
   final double opacity;
   final int frameRate;
@@ -56,6 +58,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   int _lastPositionUs = 0;
   bool _enabled = false;
   FlutterView? _view;
+  Timer? _wake;
 
   @override
   void initState() {
@@ -67,6 +70,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       videoDisplaySyncActive: widget.videoDisplaySyncActive,
       screenRefreshRate: () => _view?.display.refreshRate ?? 0,
     );
+    widget.renderer.addListener(_syncTicker);
     _bindClock();
     _bindInputs();
   }
@@ -118,19 +122,38 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   }
 
   void _syncTicker() {
+    _wake?.cancel();
+    _wake = null;
+    final now = widget.monotonicUs?.call() ?? Timeline.now;
+    final anchor = _anchor;
+    final advancing =
+        anchor != null &&
+        anchor.advancing &&
+        now - anchor.observedAtUs < anchor.validForUs;
     final animate =
         _visible &&
         (_anchor?.ready ?? false) &&
         ((widget.needsPreparation?.call() ?? false) ||
-            ((_anchor?.advancing ?? false) &&
-                (widget.monotonicUs?.call() ?? Timeline.now) -
-                        _anchor!.observedAtUs <
-                    _anchor!.validForUs));
+            (advancing && widget.renderer.needsContinuousFrames));
     if (animate && !_ticker.isActive) {
       _ticker.start();
     } else if (!animate && _ticker.isActive) {
       _ticker.stop();
     }
+    if (!_visible || animate || !advancing || !anchor.ready) return;
+    final position = anchor.positionAt(now)!;
+    final deadlines = [
+      ?widget.renderer.nextChangeUs,
+      ?widget.nextPreparationUs?.call(),
+    ];
+    if (deadlines.isEmpty) return;
+    final next = deadlines.reduce((a, b) => a < b ? a : b);
+    final delay = ((next - position) / anchor.effectiveRate).ceil();
+    final freshness = anchor.observedAtUs + anchor.validForUs - now;
+    _wake = Timer(
+      Duration(microseconds: delay.clamp(0, freshness)),
+      _update,
+    );
   }
 
   @override
@@ -158,7 +181,11 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       unawaited(_inputs?.cancel());
       _bindInputs();
     }
-    if (!identical(oldWidget.renderer, widget.renderer)) _continuity = null;
+    if (!identical(oldWidget.renderer, widget.renderer)) {
+      oldWidget.renderer.removeListener(_syncTicker);
+      widget.renderer.addListener(_syncTicker);
+      _continuity = null;
+    }
     _update();
     _syncTicker();
   }
@@ -179,6 +206,8 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
 
   @override
   void dispose() {
+    _wake?.cancel();
+    widget.renderer.removeListener(_syncTicker);
     unawaited(_anchors?.cancel());
     unawaited(_inputs?.cancel());
     _ticker.dispose();

@@ -51,6 +51,11 @@ class DanmakuWindowCoordinator<T> {
   bool _needsPreparation = false;
   bool get needsPreparation => !_disposed && _needsPreparation;
   double _effectiveRate = 1;
+  int? get nextPreparationUs => _disposed || _refilling
+      ? null
+      : _nextBucketUs -
+            (refillUs * _effectiveRate).clamp(1, 30000000).ceil() +
+            1;
 
   void _changed(DanmakuSourceChange change) {
     if (_disposed) return;
