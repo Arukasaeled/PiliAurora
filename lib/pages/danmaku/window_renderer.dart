@@ -397,6 +397,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     _active
       ..clear()
       ..addAll(replacement);
+    _mayOverlap = replacement.isNotEmpty;
     if (!_active.containsKey(_held?.identity)) _held = null;
     for (final raster in target.prepared.values) {
       raster?.image.dispose();
@@ -447,6 +448,8 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     'cacheImageBytes': rasters.bytes,
     'layouts': rasters.layouts,
     'rasterizations': rasters.rasterizations,
+    'directPaints': directPaints,
+    'groupPaints': groupPaints,
     'configurationPending': hasPendingConfiguration,
     'windowItems': _planner.window.length,
     'windowBytes': _planner.window.estimatedBytes,
@@ -503,6 +506,19 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   final _active = <Object, _ActiveRaster<T>>{};
   final _unavailable = <Object>{};
   int _mediaUs = 0;
+  bool _mayOverlap = false;
+  int directPaints = 0;
+  int groupPaints = 0;
+
+  // 普通编排保证不重叠；海量、自发或活动轨迹重锚定可能绕过该约束。
+  bool get canPaintDirectly =>
+      !_mayOverlap &&
+      !rasters.option.massiveMode &&
+      _active.values.every(
+        (active) =>
+            active.specialBounds == null &&
+            !active.item.payload.candidate.selfSend,
+      );
   int get activeBytes {
     final seen = <Object>{};
     return _active.values.fold(
@@ -669,6 +685,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       );
     }
     rasters.option = _planner.option = next;
+    _mayOverlap = _active.isNotEmpty;
     _replaceActiveDomain(items);
   }
 
@@ -753,6 +770,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       raster.release();
       return true;
     });
+    if (_active.isEmpty && _held == null) _mayOverlap = false;
     for (final item in desired.values) {
       final existing = _active[item.identity];
       if (existing != null) {
@@ -878,6 +896,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     final active = _active[identity];
     if (active == null || active.specialBounds != null) return false;
     if (_held?.identity == identity) return true;
+    _mayOverlap = true;
     final previous = _held;
     _held = (
       identity: identity,
@@ -964,7 +983,6 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
 
   void _paintOrdinary(Canvas canvas, _ActiveRaster<T> active, Paint paint) {
     if (active.released) return;
-    paint.color = const Color(0xffffffff);
     final motion = active.item.payload.trajectory!;
     final position = Offset(motion.xAt(_mediaUs / 1000), motion.y);
     if (active.image.width == motion.width.ceil()) {
@@ -986,16 +1004,21 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
 
   void paint(Canvas canvas, Size size, {double opacity = 1}) {
     if (_disposed || opacity <= 0 || _active.isEmpty) return;
+    final group = opacity < 1 && !canPaintDirectly;
     canvas
       ..save()
       ..clipRect((Offset.zero & size).intersect(_displayClip));
-    if (opacity < 1) {
+    if (group) {
       canvas.saveLayer(
         Offset.zero & size,
         Paint()..color = Color.fromRGBO(255, 255, 255, opacity),
       );
+      groupPaints++;
+    } else {
+      directPaints++;
     }
-    final paint = Paint();
+    final paint = Paint()
+      ..color = Color.fromRGBO(255, 255, 255, group ? 1 : opacity);
     for (final active in _active.values) {
       if (active.specialBounds == null &&
           active.item.identity != _held?.identity) {
@@ -1024,9 +1047,13 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     }
     final held = _active[_held?.identity];
     if (held != null) {
-      _paintOrdinary(canvas, held, paint..color = const Color(0xffffffff));
+      _paintOrdinary(
+        canvas,
+        held,
+        paint..color = Color.fromRGBO(255, 255, 255, group ? 1 : opacity),
+      );
     }
-    if (opacity < 1) canvas.restore();
+    if (group) canvas.restore();
     canvas.restore();
   }
 
@@ -1064,6 +1091,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     }
     _interactionEpoch++;
     _held = null;
+    _mayOverlap = false;
     for (final active in _active.values) {
       active.release();
     }

@@ -49,6 +49,59 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   for (final ratio in [1.0, 2.0]) {
+    for (final special in [false, true]) {
+      test(
+        'opacity and overlap match baseline at DPR $ratio, special=$special',
+        () async {
+          final option = _option.copyWith(massiveMode: true);
+          final old = WindowsDanmakuRenderer<void>(
+            option: option,
+            size: _size,
+            devicePixelRatio: ratio,
+          );
+          final next = DanmakuWindowRenderer<void>(
+            option: option,
+            size: _size,
+            devicePixelRatio: ratio,
+          );
+          addTearDown(old.dispose);
+          addTearDown(next.dispose);
+          DanmakuContentItem<void> content() =>
+              special ? _special() : _text('overlap');
+          final inputs = [for (var i = 0; i < 12; i++) content()];
+          for (final item in inputs) {
+            expect(old.add(item), isTrue);
+          }
+          old.advance(const Duration(milliseconds: 500));
+          next
+            ..prepare(
+              [
+                for (var i = 0; i < inputs.length; i++)
+                  DanmakuWindowContent(i, 0, inputs[i]),
+              ],
+              generation: next.generation,
+              preparedUntilUs: 3000000,
+            )
+            ..present(500000);
+          expect(next.activeCount, inputs.length);
+          for (final opacity in [0.0, .25, .5, 1.0]) {
+            expect(
+              await _pixels(next, opacity: opacity),
+              await _draw(
+                (canvas) => old.paint(canvas, _size, opacity: opacity),
+              ),
+              reason: 'opacity=$opacity',
+            );
+          }
+          expect(next.groupPaints, 2);
+          expect(next.directPaints, 1);
+        },
+      );
+    }
+  }
+
+
+  for (final ratio in [1.0, 2.0]) {
     test(
       'special script pixels match existing renderer at DPR $ratio',
       () async {
@@ -160,10 +213,15 @@ void main() {
           preparedUntilUs: 3000000,
         )
         ..present(500000);
-      expect(
-        await _pixels(next),
-        await _draw((canvas) => current.paint(canvas, _size)),
-      );
+      for (final opacity in [.25, .5, 1.0]) {
+        expect(
+          await _pixels(next, opacity: opacity),
+          await _draw(
+            (canvas) => current.paint(canvas, _size, opacity: opacity),
+          ),
+        );
+      }
+      expect(next.groupPaints, 0);
     });
   }
 
@@ -270,25 +328,33 @@ void main() {
     },
   );
 
-  test('group opacity is applied once to the visible raster frame', () async {
-    final renderer = DanmakuWindowRenderer<void>(option: _option, size: _size);
-    addTearDown(renderer.dispose);
-    renderer
-      ..prepare(
-        [DanmakuWindowContent('a', 0, _text('opacity'))],
-        generation: renderer.generation,
-        preparedUntilUs: 3000000,
-      )
-      ..present(500000);
-    final full = await _pixels(renderer);
-    final half = await _pixels(renderer, opacity: 0.5);
-    var fullAlpha = 0;
-    var halfAlpha = 0;
-    for (var i = 3; i < full.length; i += 4) {
-      if (full[i] > fullAlpha) fullAlpha = full[i];
-      if (half[i] > halfAlpha) halfAlpha = half[i];
-    }
-    expect(fullAlpha, greaterThan(0));
-    expect(halfAlpha, closeTo(fullAlpha / 2, 1));
-  });
+  test(
+    'nonoverlapping opacity paints directly with unchanged frame alpha',
+    () async {
+      final renderer = DanmakuWindowRenderer<void>(
+        option: _option,
+        size: _size,
+      );
+      addTearDown(renderer.dispose);
+      renderer
+        ..prepare(
+          [DanmakuWindowContent('a', 0, _text('opacity'))],
+          generation: renderer.generation,
+          preparedUntilUs: 3000000,
+        )
+        ..present(500000);
+      final full = await _pixels(renderer);
+      final half = await _pixels(renderer, opacity: 0.5);
+      var fullAlpha = 0;
+      var halfAlpha = 0;
+      for (var i = 3; i < full.length; i += 4) {
+        if (full[i] > fullAlpha) fullAlpha = full[i];
+        if (half[i] > halfAlpha) halfAlpha = half[i];
+      }
+      expect(fullAlpha, greaterThan(0));
+      expect(halfAlpha, closeTo(fullAlpha / 2, 1));
+      expect(renderer.groupPaints, 0);
+      expect(renderer.directPaints, 2);
+    },
+  );
 }
