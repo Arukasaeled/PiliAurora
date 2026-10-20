@@ -48,6 +48,56 @@ Future<List<DanmakuElem>> processDanmakuInBackground(
 const _mergeBatchElements = 256;
 const _mergeBatchBytes = 512 * 1024;
 
+/// 已按来源稳定次序排序的文件批次，共用一个游标；接收方按范围转移结果。
+Future<void> processOrderedDanmakuBatches(
+  Stream<List<DanmakuElem>> batches, {
+  required DanmakuProcessingRules rules,
+  required void Function(DanmakuMergeDelta) consume,
+  required DanmakuWorkLease lease,
+  DanmakuWorkToken? token,
+}) => lease.execute(() async {
+  final output = ReceivePort();
+  final events = StreamIterator<dynamic>(output);
+  Isolate? worker;
+  SendPort? input;
+  var exited = false;
+  Future<dynamic> next() async {
+    if (!await events.moveNext()) throw StateError('弹幕处理通道已关闭');
+    final event = events.current;
+    if (event == null) {
+      exited = true;
+      throw StateError('弹幕处理 worker 提前退出');
+    }
+    if (event is List) throw StateError('弹幕处理 worker 执行失败');
+    return event;
+  }
+
+  try {
+    worker = await Isolate.spawn(
+      _mergeWorker,
+      (output.sendPort, rules),
+      onError: output.sendPort,
+      onExit: output.sendPort,
+    );
+    input = await next() as SendPort;
+    await for (final batch in batches) {
+      if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+      input.send(batch);
+      consume(await next() as DanmakuMergeDelta);
+    }
+    if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+  } finally {
+    input?.send(null);
+    if (worker != null && !exited) {
+      while (await events.moveNext()) {
+        if (events.current == null) break;
+      }
+    }
+    await events.cancel();
+    output.close();
+  }
+});
+
 void _mergeWorker((SendPort, DanmakuProcessingRules) request) {
   final (output, rules) = request;
   final input = ReceivePort();

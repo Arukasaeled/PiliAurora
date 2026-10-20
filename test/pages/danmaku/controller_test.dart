@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
@@ -14,6 +15,8 @@ import 'package:pili_aurora/pages/danmaku/controller.dart';
 import 'package:pili_aurora/pages/danmaku/raw_cache.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
+import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
+import 'package:pili_aurora/utils/path_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
 
@@ -43,6 +46,52 @@ void main() {
     Request.dio.httpClientAdapter.close(force: true);
   });
   tearDownAll(() => Request.dio.close(force: true));
+
+  test('文件范围读取经过排序worker，跨段计数与规则恢复保持一致', () async {
+    final directory = Directory.systemTemp.createTempSync('pili-file-source-');
+    final file = File('${directory.path}/${PathUtils.danmakuName}');
+    await file.writeAsBytes(
+      DmSegMobileReply(
+        elems: [
+          _dm('跨段重复', 360100),
+          _dm('屏蔽内容', 360200),
+          for (var i = 0; i < 600; i++) _dm('条目$i', 1000 + i * 100),
+          _dm('跨段重复', 359900),
+        ],
+      ).writeToBuffer(),
+    );
+    final player = _FilePlayer(directory.path);
+    final source = PlDanmakuController(1, player, true);
+    addTearDown(() {
+      source.dispose();
+      file.deleteSync();
+      directory.deleteSync();
+    });
+    await source.ensureRange(359000000, 361000000);
+    final before = source.readRange(359000000, 361000000);
+    expect(before.isLoaded, isTrue);
+    expect(before.entries, hasLength(1));
+    expect(before.entries.single.element.count, 2);
+    player.filters = RuleFilter([], [], {});
+    await source.refreshRules();
+    final after = source.readRange(359000000, 361000000);
+    expect(after.entries.map((e) => e.element.content), ['跨段重复', '屏蔽内容']);
+    expect(after.entries.first.element.count, 2);
+    await source.ensureRange(0, 2000000);
+    expect(source.readRange(0, 2000000).isLoaded, isTrue);
+  });
+
+  test('等待中的范围覆盖旧前瞻，完成当前段后处理最新目标', () async {
+    final controller = _RangeTargetController();
+    addTearDown(controller.dispose);
+    final initial = controller.ensureRange(0, 4 * 360000000);
+    await controller.entered.future;
+    final obsolete = controller.ensureRange(10 * 360000000, 12 * 360000000);
+    final latest = controller.ensureRange(20 * 360000000, 21 * 360000000);
+    controller.resume.complete();
+    await Future.wait([initial, obsolete, latest]);
+    expect(controller.segments, [0, 20]);
+  });
 
   test('范围需求跨段请求、复用已加载段并限制单次扩展', () async {
     final adapter = _DmAdapter();
@@ -342,6 +391,23 @@ void main() {
   );
 }
 
+class _RangeTargetController extends PlDanmakuController {
+  _RangeTargetController() : super(1, _Player(), false);
+
+  final entered = Completer<void>();
+  final resume = Completer<void>();
+  final segments = <int>[];
+
+  @override
+  Future<void> queryDanmaku(int segmentIndex) async {
+    segments.add(segmentIndex);
+    if (!entered.isCompleted) {
+      entered.complete();
+      await resume.future;
+    }
+  }
+}
+
 class _SettingsBox implements Box<dynamic> {
   @override
   dynamic get(dynamic key, {dynamic defaultValue}) =>
@@ -391,4 +457,16 @@ class _DmAdapter implements HttpClientAdapter {
 
   @override
   void close({bool force = false}) {}
+}
+
+class _FilePlayer extends _Player {
+  _FilePlayer(String dir)
+    : currentFileSource = FileSource(
+        dir: dir,
+        isMp4: true,
+        hasDashAudio: false,
+        typeTag: 'test',
+      );
+  @override
+  final FileSource currentFileSource;
 }

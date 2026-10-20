@@ -8,6 +8,8 @@ import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/grpc/dm.dart';
 import 'package:pili_aurora/pages/danmaku/cache.dart';
 import 'package:pili_aurora/pages/danmaku/file_reader.dart';
+import 'package:pili_aurora/pages/danmaku/file_store.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
 import 'package:pili_aurora/pages/danmaku/raw_cache.dart';
 import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
@@ -84,11 +86,18 @@ class PlDanmakuController implements DanmakuTimelineSource {
   final _invalidatedSegments = <int>{};
   bool _fileInvalidated = false;
   Future<void>? _reprocessing;
+  ({int first, int last})? _rangeTarget;
+  Future<void>? _rangeProcessing;
+  ({int first, int last}) _fileDesired = (first: 0, last: 0);
+  var _fileWork = DanmakuWorkToken();
+  Future<void>? _fileProcessing;
 
   /// 接受规则时先同步失效；重算仅提交当前修订的结果。
   Future<void> refreshRules() {
     if (_disposed) return Future.value();
     _ruleWork.cancel();
+    _fileWork.cancel();
+    _fileWork = DanmakuWorkToken();
     _ruleWork = DanmakuWorkToken();
     _ruleRevision++;
     _mergeDanmaku = _plPlayerController.mergeDanmaku;
@@ -118,7 +127,11 @@ class PlDanmakuController implements DanmakuTimelineSource {
       revision = _ruleRevision;
       if (_isFileSource) {
         final raw = _rawFile;
-        if (raw != null) await handleDanmaku(raw);
+        if (raw != null) {
+          await handleDanmaku(raw);
+        } else {
+          await _scheduleFileRange();
+        }
       } else {
         for (final segment in _rawSegments.keys.toList()) {
           if (_disposed || revision != _ruleRevision) break;
@@ -135,10 +148,12 @@ class PlDanmakuController implements DanmakuTimelineSource {
     unawaited(_quotaSubscription.cancel());
     _lifetimeWork.cancel();
     _ruleWork.cancel();
+    _fileWork.cancel();
     _cache.clear();
     _requestedSeg.clear();
     _rawSegments.clear();
     _rawFile = null;
+    _rangeTarget = null;
     _invalidatedSegments.clear();
     unawaited(_changes.close());
   }
@@ -274,7 +289,7 @@ class PlDanmakuController implements DanmakuTimelineSource {
 
   List<DanmakuElem>? getCurrentDanmaku(int progress) {
     if (_isFileSource) {
-      initFileDmIfNeeded();
+      unawaited(ensureRange(progress * 1000, (progress + 100) * 1000));
     } else {
       final int segmentIndex = DmUtils.calcSegment(progress);
       if (!_requestedSeg.contains(segmentIndex) &&
@@ -291,7 +306,19 @@ class PlDanmakuController implements DanmakuTimelineSource {
     if (startUs < 0 || endUs < startUs) throw ArgumentError('弹幕请求范围无效');
     if (_disposed || startUs == endUs) return;
     if (_isFileSource) {
-      initFileDmIfNeeded();
+      const segmentUs = DmUtils.segLength * 1000;
+      final first = startUs ~/ segmentUs;
+      final last = ((endUs - 1) ~/ segmentUs).clamp(
+        first,
+        first + _cache.maxSegments - 1,
+      );
+      final desired = (first: first, last: last);
+      if (_fileDesired != desired) {
+        _fileDesired = desired;
+        _fileWork.cancel();
+        _fileWork = DanmakuWorkToken();
+      }
+      await _scheduleFileRange();
       return;
     }
     const segmentUs = DmUtils.segLength * 1000;
@@ -300,10 +327,22 @@ class PlDanmakuController implements DanmakuTimelineSource {
       first,
       first + _cache.maxSegments - 1,
     );
-    await Future.wait([
-      for (var segment = first; segment <= last; segment++)
-        queryDanmaku(segment),
-    ]);
+    // 等待期间覆盖描述；当前批次完成后从最新画面开始，旧前瞻不积压。
+    _rangeTarget = (first: first, last: last);
+    await (_rangeProcessing ??= _processRangeTarget().whenComplete(
+      () => _rangeProcessing = null,
+    ));
+  }
+
+  Future<void> _processRangeTarget() async {
+    while (!_disposed && _rangeTarget != null) {
+      final target = _rangeTarget!;
+      _rangeTarget = null;
+      for (var segment = target.first; segment <= target.last; segment++) {
+        if (_disposed || _rangeTarget != null) break;
+        await queryDanmaku(segment);
+      }
+    }
   }
 
   @override
@@ -327,13 +366,14 @@ class PlDanmakuController implements DanmakuTimelineSource {
     end * 1000,
   ).entries.take(64).map((entry) => entry.element);
 
-  bool _fileDmLoaded = false;
-
   void initFileDmIfNeeded() {
-    if (_fileDmLoaded) return;
-    _fileDmLoaded = true;
-    _initFileDm();
+    unawaited(_scheduleFileRange());
   }
+
+  Future<void> _scheduleFileRange() =>
+      _fileProcessing ??= _initFileDm().whenComplete(
+        () => _fileProcessing = null,
+      );
 
   @pragma('vm:notify-debugger-on-exception')
   Future<void> _initFileDm() async {
@@ -347,30 +387,110 @@ class PlDanmakuController implements DanmakuTimelineSource {
         ),
       );
       if (!file.existsSync()) return;
-      final length = await file.length();
-      await DanmakuWorkQuota.instance.runWithLease(
-        length * 16,
-        (lease) async {
-          final elements = <DanmakuElem>[];
-          await for (final batch in readDanmakuFile(
-            file,
-            token: _lifetimeWork,
-          )) {
-            if (_disposed) return;
-            elements.addAll(batch);
-          }
+      while (!_disposed) {
+        final desired = _fileDesired;
+        final revision = _ruleRevision;
+        if (!_fileInvalidated &&
+            [for (var i = desired.first; i <= desired.last; i++) i]
+                .every(_cache.containsSegment)) {
+          return;
+        }
+        final token = _fileWork;
+        try {
+          await DanmakuWorkQuota.instance.runWithLease(
+            DanmakuWorkQuota.instance.maxBytes,
+            (lease) => _processFileRange(
+              file,
+              desired.first,
+              desired.last,
+              revision,
+              token,
+              lease,
+            ),
+            token: token,
+          );
+        } on DanmakuWorkCancelled {
           if (_disposed) return;
-          await handleDanmaku(elements, lease: lease);
-        },
-        token: _lifetimeWork,
-      );
+        }
+        if (desired == _fileDesired && revision == _ruleRevision) return;
+      }
     } on DanmakuWorkBusy {
-      _fileDmLoaded = false;
       _retryFile = true;
     } on DanmakuWorkCancelled {
       return;
     } catch (e, s) {
       Utils.reportError(e, s);
     }
+  }
+
+  Future<void> _processFileRange(
+    File file,
+    int first,
+    int last,
+    int revision,
+    DanmakuWorkToken token,
+    DanmakuWorkLease lease,
+  ) async {
+    final rules = DanmakuProcessingRules(
+      merge: _mergeDanmaku,
+      fileSource: true,
+      selfHash: _isLogin ? _plPlayerController.midHash : null,
+      filter: _plPlayerController.filters,
+    );
+    final start = first * DmUtils.segLength;
+    final end = (last + 1) * DmUtils.segLength;
+    final retained = <int, DanmakuElem>{};
+    final buckets = <int, List<DanmakuElem>>{};
+    var index = 0;
+    var bytes = 0;
+    Stream<List<DanmakuElem>> batches() async* {
+      final input = rules.merge
+          ? readOrderedDanmakuFile(file, token: token)
+          : readDanmakuFile(file, token: token);
+      await for (final batch in input) {
+        if (rules.merge &&
+            batch.first.progress >= end + DanmakuMerger.windowMilliseconds) {
+          break;
+        }
+        yield batch;
+      }
+    }
+
+    await processOrderedDanmakuBatches(
+      batches(),
+      rules: rules,
+      lease: lease,
+      token: token,
+      consume: (delta) {
+        for (final element in delta.additions) {
+          final outputIndex = index++;
+          if (element.progress < start || element.progress >= end) continue;
+          final bucket = buckets[element.progress ~/ 100] ??= [];
+          final size = estimateDanmakuElementBytes(element);
+          if (bucket.length >= 120 ||
+              retained.length >= _cache.maxElements ||
+              bytes + size > 16 * 1024 * 1024) {
+            continue;
+          }
+          bucket.add(element);
+          retained[outputIndex] = element;
+          bytes += size;
+        }
+        for (final update in delta.counts.entries) {
+          retained[update.key]?.count = update.value;
+        }
+      },
+    );
+    if (_disposed || token.isCancelled || revision != _ruleRevision) return;
+    _cache.replaceFileRange(first, last, buckets);
+    _fileInvalidated = false;
+    _changes.add(
+      DanmakuSourceChange(
+        kind: DanmakuSourceChangeKind.ready,
+        ruleRevision: revision,
+        startUs: start * 1000,
+        endUs: end * 1000,
+      ),
+    );
   }
 }

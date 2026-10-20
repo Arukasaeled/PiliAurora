@@ -189,6 +189,27 @@ class DanmakuCache {
     }
   }
 
+  /// 文件保留可重新读取的来源，内存仅持有最新请求段的处理结果。
+  void replaceFileRange(
+    int first,
+    int last,
+    Map<int, List<DanmakuElem>> buckets,
+  ) {
+    clear();
+    for (var segment = first; segment <= last; segment++) {
+      _loadedSegments.add(segment);
+      _segmentOrder.add(segment);
+      _segmentBuckets[segment] = {};
+    }
+    for (final entry in buckets.entries) {
+      final segment = DmUtils.calcSegment(entry.key * 100);
+      if (segment < first || segment > last) continue;
+      _buckets[entry.key] = _ordered(entry.value);
+      _segmentBuckets[segment]!.add(entry.key);
+      _elementCount += entry.value.length;
+    }
+  }
+
   void _trim({required int protectedSegment}) {
     while (_segmentOrder.length > 1 &&
         (_segmentOrder.length > maxSegments ||
