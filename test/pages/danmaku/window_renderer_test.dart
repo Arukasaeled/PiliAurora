@@ -5,7 +5,7 @@ import 'package:flutter/painting.dart';
 import 'package:flutter/animation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
-import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
+import '../../../tool/experiments/danmaku/baseline/windows_renderer.dart';
 
 const _size = Size(320, 120);
 const _option = DanmakuOption(fontSize: 20, duration: 2, safeArea: false);

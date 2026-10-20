@@ -4,7 +4,7 @@ import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
+import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -76,12 +76,12 @@ void main() {
   });
 
   test('共享高级内容的图层分别持有栅格边界', () {
-    final a = WindowsDanmakuRenderer<void>(
+    final a = DanmakuWindowRenderer<void>(
       option: const DanmakuOption(),
       size: const Size(400, 120),
       fontFamily: 'Ahem',
     );
-    final b = WindowsDanmakuRenderer<void>(
+    final b = DanmakuWindowRenderer<void>(
       option: const DanmakuOption(),
       size: const Size(400, 120),
       fontFamily: 'DanmakuDigits',
@@ -99,19 +99,43 @@ void main() {
       translateXTween: ConstantTween<double>(0),
       translateYTween: ConstantTween<double>(0),
     );
-    expect(a.add(content), isTrue);
-    final first = a.specialDanmaku.single;
-    final original = first.specialBounds;
-    expect(b.add(content), isTrue);
-    final second = b.specialDanmaku.single;
-    expect(first.specialBounds, original);
-    expect(second.specialBounds!.width, isNot(original!.width));
-    final other = second.specialBounds;
-    a.configure(fontFamily: 'DanmakuDigits');
-    expect(first.specialBounds!.width, closeTo(other!.width, .001));
-    expect(second.specialBounds, other);
-    expect(first.image!.width, first.specialBounds!.width.ceil());
-    expect(second.image!.width, (other.width * 2).ceil());
+    void present(DanmakuWindowRenderer<void> renderer) {
+      expect(
+        renderer.prepare(
+          [DanmakuWindowContent('special', 0, content)],
+          generation: renderer.generation,
+          preparedUntilUs: 2000000,
+        ),
+        isTrue,
+      );
+      renderer.present(500000);
+    }
+
+    present(a);
+    final original = a.interaction.snapshot.single.bounds;
+    present(b);
+    final other = b.interaction.snapshot.single.bounds;
+    expect(a.interaction.snapshot.single.bounds, original);
+    expect(other.width, isNot(original.width));
+    a.requestConfiguration(
+      option: a.rasters.option,
+      size: const Size(400, 120),
+      devicePixelRatio: 1,
+      fontFamily: 'DanmakuDigits',
+    );
+    expect(a.prepareConfiguration(), isTrue);
+    a.present(500000, allowUnprepared: true);
+    expect(
+      a.interaction.snapshot.single.bounds.width,
+      closeTo(other.width, .001),
+    );
+    expect(b.interaction.snapshot.single.bounds, other);
+    final first = a.interaction.snapshot.single.bounds;
+    expect(a.activeBytes, first.width.ceil() * first.height.ceil() * 4);
+    expect(
+      b.activeBytes,
+      (other.width * 2).ceil() * (other.height * 2).ceil() * 4,
+    );
   });
 
   testWidgets('并存图层使用各自 DPI，密度变化重新栅格且保留表情资源', (tester) async {

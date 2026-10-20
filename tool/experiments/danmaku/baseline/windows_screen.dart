@@ -4,7 +4,9 @@ import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
-import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
+
+import 'windows_renderer.dart';
+
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 
 class WindowsDanmakuScreen<T> extends StatefulWidget {

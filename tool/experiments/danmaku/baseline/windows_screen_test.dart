@@ -1,8 +1,9 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
-import 'package:pili_aurora/pages/danmaku/windows_screen.dart';
+
+import 'windows_renderer.dart';
+import 'windows_screen.dart';
 
 const _size = Size(960, 540);
 const _option = DanmakuOption(

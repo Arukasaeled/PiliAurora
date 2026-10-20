@@ -3,7 +3,8 @@ import 'dart:math' as math;
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
+
+import '../../../tool/experiments/danmaku/baseline/windows_renderer.dart';
 
 const _size = Size(800, 360);
 const _fontSize = 20.0;

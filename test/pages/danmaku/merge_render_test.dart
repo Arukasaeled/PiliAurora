@@ -3,7 +3,7 @@ import 'package:canvas_danmaku/text_renderer.dart' as canvas;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/pages/danmaku/raster_cache.dart';
-import 'package:pili_aurora/pages/danmaku/windows_renderer.dart';
+import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -51,7 +51,7 @@ void main() {
     'reserved track height separates maximally enlarged scrolling items',
     () {
       const option = DanmakuOption(fontSize: 20, lineHeight: 2.4);
-      final renderer = WindowsDanmakuRenderer<void>(
+      final renderer = DanmakuWindowRenderer<void>(
         option: option,
         size: const Size(800, 300),
         devicePixelRatio: 1,
@@ -67,10 +67,24 @@ void main() {
         count: 49,
         fontSizeScale: 2,
       );
-      expect(renderer.add(first), isTrue);
-      expect(renderer.add(second), isTrue);
-      expect(renderer.scrollDanmaku[0], hasLength(1));
-      expect(renderer.scrollDanmaku[1], hasLength(1));
+      expect(
+        renderer.prepare(
+          [
+            DanmakuWindowContent('first', 0, first),
+            DanmakuWindowContent('second', 0, second),
+          ],
+          generation: renderer.generation,
+          preparedUntilUs: 10000000,
+        ),
+        isTrue,
+      );
+      renderer.present(500000);
+      final visible = renderer.interaction.snapshot;
+      expect(visible, hasLength(2));
+      expect(
+        visible.last.bounds.top,
+        greaterThanOrEqualTo(visible.first.bounds.bottom),
+      );
       final painter = TextPainter(
         text: const TextSpan(
           text: '弹幕',
@@ -79,7 +93,7 @@ void main() {
         textDirection: TextDirection.ltr,
       )..layout();
       expect(
-        renderer.scrollDanmaku.first.single.height,
+        visible.first.bounds.height,
         lessThanOrEqualTo(painter.height),
       );
       expect(renderer.canPaintDirectly, isTrue);
