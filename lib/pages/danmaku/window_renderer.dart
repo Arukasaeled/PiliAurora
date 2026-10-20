@@ -83,6 +83,96 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   int get validFromUs => _planner.window.validFromUs;
   int get validUntilUs => _planner.window.validUntilUs;
 
+  /// 在配置生效帧调用；视频倍速由媒体时钟表达，不传入显示时长。
+  void updateTiming({
+    required int mediaUs,
+    required double duration,
+    required double staticDuration,
+    required bool scrollFixedVelocity,
+  }) {
+    if (_disposed) return;
+    if (mediaUs < 0 ||
+        !duration.isFinite ||
+        duration <= 0 ||
+        !staticDuration.isFinite ||
+        staticDuration <= 0) {
+      throw ArgumentError('媒体位置和弹幕时长必须有效');
+    }
+    final old = rasters.option;
+    if (old.duration == duration &&
+        old.staticDuration == staticDuration &&
+        old.scrollFixedVelocity == scrollFixedVelocity) {
+      return;
+    }
+    present(mediaUs, allowUnprepared: true);
+    final next = old.copyWith(
+      duration: duration,
+      staticDuration: staticDuration,
+      scrollFixedVelocity: scrollFixedVelocity,
+    );
+    final items =
+        <DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>>>[];
+    for (final active in _active.values) {
+      final item = active.item;
+      final arrangement = item.payload;
+      var motion = arrangement.trajectory!;
+      var endUs = item.endUs;
+      if (active.specialBounds == null) {
+        final held = _held?.identity == item.identity;
+        final velocity = arrangement.scrolling
+            ? DanmakuGeometry.scrollVelocity(
+                _size.width,
+                motion.width,
+                next.durationInMilliseconds,
+                fixed: next.scrollFixedVelocity,
+              )
+            : 0.0;
+        final x = motion.xAt(mediaUs / 1000);
+        // 静态已显示时长包含此前重锚定，挂起期间不消耗剩余寿命。
+        final remainingUs = arrangement.scrolling
+            ? ((x + motion.width) / velocity * 1000).ceil()
+            : (held ? _held!.remainingUs : item.endUs - mediaUs) +
+                  ((staticDuration - old.staticDuration) * 1000000).round();
+        if (held) {
+          _held = (
+            identity: item.identity,
+            remainingUs: math.max(0, remainingUs),
+            velocity: velocity,
+          );
+        }
+        endUs = held ? 0x7fffffffffffffff : mediaUs + remainingUs;
+        if (endUs <= mediaUs) continue;
+        motion = DanmakuTrajectory(
+          startMs: mediaUs / 1000,
+          endMs: endUs / 1000,
+          startX: x,
+          y: motion.y,
+          width: motion.width,
+          height: motion.height,
+          velocity: held ? 0 : velocity,
+        );
+      }
+      items.add(
+        DanmakuWindowItem(
+          identity: item.identity,
+          sourceUs: item.sourceUs,
+          startUs: mediaUs,
+          endUs: endUs,
+          estimatedBytes: item.estimatedBytes,
+          payload: DanmakuArrangement(
+            arrangement.candidate,
+            motion,
+            arrangement.track,
+            arrangement.scrolling,
+            suspended: arrangement.suspended,
+          ),
+        ),
+      );
+    }
+    rasters.option = _planner.option = next;
+    _replaceActiveDomain(items);
+  }
+
   bool prepare(
     List<DanmakuWindowContent<T>> contents, {
     required int generation,
@@ -317,6 +407,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
           velocity: velocity,
         );
       }
+      if (endUs <= _mediaUs) continue;
       items.add(
         DanmakuWindowItem(
           identity: item.identity,
@@ -334,6 +425,12 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
         ),
       );
     }
+    _replaceActiveDomain(items);
+  }
+
+  void _replaceActiveDomain(
+    List<DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>>> items,
+  ) {
     _planner.window.reset(_mediaUs);
     _planner.window.extend(
       items,

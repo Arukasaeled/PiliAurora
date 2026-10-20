@@ -59,7 +59,7 @@ class DanmakuWindowPlanner<T> {
   }) : window = window ?? DanmakuTimelineWindow(),
        _random = math.Random(0);
 
-  final DanmakuOption option;
+  DanmakuOption option;
   final double width;
   final double trackHeight;
   final int trackCount;
