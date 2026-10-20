@@ -152,19 +152,47 @@ void main() {
     expect(started, isTrue);
   });
 
-  test('oversized work runs exclusively and preserves FIFO', () async {
-    final quota = DanmakuWorkQuota(maxBytes: 10);
-    final done = Completer<void>();
-    final order = <int>[];
-    final first = quota.run(20, () async {
-      order.add(1);
-      await done.future;
+  test(
+    'oversized work is rejected before retaining a waiting ticket',
+    () async {
+      final quota = DanmakuWorkQuota(maxBytes: 10);
+      await expectLater(
+        quota.run(11, () => fail('oversized work started')),
+        throwsA(isA<DanmakuWorkTooLarge>()),
+      );
+      expect(quota.snapshot.values, everyElement(0));
+      expect(await quota.run(10, () => 42), 42);
+    },
+  );
+
+  test('byte limit applies to combined concurrent tasks', () async {
+    final quota = DanmakuWorkQuota(maxTasks: 2, maxBytes: 10);
+    final entered = Completer<void>();
+    final finish = Completer<void>();
+    final first = quota.run(6, () async {
+      entered.complete();
+      await finish.future;
     });
-    final second = quota.run(1, () => order.add(2));
+    await entered.future;
+    var secondStarted = false;
+    final second = quota.run(5, () => secondStarted = true);
+    expect(quota.snapshot['reservedBytes'], 6);
+    expect(quota.snapshot['waitingTasks'], 1);
     await Future<void>.delayed(Duration.zero);
-    expect(order, [1]);
-    done.complete();
+    expect(secondStarted, isFalse);
+    finish.complete();
     await Future.wait([first, second]);
-    expect(order, [1, 2]);
+    expect(secondStarted, isTrue);
+  });
+
+  test('child stage validates its reservation before allocating', () async {
+    final quota = DanmakuWorkQuota(maxBytes: 10);
+    await quota.runWithLease(6, (lease) {
+      expect(lease.reservedBytes, 6);
+      lease.requireBytes(6);
+      expect(() => lease.requireBytes(7), throwsA(isA<DanmakuWorkTooLarge>()));
+      expect(() => lease.requireBytes(-1), throwsArgumentError);
+    });
+    expect(quota.snapshot.values, everyElement(0));
   });
 }

@@ -9,6 +9,14 @@ class DanmakuWorkCancelled implements Exception {
   const DanmakuWorkCancelled();
 }
 
+/// 调用方须缩小批次后重新申请；此错误不进入等待队列。
+class DanmakuWorkTooLarge implements Exception {
+  const DanmakuWorkTooLarge(this.requestedBytes, this.maxBytes);
+
+  final int requestedBytes;
+  final int maxBytes;
+}
+
 /// 取消等待任务；已启动任务仍由配额跟踪到实际结束。
 class DanmakuWorkToken {
   bool _cancelled = false;
@@ -29,8 +37,18 @@ class DanmakuWorkToken {
 
 /// 同一批次后续阶段复用获配资格，直到结果整理结束。
 class DanmakuWorkLease {
-  DanmakuWorkLease._();
+  DanmakuWorkLease._(this.reservedBytes);
+  final int reservedBytes;
   bool _active = true;
+
+  /// 后续阶段在建立副本前复核同一批次的预留。
+  void requireBytes(int bytes) {
+    if (!_active) throw StateError('来源处理额度已归还');
+    if (bytes < 0) throw ArgumentError.value(bytes);
+    if (bytes > reservedBytes) {
+      throw DanmakuWorkTooLarge(bytes, reservedBytes);
+    }
+  }
 
   Future<T> execute<T>(FutureOr<T> Function() work) async {
     if (!_active) throw StateError('来源处理额度已归还');
@@ -97,11 +115,14 @@ class DanmakuWorkQuota {
   }) async {
     if (estimatedBytes < 0) throw ArgumentError.value(estimatedBytes);
     if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+    if (estimatedBytes > maxBytes) {
+      throw DanmakuWorkTooLarge(estimatedBytes, maxBytes);
+    }
     if (waitingBytes < 0) throw ArgumentError.value(waitingBytes);
     final startsImmediately =
         _waiting.isEmpty &&
         _tasks < maxTasks &&
-        (_tasks == 0 || _bytes + estimatedBytes <= maxBytes);
+        _bytes + estimatedBytes <= maxBytes;
     if (!startsImmediately &&
         (_waiting.length >= maxWaitingTasks ||
             _waitingBytes + waitingBytes > maxWaitingBytes)) {
@@ -130,7 +151,7 @@ class DanmakuWorkQuota {
     } finally {
       token?._listeners.remove(cancelWaiting);
     }
-    final lease = DanmakuWorkLease._();
+    final lease = DanmakuWorkLease._(ticket.bytes);
     try {
       if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
       return await work(lease);
@@ -146,8 +167,7 @@ class DanmakuWorkQuota {
   void _drain() {
     while (_waiting.isNotEmpty && _tasks < maxTasks) {
       final ticket = _waiting.first;
-      // 大文件独占执行，避免超过预算的单项永久等待。
-      if (_tasks > 0 && _bytes + ticket.bytes > maxBytes) return;
+      if (_bytes + ticket.bytes > maxBytes) return;
       _waiting.removeFirst();
       _waitingBytes -= ticket.waitingBytes;
       _tasks++;

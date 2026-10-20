@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/grpc/decode_policy.dart';
+import 'package:pili_aurora/grpc/grpc_req.dart';
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 Uint8List _frame(Uint8List bytes, {bool compressed = false}) {
   final payload = compressed ? const GZipEncoder().encodeBytes(bytes) : bytes;
@@ -13,6 +15,29 @@ Uint8List _frame(Uint8List bytes, {bool compressed = false}) {
 }
 
 void main() {
+  test('gzip output obeys the admitted byte limit before protobuf decode', () {
+    final bytes = Uint8List(1024 * 1024);
+    final data = _frame(bytes, compressed: true);
+    expect(
+      GrpcReq.decompressProtobuf(data, maxDecodedBytes: bytes.length),
+      bytes,
+    );
+    expect(
+      () => GrpcReq.decompressProtobuf(data, maxDecodedBytes: 1024),
+      throwsA(isA<DanmakuWorkTooLarge>()),
+    );
+  });
+
+  test('uncompressed output obeys the same admitted byte limit', () {
+    expect(
+      () => GrpcReq.decompressProtobuf(
+        _frame(Uint8List(100)),
+        maxDecodedBytes: 99,
+      ),
+      throwsA(isA<DanmakuWorkTooLarge>()),
+    );
+  });
+
   test('a small gzip frame with a large expanded payload uses an isolate', () {
     final data = _frame(Uint8List(1 << 20), compressed: true);
     expect(data.length, lessThan(GrpcDecodePolicy.isolateSize));
