@@ -8,6 +8,45 @@ import 'package:pili_aurora/pages/danmaku/live_layer.dart';
 import 'package:pili_aurora/pages/danmaku/live_queue.dart';
 
 void main() {
+  testWidgets('message burst shares one bounded admission pass per frame', (
+    tester,
+  ) async {
+    final messages = StreamController<LiveDanmakuMessage<void>>.broadcast(
+      sync: true,
+    );
+    late DanmakuInteractionHandle<void> Function() interaction;
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: MediaQuery(
+          data: const MediaQueryData(),
+          child: LiveDanmakuLayer<void>(
+            messages: messages.stream,
+            running: true,
+            visible: true,
+            option: const DanmakuOption(massiveMode: true),
+            size: const Size(800, 400),
+            monotonicUs: () => 0,
+            createdInteraction: (get, _) => interaction = get,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var i = 0; i < 50; i++) {
+      messages.add(
+        LiveDanmakuMessage(identity: i, receivedAtUs: 0, text: 'item$i'),
+      );
+    }
+    await tester.pump();
+    expect(interaction().snapshot.length, 24);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(interaction().snapshot.length, 48);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await messages.close();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'live motion, pause, expiry and hidden subscription use shared window',
     (tester) async {

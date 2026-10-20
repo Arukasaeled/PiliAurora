@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:pili_aurora/common/widgets/image/cached_image.dart';
 import 'package:pili_aurora/pages/danmaku/interaction.dart';
 import 'package:pili_aurora/pages/danmaku/live_queue.dart';
@@ -48,6 +49,8 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   late final VoidCallback _unregisterDiagnostics;
   bool _enabled = true, _queued = false, _disposed = false;
   bool _refreshing = false;
+  int? _wakeFrame;
+  bool _updatedThisFrame = false;
   late int _lastUs;
   int get _now => widget.monotonicUs?.call() ?? liveDanmakuNowUs();
   bool get _visible => widget.visible && _enabled && !widget.size.isEmpty;
@@ -195,9 +198,10 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   }
 
   void _wake() {
-    if (_queued || _disposed) return;
+    if (_queued || _disposed || !_visible) return;
     _queued = true;
-    scheduleMicrotask(() {
+    _wakeFrame = SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _wakeFrame = null;
       _queued = false;
       if (!_disposed) _refresh();
     });
@@ -206,6 +210,11 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   void _refresh() {
     final renderer = _renderer;
     if (renderer == null || !_visible || _disposed) return;
+    if (_updatedThisFrame) return;
+    _updatedThisFrame = true;
+    SchedulerBinding.instance.addPostFrameCallback(
+      (_) => _updatedThisFrame = false,
+    );
     _refreshing = true;
     final now = _now;
     if (widget.running) {
@@ -275,6 +284,9 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
     unawaited(_subscription?.cancel());
     _deadline?.cancel();
     _queue.dispose();
+    if (_wakeFrame case final frame?) {
+      SchedulerBinding.instance.cancelFrameCallbackWithId(frame);
+    }
     _ticker.dispose();
     _renderer?.removeListener(_rendererChanged);
     _renderer?.dispose();
