@@ -144,6 +144,11 @@ class _Controller implements PlPlayerController {
   final _fullScreen = false.obs;
   final _opacity = .65.obs;
   @override
+  void notifyDanmakuOptionsChanged() {}
+  @override
+  void refreshDanmakuRules() {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) =>
       switch (invocation.memberName) {
         #isFullScreen => _fullScreen,

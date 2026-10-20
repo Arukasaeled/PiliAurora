@@ -642,7 +642,10 @@ class VideoDetailController extends GetxController
             onSave: (danmaku) => savedDanmaku = danmaku,
             onSuccess: (danmakuModel) {
               savedDanmaku = null;
-              plPlayerController.danmakuController?.addDanmaku(danmakuModel);
+              plPlayerController.danmakuDisplay?.echo?.call(
+                danmakuModel,
+                plPlayerController.positionInMilliseconds * 1000,
+              );
             },
             dmConfig: dmConfig,
             onSaveDmConfig: (dmConfig) => this.dmConfig = dmConfig,

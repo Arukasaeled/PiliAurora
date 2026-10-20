@@ -66,8 +66,6 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
       (value: 7, label: '高级'),
     ];
 
-    final danmakuController = plPlayerController.danmakuController;
-
     final isFullScreen = this.isFullScreen;
 
     showBottomSheet(
@@ -101,12 +99,7 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
           ),
         );
 
-        void setOptions() => danmakuController?.updateOption(
-          DanmakuOptions.get(
-            notFullscreen: !isFullScreen,
-            speed: plPlayerController.playbackSpeed,
-          ),
-        );
+        void setOptions() => plPlayerController.notifyDanmakuOptionsChanged();
 
         final sliderTheme = SliderThemeData(
           trackHeight: 3,
@@ -257,6 +250,7 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
 
         void updateDanmakuWeight(double val) {
           DanmakuOptions.danmakuWeight = val.toInt();
+          plPlayerController.refreshDanmakuRules();
           setState(() {});
         }
 
@@ -548,7 +542,7 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                 updatePreference(SettingBoxKey.mergeDanmakuLogBase, value),
           ),
           Text(
-            '重复数量超过阈值时放大；对数底数越小，放大越快。合并选项重新打开播放页面后生效。',
+            '重复数量超过阈值时放大；对数底数越小，放大越快。设置立即生效。',
             style: TextStyle(
               fontSize: 12,
               color: colors.onSurfaceVariant,

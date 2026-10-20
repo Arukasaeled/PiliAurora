@@ -17,6 +17,8 @@ import 'package:pili_aurora/models/user/danmaku_rule.dart';
 import 'package:pili_aurora/models/video/play/url.dart';
 import 'package:pili_aurora/models/remote/video/video_shot/data.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
+import 'package:pili_aurora/pages/danmaku/display_binding.dart';
+import 'package:pili_aurora/pages/danmaku/interaction.dart';
 import 'package:pili_aurora/pages/sponsor_block/block_mixin.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_status.dart';
@@ -27,7 +29,6 @@ import 'package:pili_aurora/plugin/pl_player/models/heart_beat_type.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_status.dart';
 import 'package:pili_aurora/plugin/pl_player/models/video_fit_type.dart';
-import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/fullscreen.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/decode_fallback.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/android_decode_recovery.dart';
@@ -66,7 +67,6 @@ import 'package:pili_aurora/utils/storage_key.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/utils.dart';
 import 'package:archive/archive.dart' show getCrc32;
-import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart' show HapticFeedback, DeviceOrientation;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -94,8 +94,6 @@ class PlPlayerController
       'live': isLive,
       'appLifecycle': WidgetsBinding.instance.lifecycleState?.name,
       ..._runtime.videoFrameDiagnostics,
-      if (danmakuController case final controller?)
-        'danmakuScheduler': controller.schedulerDiagnostics,
     },
   );
   PlayerDiagnostics? get _diagnostics => _runtime.diagnostics;
@@ -410,11 +408,36 @@ class PlPlayerController
       _danmakuRuleListeners.add(listener);
   void removeDanmakuRuleListener(VoidCallback listener) =>
       _danmakuRuleListeners.remove(listener);
-  // 关联弹幕控制器
-  DanmakuController<DanmakuExtra>? danmakuController;
-  bool showDanmaku = true;
+  final _danmakuOptionsListeners = <VoidCallback>{};
+  void addDanmakuOptionsListener(VoidCallback listener) =>
+      _danmakuOptionsListeners.add(listener);
+  void removeDanmakuOptionsListener(VoidCallback listener) =>
+      _danmakuOptionsListeners.remove(listener);
+  void notifyDanmakuOptionsChanged() {
+    for (final listener in _danmakuOptionsListeners.toList()) {
+      listener();
+    }
+  }
+
+  void refreshDanmakuRules() {
+    for (final listener in _danmakuRuleListeners.toList()) {
+      listener();
+    }
+  }
+
+  DanmakuDisplayBinding? danmakuDisplay;
+  DanmakuInteractionHandle<DanmakuExtra>? get danmakuInteraction =>
+      danmakuDisplay?.interaction();
+  void clearDanmakuDisplay() => danmakuDisplay?.clear();
+
+  final _showDanmaku = true.obs;
+  bool get showDanmaku => _showDanmaku.value;
+  set showDanmaku(bool value) {
+    _showDanmaku.value = value;
+    if (!value) clearDanmakuDisplay();
+  }
   Set<int> dmState = <int>{};
-  late final mergeDanmaku = Pref.mergeDanmaku;
+  bool get mergeDanmaku => Pref.mergeDanmaku;
   late final String midHash = getCrc32(
     ascii.encode(Accounts.main.mid.toString()),
     0,
@@ -792,7 +815,7 @@ class PlPlayerController
     _audioRecovery?.dispose();
     _audioRecovery = null;
     if (ownsFacade && removeSafeArea) showSystemBar();
-    danmakuController = null;
+    danmakuDisplay = null;
     _stopOrientationListener();
     if (ownsFacade) _disableAutoEnterPip();
     setPlayCallBack(null, owner: this);
@@ -1092,7 +1115,7 @@ class PlPlayerController
     cancelLongPressTimer();
     _heartDuration = 0;
     _lastCoarsePositionBucket = null;
-    danmakuController?.clear();
+    clearDanmakuDisplay();
     final metadataWidth = plan.metadata?.width;
     _shaderSourceSize.value = metadataWidth == null
         ? null
@@ -1741,7 +1764,7 @@ class PlPlayerController
   Future<void> seek(Duration position, {bool isSeek = false}) async {
     _audioSeekInProgress = true;
     _audioRecovery?.onPlaybackChanged();
-    danmakuController?.clear();
+    clearDanmakuDisplay();
     final watch = Stopwatch()..start();
     _diagnostics?.event(
       'playback.seek.begin',
@@ -1831,22 +1854,6 @@ class PlPlayerController
       }
     }
     await owner.setPlaybackSpeed(speed, mediaOptions: options);
-    if (danmakuController != null) {
-      try {
-        DanmakuOption currentOption = danmakuController!.option;
-        DanmakuOption updatedOption = currentOption.copyWith(
-          duration: DanmakuOptions.danmakuDuration / speed,
-          staticDuration: DanmakuOptions.danmakuStaticDuration / speed,
-        );
-        danmakuController!.updateOption(updatedOption);
-      } catch (error, stackTrace) {
-        logger.w(
-          '同步弹幕播放速度失败: $lastPlaybackSpeed -> $speed',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
-    }
   }
 
   // 还原默认速度

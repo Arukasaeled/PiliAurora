@@ -1,3 +1,6 @@
+import 'package:pili_aurora/pages/danmaku/live_layer.dart';
+import 'package:pili_aurora/pages/danmaku/display_binding.dart';
+
 import 'dart:io';
 
 import 'package:pili_aurora/services/desktop_playback_request.dart';
@@ -58,7 +61,6 @@ import 'package:pili_aurora/utils/storage_key.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/theme_utils.dart';
 import 'package:pili_aurora/utils/utils.dart';
-import 'package:canvas_danmaku/danmaku_screen.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
@@ -135,12 +137,11 @@ class _LiveRoomPageState extends State<LiveRoomPage>
     if (!plPlayerController.isLive) {
       plPlayerController.isLive = true;
     }
-    plPlayerController.danmakuController =
-        _liveRoomController.danmakuController;
     PlPlayerController.setPlayCallBack(
       plPlayerController.play,
       owner: this,
     );
+    plPlayerController.notifyDanmakuOptionsChanged();
     _liveRoomController.startLiveTimer();
     plPlayerController.addStatusLister(playerListener);
     playerListener(plPlayerController.playerStatus);
@@ -153,9 +154,9 @@ class _LiveRoomPageState extends State<LiveRoomPage>
   void didPushNext() {
     removeObserverMobile(this);
     plPlayerController.removeStatusLister(playerListener);
+    plPlayerController.clearDanmakuDisplay();
     _liveRoomController
       ..holdPlaybackForRoute()
-      ..danmakuController?.clear()
       ..cancelLiveTimer()
       ..closeLiveMsg();
     super.didPushNext();
@@ -164,12 +165,10 @@ class _LiveRoomPageState extends State<LiveRoomPage>
   void playerListener(PlayerStatus status) {
     if (status.isPlaying) {
       _liveRoomController
-        ..danmakuController?.resume()
         ..startLiveTimer()
         ..startLiveMsg();
     } else {
       _liveRoomController
-        ..danmakuController?.pause()
         ..cancelLiveTimer()
         ..closeLiveMsg();
     }
@@ -205,7 +204,7 @@ class _LiveRoomPageState extends State<LiveRoomPage>
       _liveRoomController.cancelLiveTimer();
       plPlayerController
         ..showDanmaku = false
-        ..danmakuController?.clear();
+        ..clearDanmakuDisplay();
     }
   }
 
@@ -1083,49 +1082,56 @@ class LiveDanmaku extends StatefulWidget {
 }
 
 class _LiveDanmakuState extends State<LiveDanmaku> {
-  PlPlayerController get plPlayerController => widget.plPlayerController;
+  PlPlayerController get player => widget.plPlayerController;
+  DanmakuDisplayBinding? _binding;
 
   @override
-  void didUpdateWidget(LiveDanmaku oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.notFullscreen != widget.notFullscreen &&
-        !DanmakuOptions.sameFontScale) {
-      plPlayerController.danmakuController?.updateOption(
-        DanmakuOptions.get(notFullscreen: widget.notFullscreen),
-      );
-    }
+  void initState() {
+    super.initState();
+    player.addStatusLister(_statusChanged);
+    player.addDanmakuOptionsListener(_optionsChanged);
+  }
+
+  void _statusChanged(PlayerStatus _) => _optionsChanged();
+  void _optionsChanged() {
+    if (player.isLive && _binding != null) player.danmakuDisplay = _binding;
+    if (mounted) setState(() {});
   }
 
   @override
-  Widget build(BuildContext context) {
-    final option = DanmakuOptions.get(notFullscreen: widget.notFullscreen);
-    return DanmakuFrameRateSetting(
-      builder: (context, frameRate) => Obx(
-        () => AnimatedOpacity(
-          opacity: plPlayerController.enableShowLiveDanmaku.value
-              ? plPlayerController.danmakuOpacity.value
-              : 0,
-          duration: const Duration(milliseconds: 100),
-          child: TickerMode(
-            enabled:
-                plPlayerController.enableShowLiveDanmaku.value &&
-                plPlayerController.danmakuOpacity.value > 0,
-            child: DanmakuScreen<DanmakuExtra>(
-              frameRate: frameRate,
-              videoDisplaySyncActive: plPlayerController.videoDisplaySyncActive,
-              videoFrameTimings: PlatformUtils.isMobile
-                  ? plPlayerController.videoFrameTimings
-                  : null,
-              createdController: (e) {
-                widget.liveRoomController.danmakuController =
-                    plPlayerController.danmakuController = e;
-              },
-              option: option,
-              size: widget.size,
-            ),
-          ),
+  Widget build(BuildContext context) => DanmakuFrameRateSetting(
+    builder: (context, frameRate) => Obx(() {
+      final opacity = player.enableShowLiveDanmaku.value
+          ? player.danmakuOpacity.value
+          : 0.0;
+      return Opacity(
+        opacity: opacity,
+        child: LiveDanmakuLayer<DanmakuExtra>(
+          messages: widget.liveRoomController.liveDanmakuMessages,
+          running: player.playerStatus.isPlaying,
+          visible: opacity > 0 && player.showDanmaku,
+          option: DanmakuOptions.get(notFullscreen: widget.notFullscreen),
+          size: widget.size,
+          frameRate: frameRate,
+          videoDisplaySyncActive: player.videoDisplaySyncActive,
+          createdInteraction: (interaction, clear) {
+            player.danmakuDisplay = _binding = DanmakuDisplayBinding(
+              interaction: interaction,
+              clear: clear,
+            );
+          },
         ),
-      ),
-    );
+      );
+    }),
+  );
+
+  @override
+  void dispose() {
+    player.removeStatusLister(_statusChanged);
+    player.removeDanmakuOptionsListener(_optionsChanged);
+    if (identical(player.danmakuDisplay, _binding)) {
+      player.danmakuDisplay = null;
+    }
+    super.dispose();
   }
 }

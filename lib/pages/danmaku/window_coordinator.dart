@@ -152,7 +152,7 @@ class DanmakuWindowCoordinator<T> {
           endUs,
           maxEntriesPerBucket: DanmakuDisplayLimits.maxPerBatch,
         );
-        if (!range.isLoaded) return;
+        if (!range.isLoaded && range.entries.isEmpty) return;
         final occurrences = <Object, int>{};
         final eligible = range.entries
             .where((entry) => entry.positionUs >= renderer.validFromUs)

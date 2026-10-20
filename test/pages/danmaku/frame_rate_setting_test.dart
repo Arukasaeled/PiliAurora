@@ -1,13 +1,17 @@
 import 'dart:typed_data';
+import 'dart:async';
 
-import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:pili_aurora/pages/danmaku/view.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
-import 'package:pili_aurora/pages/danmaku/windows_screen.dart';
+import 'package:pili_aurora/pages/danmaku/window_screen.dart';
+import 'package:pili_aurora/pages/danmaku/live_layer.dart';
+import 'package:pili_aurora/pages/danmaku/live_queue.dart';
+import 'package:pili_aurora/pages/danmaku/display_binding.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
 import 'package:pili_aurora/pages/live_room/controller.dart';
 import 'package:pili_aurora/pages/live_room/view.dart' as live;
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
@@ -49,38 +53,21 @@ void main() {
           ),
         ),
       );
-      final windowsScreen = find.byWidgetPredicate(
-        (w) => w is WindowsDanmakuScreen,
+      final timeline = find.byWidgetPredicate(
+        (w) => w is DanmakuWindowScreen,
         skipOffstage: false,
       );
-      final canvasScreen = find.byWidgetPredicate(
-        (w) => w is DanmakuScreen,
+      final liveLayer = find.byWidgetPredicate(
+        (w) => w is LiveDanmakuLayer,
         skipOffstage: false,
       );
-      final usesWindowsRenderer = windowsScreen.evaluate().isNotEmpty;
-      int rate() => usesWindowsRenderer
-          ? tester
-                .widget<WindowsDanmakuScreen>(
-                  windowsScreen,
-                )
-                .frameRate
-          : tester
-                .widget<DanmakuScreen>(
-                  canvasScreen,
-                )
-                .frameRate;
-      Object? syncState() => usesWindowsRenderer
-          ? tester
-                .widget<WindowsDanmakuScreen>(
-                  windowsScreen,
-                )
-                .videoDisplaySyncActive
-          : tester
-                .widget<DanmakuScreen>(
-                  canvasScreen,
-                )
-                .videoDisplaySyncActive;
-      final controller = player.danmakuController;
+      int rate() => isLive
+          ? tester.widget<LiveDanmakuLayer>(liveLayer).frameRate
+          : tester.widget<DanmakuWindowScreen>(timeline).frameRate;
+      Object? syncState() => isLive
+          ? tester.widget<LiveDanmakuLayer>(liveLayer).videoDisplaySyncActive
+          : tester.widget<DanmakuWindowScreen>(timeline).videoDisplaySyncActive;
+      final controller = player.danmakuDisplay;
       expect(rate(), 0);
       expect(syncState(), same(player.videoDisplaySyncActive));
       await GStorage.setting.put(SettingBoxKey.videoSync, 'audio');
@@ -90,10 +77,9 @@ void main() {
         await GStorage.setting.put(SettingBoxKey.danmakuFrameRate, fps);
         await tester.pump();
         expect(rate(), fps);
-        expect(player.danmakuController, same(controller));
+        expect(player.danmakuDisplay, same(controller));
       }
       if (isLive) {
-        controller!.addDanmaku(DanmakuContentItem<DanmakuExtra>('hidden'));
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
         expect(tester.binding.hasScheduledFrame, isFalse);
@@ -122,14 +108,26 @@ class _Player implements PlPlayerController {
   @override
   PlayerStatus get playerStatus => PlayerStatus.paused;
   @override
-  DanmakuController<DanmakuExtra>? danmakuController;
+  DanmakuDisplayBinding? danmakuDisplay;
+  @override
+  PlaybackMediaClock get mediaClock => _Clock();
+  @override
+  bool get showDanmaku => true;
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
 }
 
 class _LiveRoom implements LiveRoomController {
   @override
-  DanmakuController<DanmakuExtra>? danmakuController;
+  Stream<LiveDanmakuMessage<DanmakuExtra>> get liveDanmakuMessages =>
+      const Stream.empty();
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _Clock implements PlaybackMediaClock {
+  @override
+  PlaybackMediaAnchor? get currentMediaAnchor => null;
+  @override
+  Stream<PlaybackMediaAnchor?> get mediaAnchors => const Stream.empty();
 }

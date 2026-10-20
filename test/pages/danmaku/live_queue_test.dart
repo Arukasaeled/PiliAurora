@@ -36,24 +36,25 @@ void main() {
       var now = 0;
       final pending = Completer<ui.Image?>();
       final accepted = <DanmakuContentItem<void>>[];
-      final queue = LiveDanmakuQueue<void>(
-        nowUs: () => now,
-        loadImage: (_) => pending.future,
-        wake: () {},
-        admit: (item) {
-          accepted.add(item);
-          return true;
-        },
-      );
-      queue.add(
-        const LiveDanmakuMessage(
-          identity: 1,
-          receivedAtUs: 0,
-          text: '[x]',
-          emotes: [LiveEmoteDescriptor('[x]', 'x', 12, 12)],
-        ),
-      );
-      queue.process(running: true, fontSize: 20);
+      final queue =
+          LiveDanmakuQueue<void>(
+              nowUs: () => now,
+              loadImage: (_) => pending.future,
+              wake: () {},
+              admit: (item) {
+                accepted.add(item);
+                return true;
+              },
+            )
+            ..add(
+              const LiveDanmakuMessage(
+                identity: 1,
+                receivedAtUs: 0,
+                text: '[x]',
+                emotes: [LiveEmoteDescriptor('[x]', 'x', 12, 12)],
+              ),
+            )
+            ..process(running: true, fontSize: 20);
       expect(queue.runningTasks, 1);
       now = 300001;
       queue.process(running: true, fontSize: 20);
@@ -75,30 +76,30 @@ void main() {
       var now = 0;
       final pending = Completer<ui.Image?>();
       var count = 0;
-      final queue = LiveDanmakuQueue<void>(
-        nowUs: () => now,
-        loadImage: (_) => pending.future,
-        wake: () {},
-        admit: (_) {
-          count++;
-          return true;
-        },
-      );
-      queue.add(
-        const LiveDanmakuMessage(identity: 1, receivedAtUs: 0, text: 'one'),
-      );
+      final queue =
+          LiveDanmakuQueue<void>(
+            nowUs: () => now,
+            loadImage: (_) => pending.future,
+            wake: () {},
+            admit: (_) {
+              count++;
+              return true;
+            },
+          )..add(
+            const LiveDanmakuMessage(identity: 1, receivedAtUs: 0, text: 'one'),
+          );
       now = 1000001;
       queue.process(running: false, fontSize: 20);
       expect(queue.candidateCount, 0);
-      queue.add(
-        LiveDanmakuMessage(
-          identity: 2,
-          receivedAtUs: now,
-          text: '[x]',
-          emotes: const [LiveEmoteDescriptor('[x]', 'x', 12, 12)],
-        ),
-      );
       queue
+        ..add(
+          LiveDanmakuMessage(
+            identity: 2,
+            receivedAtUs: now,
+            text: '[x]',
+            emotes: const [LiveEmoteDescriptor('[x]', 'x', 12, 12)],
+          ),
+        )
         ..process(running: true, fontSize: 20)
         ..clear();
       expect(queue.runningTasks, 1);
