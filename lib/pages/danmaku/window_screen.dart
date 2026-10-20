@@ -6,6 +6,7 @@ import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
 
 typedef DanmakuPrepareFrame<T> = void Function(
@@ -59,6 +60,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   bool _enabled = false;
   FlutterView? _view;
   Timer? _wake;
+  late final VoidCallback _unregisterDiagnostics;
 
   @override
   void initState() {
@@ -69,6 +71,14 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       videoFrameTimings: widget.videoFrameTimings,
       videoDisplaySyncActive: widget.videoDisplaySyncActive,
       screenRefreshRate: () => _view?.display.refreshRate ?? 0,
+    );
+    _unregisterDiagnostics = Diagnostics.instance.register(
+      'danmaku.layer.$hashCode',
+      () => {
+        ...widget.renderer.statistics,
+        'input': 'timeline',
+        'scheduler': _ticker.diagnostics,
+      },
     );
     widget.renderer.addListener(_syncTicker);
     _bindClock();
@@ -210,6 +220,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
 
   @override
   void dispose() {
+    _unregisterDiagnostics();
     _wake?.cancel();
     widget.renderer.removeListener(_syncTicker);
     unawaited(_anchors?.cancel());

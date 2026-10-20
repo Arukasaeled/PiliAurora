@@ -435,6 +435,26 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     return bytes;
   }
 
+  Map<String, Object?> get statistics => {
+    'renderer': 'shared-window',
+    'active': activeCount,
+    'activeSpecial': activeSpecialCount,
+    'activeImageBytes': activeBytes,
+    'activeImageLimitBytes': maxActiveBytes,
+    'workingSetBytes': workingSetBytes,
+    'workingSetLimitBytes': maxWorkingSetBytes,
+    'cacheEntries': rasters.length,
+    'cacheImageBytes': rasters.bytes,
+    'layouts': rasters.layouts,
+    'rasterizations': rasters.rasterizations,
+    'configurationPending': hasPendingConfiguration,
+    'windowItems': _planner.window.length,
+    'windowBytes': _planner.window.estimatedBytes,
+    'generation': generation,
+    'validFromUs': validFromUs,
+    'validUntilUs': validUntilUs,
+  };
+
   int _specialBytes(
     SpecialDanmakuContentItem content,
     DanmakuRasterCache cache,

@@ -74,7 +74,7 @@ flowchart TD
 
 ### 播放性能与资源控制
 
-- Windows 弹幕使用预处理渲染器，复用文字布局和栅格图片，并对缓存和活动工作集设定条目数与字节预算，减少逐帧重复布局和图片栅格化的工作量。实现见 `lib/pages/danmaku/windows_renderer.dart`、`raster_cache.dart` 和 `third_party/canvas_danmaku/lib/geometry.dart`。普通轨迹两端共用；字体、DPI 与文字栅格上下文由显示实例持有，高级栅格边界保存在各自活动项中。
+- 点播与直播在 Android、Windows 上共用 `lib/pages/danmaku/window_renderer.dart` 的测量、几何、额度、命中与资源管理。点播通过 `window_coordinator.dart` 准备媒体时间窗口，直播通过 `live_queue.dart` 处理有界候选和表情；两个生产挂载分别为 `view.dart` 和 `live_layer.dart`。字体/DPI属于显示实例，设置分批准备并在帧边界切换。旧 Windows renderer/screen 暂留作像素与性能对照基线。
 - Windows 视频输出尺寸按启动时所在显示器限制；Android 可选实验性地按设备物理分辨率缩小输出 Surface，默认关闭。尺寸变化会合并并串行提交，Android 还等待纹理帧交接，避免快速旋转或切换时重复调整旧 Surface。输出限幅减少渲染表面和纹理开销；源视频仍按其原始分辨率解码。
 - 点播与直播共享播放器时，播放会话按页面归属和请求代次管理；快速切源复用原生播放器、控制器和纹理资源。Android 对 MediaCodec、Surface 和图像输出错误采用有界恢复与回退；网络读取中断可按当前媒体和缓冲状态尝试恢复。
 - Windows 独立播放窗口由 `lib/services/desktop_playback_windows.dart` 管理，每个子进程使用自己的播放器。渲染资源生命周期与超分切换见[Windows 视频输出](windows-video-output.md)。

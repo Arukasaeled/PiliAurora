@@ -9,6 +9,7 @@ import 'package:pili_aurora/pages/danmaku/interaction.dart';
 import 'package:pili_aurora/pages/danmaku/live_queue.dart';
 import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 import 'package:pili_aurora/utils/image_utils.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 
 class LiveDanmakuLayer<T> extends StatefulWidget {
   const LiveDanmakuLayer({
@@ -44,6 +45,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   late final LiveDanmakuQueue<T> _queue;
   StreamSubscription<LiveDanmakuMessage<T>>? _subscription;
   Timer? _deadline;
+  late final VoidCallback _unregisterDiagnostics;
   bool _enabled = true, _queued = false, _disposed = false;
   bool _refreshing = false;
   late int _lastUs;
@@ -76,6 +78,18 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         return accepted;
       },
       wake: _wake,
+    );
+    _unregisterDiagnostics = Diagnostics.instance.register(
+      'danmaku.layer.$hashCode',
+      () => {
+        ...?_renderer?.statistics,
+        'input': 'live',
+        'motionUs': _motionUs,
+        'candidates': _queue.candidateCount,
+        'resourceTasks': _queue.runningTasks,
+        'resourceReservedBytes': _queue.reservedBytes,
+        'scheduler': _ticker.diagnostics,
+      },
     );
   }
 
@@ -256,6 +270,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   );
   @override
   void dispose() {
+    _unregisterDiagnostics();
     _disposed = true;
     unawaited(_subscription?.cancel());
     _deadline?.cancel();
