@@ -42,11 +42,13 @@ class DanmakuWindowCoordinator<T> {
   int? _dirtyUs;
   List<DanmakuWindowContent<T>>? _pending;
   int _offset = 0;
+  bool _pendingLoaded = false;
   bool _requesting = false;
   bool _refilling = false;
   int _targetUntilUs = 0;
   int? _lastRequestUs;
   bool _disposed = false;
+  final _invalidations = <({int start, int? end, int revision})>[];
   bool requestFailed = false;
   bool _needsPreparation = false;
   bool get needsPreparation => !_disposed && _needsPreparation;
@@ -59,9 +61,87 @@ class DanmakuWindowCoordinator<T> {
 
   void _changed(DanmakuSourceChange change) {
     if (_disposed) return;
+    if (change.kind == DanmakuSourceChangeKind.coverage) {
+      final range = source.readRange(
+        change.startUs,
+        change.endUs ?? change.startUs + _bucketUs,
+        maxEntriesPerBucket: 1,
+      );
+      requestFailed = range.coverage.any(
+        (part) => part.state == DanmakuCoverageState.failed,
+      );
+      if (requestFailed) _needsPreparation = false;
+      _updates.add(null);
+      return;
+    }
     if (change.kind == DanmakuSourceChangeKind.invalidated) {
-      renderer.reset(_lastMediaUs ?? 0);
+      final retained = <({int start, int? end, int revision})>[];
+      for (final range in _invalidations) {
+        if ((change.endUs != null && range.start >= change.endUs!) ||
+            (range.end != null && range.end! <= change.startUs)) {
+          retained.add(range);
+        } else {
+          if (range.start < change.startUs) {
+            retained.add((
+              start: range.start,
+              end: change.startUs,
+              revision: range.revision,
+            ));
+          }
+          if (change.endUs != null &&
+              (range.end == null || range.end! > change.endUs!)) {
+            retained.add((
+              start: change.endUs!,
+              end: range.end,
+              revision: range.revision,
+            ));
+          }
+        }
+      }
+      _invalidations
+        ..clear()
+        ..addAll(retained)
+        ..add((
+          start: change.startUs,
+          end: change.endUs,
+          revision: change.ruleRevision,
+        ));
+      renderer.invalidateRange(change.startUs, endUs: change.endUs);
     } else {
+      if (_invalidations.any(
+        (range) =>
+            range.revision > change.ruleRevision &&
+            (change.endUs == null || range.start < change.endUs!) &&
+            (range.end == null || change.startUs < range.end!),
+      )) {
+        return;
+      }
+      final remaining = <({int start, int? end, int revision})>[];
+      for (final range in _invalidations) {
+        if ((change.endUs != null && range.start >= change.endUs!) ||
+            (range.end != null && range.end! <= change.startUs)) {
+          remaining.add(range);
+          continue;
+        }
+        if (range.start < change.startUs) {
+          remaining.add((
+            start: range.start,
+            end: change.startUs,
+            revision: range.revision,
+          ));
+        }
+        if (change.endUs != null &&
+            (range.end == null || range.end! > change.endUs!)) {
+          remaining.add((
+            start: change.endUs!,
+            end: range.end,
+            revision: range.revision,
+          ));
+        }
+      }
+      _invalidations
+        ..clear()
+        ..addAll(remaining);
       final start = math.max(change.startUs, renderer.validFromUs);
       if (start < _nextBucketUs &&
           (change.endUs == null || change.endUs! > renderer.validFromUs)) {
@@ -77,11 +157,19 @@ class DanmakuWindowCoordinator<T> {
     _requesting = true;
     try {
       await source.ensureRange(fromUs, untilUs);
-      requestFailed = false;
+      requestFailed = source
+          .readRange(
+            fromUs,
+            untilUs,
+            maxEntriesPerBucket: 1,
+          )
+          .coverage
+          .any((part) => part.state == DanmakuCoverageState.failed);
     } catch (_) {
       requestFailed = true;
     } finally {
       _requesting = false;
+      if (!_disposed) _updates.add(null);
     }
   }
 
@@ -116,13 +204,16 @@ class DanmakuWindowCoordinator<T> {
       _pending = null;
       _dirtyUs = null;
       _refilling = false;
-      _lastRequestUs = null;
+      if (!_requesting) _lastRequestUs = null;
     }
     final cutoff = math.min(
       renderer.validUntilUs,
       math.max(0, mediaUs - historyUs),
     );
     if (cutoff > renderer.validFromUs) renderer.trimBefore(cutoff);
+    _invalidations.removeWhere(
+      (range) => range.end != null && range.end! <= renderer.validFromUs,
+    );
     if (_dirtyUs != null) {
       _nextBucketUs = math.min(_nextBucketUs, _dirtyUs!);
       _dirtyUs = null;
@@ -147,15 +238,35 @@ class DanmakuWindowCoordinator<T> {
     while (remaining > 0 && _nextBucketUs < untilUs && buckets++ < 4) {
       final endUs = _nextBucketUs + _bucketUs;
       if (_pending == null) {
+        final blocked = _invalidations.any(
+          (range) =>
+              range.start < endUs &&
+              (range.end == null || range.end! > _nextBucketUs),
+        );
         final range = source.readRange(
           _nextBucketUs,
           endUs,
           maxEntriesPerBucket: DanmakuDisplayLimits.maxPerBatch,
         );
         if (!range.isLoaded && range.entries.isEmpty) return;
+        _pendingLoaded = range.isLoaded && !blocked;
         final occurrences = <Object, int>{};
         final eligible = range.entries
-            .where((entry) => entry.positionUs >= renderer.validFromUs)
+            .where(
+              (entry) =>
+                  entry.positionUs >= renderer.validFromUs &&
+                  !range.coverage.any(
+                    (part) =>
+                        part.state == DanmakuCoverageState.invalidated &&
+                        entry.positionUs >= part.startUs &&
+                        entry.positionUs < part.endUs,
+                  ) &&
+                  !_invalidations.any(
+                    (range) =>
+                        entry.positionUs >= range.start &&
+                        (range.end == null || entry.positionUs < range.end!),
+                  ),
+            )
             .toList();
         final count = math.min(
           eligible.length,
@@ -198,7 +309,9 @@ class DanmakuWindowCoordinator<T> {
       final pending = _pending!;
       final end = math.min(_offset + remaining, pending.length);
       final complete = end == pending.length;
-      final frontier = complete ? endUs : pending[end].sourceUs;
+      final frontier = complete
+          ? (_pendingLoaded ? endUs : renderer.validUntilUs)
+          : pending[end].sourceUs;
       if (!renderer.prepare(
         pending.sublist(_offset, end),
         generation: _generation,
@@ -213,6 +326,7 @@ class DanmakuWindowCoordinator<T> {
         return;
       }
       _pending = null;
+      if (!_pendingLoaded) return;
       _nextBucketUs = endUs;
     }
     if (_nextBucketUs >= untilUs && _pending == null) _refilling = false;

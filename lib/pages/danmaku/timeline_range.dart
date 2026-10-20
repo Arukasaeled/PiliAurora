@@ -8,7 +8,7 @@ class DanmakuTimelineEntry {
   int get positionUs => element.progress * Duration.microsecondsPerMillisecond;
 }
 
-enum DanmakuCoverageState { loaded, missing, invalidated }
+enum DanmakuCoverageState { loaded, missing, loading, invalidated, failed }
 
 class DanmakuRangeCoverage {
   const DanmakuRangeCoverage(this.startUs, this.endUs, this.state);
@@ -42,7 +42,7 @@ class DanmakuTimelineRange {
   );
 }
 
-enum DanmakuSourceChangeKind { invalidated, ready }
+enum DanmakuSourceChangeKind { invalidated, ready, coverage }
 
 class DanmakuSourceChange {
   const DanmakuSourceChange({
@@ -62,6 +62,7 @@ class DanmakuSourceChange {
 
 abstract interface class DanmakuTimelineSource {
   Stream<DanmakuSourceChange> get changes;
+
   /// 按媒体时间和来源次序读取；上限在各 100 ms 桶的范围交集内均匀抽样，
   /// 覆盖状态仍描述完整请求范围。
   DanmakuTimelineRange readRange(

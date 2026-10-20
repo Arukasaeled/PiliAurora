@@ -94,6 +94,57 @@ DanmakuContentItem<void> _content(DanmakuElem element) => DanmakuContentItem(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('local invalidation preserves unrelated active items and ignores stale ready', () {
+    final source = _Source()..load([_dm('keep', 0), _dm('remove', 100)]);
+    final renderer = _renderer();
+    final coordinator = DanmakuWindowCoordinator(
+      source: source,
+      renderer: renderer,
+      contentOf: _content,
+    );
+    addTearDown(renderer.dispose);
+    addTearDown(coordinator.dispose);
+    addTearDown(source.events.close);
+    coordinator.prepareFrame(renderer, 0);
+    renderer.present(150000, allowUnprepared: true);
+    expect(renderer.activeCount, 2);
+    source.events.add(
+      const DanmakuSourceChange(
+        kind: DanmakuSourceChangeKind.invalidated,
+        ruleRevision: 2,
+        startUs: 100000,
+        endUs: 200000,
+      ),
+    );
+    expect(renderer.activeCount, 1);
+    coordinator.prepareFrame(renderer, 150000);
+    renderer.present(150000, allowUnprepared: true);
+    expect(renderer.activeCount, 1);
+    source.events.add(
+      const DanmakuSourceChange(
+        kind: DanmakuSourceChangeKind.ready,
+        ruleRevision: 1,
+        startUs: 100000,
+        endUs: 200000,
+      ),
+    );
+    coordinator.prepareFrame(renderer, 150000);
+    renderer.present(150000, allowUnprepared: true);
+    expect(renderer.activeCount, 1);
+    source.events.add(
+      const DanmakuSourceChange(
+        kind: DanmakuSourceChangeKind.ready,
+        ruleRevision: 2,
+        startUs: 100000,
+        endUs: 200000,
+      ),
+    );
+    coordinator.prepareFrame(renderer, 150000);
+    renderer.present(150000, allowUnprepared: true);
+    // 已经越过当前生效下界的旧条目不会重新投放。
+    expect(renderer.activeCount, 1);
+  });
+
   test('equal timestamps prepare incrementally without claiming a complete frontier', () {
     final source = _Source()
       ..load([for (var i = 0; i < 6; i++) _dm('item$i', 0)]);

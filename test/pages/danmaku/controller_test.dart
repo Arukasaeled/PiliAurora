@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
+import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:flutter/painting.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
@@ -14,6 +16,8 @@ import 'package:pili_aurora/models/user/danmaku_rule.dart';
 import 'package:pili_aurora/pages/danmaku/controller.dart';
 import 'package:pili_aurora/pages/danmaku/raw_cache.dart';
 import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
+import 'package:pili_aurora/pages/danmaku/window_coordinator.dart';
+import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 import 'package:pili_aurora/utils/path_utils.dart';
@@ -47,6 +51,82 @@ void main() {
   });
   tearDownAll(() => Request.dio.close(force: true));
 
+  test('paused production source fails once and resumes on explicit successful retry', () async {
+    final adapter = _DmAdapter()
+      ..fail = true
+      ..progress = 0;
+    Request.dio.httpClientAdapter = adapter;
+    final source = PlDanmakuController(1, _Player(), false);
+    final renderer = DanmakuWindowRenderer<void>(
+      option: const DanmakuOption(massiveMode: true),
+      size: const Size(640, 360),
+    );
+    final coordinator = DanmakuWindowCoordinator<void>(
+      source: source,
+      renderer: renderer,
+      contentOf: (element) =>
+          DanmakuContentItem<void>(element.content, selfSend: true),
+    );
+    addTearDown(source.dispose);
+    addTearDown(renderer.dispose);
+    addTearDown(coordinator.dispose);
+    final failed = Completer<void>();
+    var updates = 0;
+    final subscription = coordinator.updates.listen((_) {
+      updates++;
+      coordinator.prepareFrame(renderer, 0);
+      renderer.present(0, allowUnprepared: true);
+      if (coordinator.requestFailed && !failed.isCompleted) failed.complete();
+    });
+    addTearDown(subscription.cancel);
+    coordinator.prepareFrame(renderer, 0);
+    await failed.future.timeout(const Duration(seconds: 5));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(adapter.calls, 1);
+    expect(updates, lessThan(10));
+    expect(coordinator.needsPreparation, isFalse);
+    adapter.fail = false;
+    await source.ensureRange(0, 2000000);
+    expect(renderer.interaction.snapshot.single.text, '重复');
+    expect(coordinator.requestFailed, isFalse);
+    expect(adapter.calls, 2);
+    for (var i = 0; i < 8; i++) {
+      coordinator.prepareFrame(renderer, 0);
+    }
+    expect(coordinator.needsPreparation, isFalse);
+    expect(adapter.calls, 2);
+  });
+
+  test(
+    'failed response has explicit coverage and a later request recovers',
+    () async {
+      final adapter = _DmAdapter()..fail = true;
+      Request.dio.httpClientAdapter = adapter;
+      final controller = PlDanmakuController(1, _Player(), false);
+      addTearDown(controller.dispose);
+      final states = <DanmakuCoverageState>[];
+      final subscription = controller.changes.listen((event) {
+        if (event.kind == DanmakuSourceChangeKind.coverage) {
+          states.add(controller.readRange(0, 1000000).coverage.single.state);
+        }
+      });
+      addTearDown(subscription.cancel);
+      await controller.ensureRange(0, 1000000);
+      expect(states, [
+        DanmakuCoverageState.loading,
+        DanmakuCoverageState.failed,
+      ]);
+      expect(
+        controller.readRange(0, 1000000).coverage.single.state,
+        DanmakuCoverageState.failed,
+      );
+      adapter.fail = false;
+      await controller.ensureRange(0, 1000000);
+      expect(controller.readRange(0, 1000000).isLoaded, isTrue);
+      expect(adapter.calls, 2);
+    },
+  );
+
   test('文件范围读取经过排序worker，跨段计数与规则恢复保持一致', () async {
     final directory = Directory.systemTemp.createTempSync('pili-file-source-');
     final file = File('${directory.path}/${PathUtils.danmakuName}');
@@ -79,6 +159,14 @@ void main() {
     expect(after.entries.first.element.count, 2);
     await source.ensureRange(0, 2000000);
     expect(source.readRange(0, 2000000).isLoaded, isTrue);
+    await file.writeAsBytes(
+      DmSegMobileReply(elems: [_dm('文件已替换', 100)]).writeToBuffer(),
+    );
+    await source.ensureRange(0, 2000000);
+    expect(
+      source.readRange(0, 2000000).entries.single.element.content,
+      '文件已替换',
+    );
   });
 
   test('等待中的范围覆盖旧前瞻，完成当前段后处理最新目标', () async {
@@ -437,6 +525,8 @@ class _HoldingController extends PlDanmakuController {
 
 class _DmAdapter implements HttpClientAdapter {
   int calls = 0;
+  bool fail = false;
+  int progress = 100;
 
   @override
   Future<ResponseBody> fetch(
@@ -445,7 +535,18 @@ class _DmAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     calls++;
-    final reply = DmSegMobileReply(elems: [_dm('重复', 100), _dm('重复', 101)]);
+    if (fail) {
+      return ResponseBody.fromBytes(
+        [],
+        200,
+        headers: {
+          'grpc-status': ['13'],
+        },
+      );
+    }
+    final reply = DmSegMobileReply(
+      elems: [_dm('重复', progress), _dm('重复', progress + 1)],
+    );
     return ResponseBody.fromBytes(
       GrpcReq.compressProtobuf(reply.writeToBuffer()),
       200,

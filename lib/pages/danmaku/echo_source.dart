@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:fixnum/fixnum.dart';
@@ -9,7 +10,9 @@ import 'package:pili_aurora/pages/danmaku/timeline_range.dart';
 /// 本地发送与随后到达的服务端条目使用同一份来源身份。
 class DanmakuEchoSource implements DanmakuTimelineSource {
   DanmakuEchoSource(this.source) {
-    _subscription = source.changes.listen(_changes.add);
+    _sourceRuleRevision = source.readRange(0, 0).ruleRevision;
+    _ruleRevision = _sourceRuleRevision;
+    _subscription = source.changes.listen(_sourceChanged);
   }
 
   final DanmakuTimelineSource source;
@@ -22,6 +25,25 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
   final _changes = StreamController<DanmakuSourceChange>.broadcast(sync: true);
   late final StreamSubscription<DanmakuSourceChange> _subscription;
   int _revision = 0;
+  int _ruleRevision = 0;
+  int _sourceRuleRevision = 0;
+  final _positions = <int, int>{};
+
+  void _sourceChanged(DanmakuSourceChange change) {
+    if (change.ruleRevision < _sourceRuleRevision) return;
+    _sourceRuleRevision = change.ruleRevision;
+    _revision++;
+    if (change.kind == DanmakuSourceChangeKind.invalidated) _ruleRevision++;
+    _changes.add(
+      DanmakuSourceChange(
+        kind: change.kind,
+        ruleRevision: _ruleRevision,
+        startUs: change.startUs,
+        endUs: change.endUs,
+      ),
+    );
+  }
+
   int _nextLocalId = -1;
 
   @override
@@ -57,16 +79,27 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
   void remove(Object identity) {
     // 交互身份由编排器生成；快照的业务 id 由挂载处解析后传入。
     if (identity is! int) return;
-    _echoes.remove(identity);
+    final echo = _echoes.remove(identity);
+    final sourceUs = echo == null
+        ? _positions[identity]
+        : echo.element.progress * 1000;
     if (_removed.length == 256) _removed.remove(_removed.first);
     _removed.add(identity);
     _revision++;
-    _changes.add(
-      DanmakuSourceChange(
-        kind: DanmakuSourceChangeKind.invalidated,
-        ruleRevision: _revision,
-      ),
-    );
+    _ruleRevision++;
+    for (final kind in [
+      DanmakuSourceChangeKind.invalidated,
+      DanmakuSourceChangeKind.ready,
+    ]) {
+      _changes.add(
+        DanmakuSourceChange(
+          kind: kind,
+          ruleRevision: _ruleRevision,
+          startUs: sourceUs ?? 0,
+          endUs: sourceUs == null ? null : sourceUs + 1000,
+        ),
+      );
+    }
   }
 
   void _changed(int sourceUs) {
@@ -74,7 +107,7 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
     _changes.add(
       DanmakuSourceChange(
         kind: DanmakuSourceChangeKind.ready,
-        ruleRevision: _revision,
+        ruleRevision: _ruleRevision,
         startUs: sourceUs,
         endUs: sourceUs + 1000,
       ),
@@ -92,10 +125,22 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
       endUs,
       maxEntriesPerBucket: maxEntriesPerBucket,
     );
+    for (final entry in range.entries) {
+      final id = entry.element.id.toInt();
+      _positions.remove(id);
+      if (_positions.length == 2048) _positions.remove(_positions.keys.first);
+      _positions[id] = entry.positionUs;
+    }
     final entries = <DanmakuTimelineEntry>[
       for (final entry in range.entries)
         if (!_removed.contains(entry.element.id.toInt()) &&
-            !_echoes.containsKey(entry.element.id.toInt()))
+            !_echoes.containsKey(entry.element.id.toInt()) &&
+            !range.coverage.any(
+              (part) =>
+                  part.state == DanmakuCoverageState.invalidated &&
+                  entry.positionUs >= part.startUs &&
+                  entry.positionUs < part.endUs,
+            ))
           entry,
       for (final echo in _echoes.values)
         if (echo.element.progress * 1000 >= startUs &&
@@ -107,13 +152,41 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
         final time = a.$2.positionUs.compareTo(b.$2.positionUs);
         return time == 0 ? a.$1.compareTo(b.$1) : time;
       });
+    final echoTimes =
+        _echoes.values
+            .map((echo) => echo.element.progress * 1000)
+            .toSet()
+            .toList()
+          ..sort();
+    final coverage = <DanmakuRangeCoverage>[];
+    for (final part in range.coverage) {
+      var cursor = part.startUs;
+      for (final time in echoTimes) {
+        if (time + 1000 <= cursor || time >= part.endUs) continue;
+        if (cursor < time) {
+          coverage.add(DanmakuRangeCoverage(cursor, time, part.state));
+        }
+        final end = math.min(part.endUs, time + 1000);
+        coverage.add(
+          DanmakuRangeCoverage(
+            math.max(cursor, time),
+            end,
+            DanmakuCoverageState.loaded,
+          ),
+        );
+        cursor = end;
+      }
+      if (cursor < part.endUs) {
+        coverage.add(DanmakuRangeCoverage(cursor, part.endUs, part.state));
+      }
+    }
     return DanmakuTimelineRange(
       startUs: startUs,
       endUs: endUs,
       revision: range.revision + _revision,
-      ruleRevision: range.ruleRevision,
+      ruleRevision: _ruleRevision,
       entries: ordered.map((item) => item.$2),
-      coverage: range.coverage,
+      coverage: coverage,
     );
   }
 
@@ -125,6 +198,7 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
     unawaited(_subscription.cancel());
     _echoes.clear();
     _removed.clear();
+    _positions.clear();
     unawaited(_changes.close());
   }
 }
