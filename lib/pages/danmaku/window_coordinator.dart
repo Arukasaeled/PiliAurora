@@ -142,7 +142,11 @@ class DanmakuWindowCoordinator<T> {
     while (remaining > 0 && _nextBucketUs < untilUs && buckets++ < 4) {
       final endUs = _nextBucketUs + _bucketUs;
       if (_pending == null) {
-        final range = source.readRange(_nextBucketUs, endUs);
+        final range = source.readRange(
+          _nextBucketUs,
+          endUs,
+          maxEntriesPerBucket: DanmakuDisplayLimits.maxPerBatch,
+        );
         if (!range.isLoaded) return;
         final occurrences = <Object, int>{};
         final eligible = range.entries

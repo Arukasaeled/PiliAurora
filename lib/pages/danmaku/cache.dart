@@ -19,7 +19,7 @@ class DanmakuCache {
   final int maxElementsPerBucket;
   final int maxSegments;
 
-  final _buckets = <int, List<DanmakuElem>>{};
+  final _buckets = SplayTreeMap<int, List<DanmakuElem>>();
   final _segmentBuckets = <int, Set<int>>{};
   final _segmentOrder = Queue<int>();
   final _loadedSegments = <int>{};
@@ -32,10 +32,14 @@ class DanmakuCache {
     int startUs,
     int endUs, {
     int ruleRevision = 0,
+    int? maxEntriesPerBucket,
     DanmakuCoverageState Function(int segment)? missingState,
   }) {
     if (startUs < 0 || endUs < startUs) {
       throw ArgumentError('弹幕范围需满足 0 <= startUs <= endUs');
+    }
+    if (maxEntriesPerBucket != null && maxEntriesPerBucket <= 0) {
+      throw ArgumentError.value(maxEntriesPerBucket, 'maxEntriesPerBucket');
     }
     final coverage = <DanmakuRangeCoverage>[];
     const segmentUs = 360 * Duration.microsecondsPerSecond;
@@ -55,27 +59,19 @@ class DanmakuCache {
       cursor = end;
     }
     final entries = <DanmakuTimelineEntry>[];
-    final keys =
-        _buckets.keys
-            .where(
-              (bucket) =>
-                  bucket * 100000 < endUs && (bucket + 1) * 100000 > startUs,
-            )
-            .toList()
-          ..sort();
-    for (final bucket in keys) {
-      // indexed 保留同一时间戳的来源顺序，避免排序算法改变入场次序。
-      final ordered = _buckets[bucket]!.indexed.toList()
-        ..sort((a, b) {
-          final time = a.$2.progress.compareTo(b.$2.progress);
-          return time == 0 ? a.$1.compareTo(b.$1) : time;
-        });
-      for (final (_, element) in ordered) {
-        final entry = DanmakuTimelineEntry(element);
-        if (entry.positionUs >= startUs && entry.positionUs < endUs) {
-          entries.add(entry);
-        }
+    var bucket = _buckets.firstKeyAfter(startUs ~/ 100000 - 1);
+    while (bucket != null && bucket * 100000 < endUs) {
+      final items = _buckets[bucket]!;
+      final lower = _lowerBound(items, startUs);
+      final upper = _lowerBound(items, endUs);
+      final length = upper - lower;
+      final count = math.min(length, maxEntriesPerBucket ?? length);
+      for (var index = 0; index < count; index++) {
+        entries.add(
+          DanmakuTimelineEntry(items[lower + index * length ~/ count]),
+        );
       }
+      bucket = _buckets.firstKeyAfter(bucket);
     }
     return DanmakuTimelineRange(
       startUs: startUs,
@@ -85,6 +81,30 @@ class DanmakuCache {
       entries: entries,
       coverage: coverage,
     );
+  }
+
+  static int _lowerBound(List<DanmakuElem> items, int mediaUs) {
+    var lower = 0;
+    var upper = items.length;
+    while (lower < upper) {
+      final middle = (lower + upper) >> 1;
+      if (items[middle].progress * 1000 < mediaUs) {
+        lower = middle + 1;
+      } else {
+        upper = middle;
+      }
+    }
+    return lower;
+  }
+
+  static List<DanmakuElem> _ordered(List<DanmakuElem> items) {
+    // 在写入边界固定同时间戳来源次序，热帧读取不再复制并排序整个桶。
+    final indexed = items.indexed.toList()
+      ..sort((a, b) {
+        final time = a.$2.progress.compareTo(b.$2.progress);
+        return time == 0 ? a.$1.compareTo(b.$1) : time;
+      });
+    return [for (final (_, item) in indexed) item];
   }
 
   int get bucketCount => _buckets.length;
@@ -141,7 +161,7 @@ class DanmakuCache {
       if (items.length > maxElementsPerBucket) {
         items.removeRange(maxElementsPerBucket, items.length);
       }
-      _buckets[bucket] = items;
+      _buckets[bucket] = _ordered(items);
       segmentBuckets.add(bucket);
       _elementCount += items.length;
     }
@@ -152,15 +172,20 @@ class DanmakuCache {
   void addFileElements(Iterable<DanmakuElem> elements) {
     _revision++;
     _fileComplete = true;
+    final changed = <int>{};
     for (final element in elements) {
       final segment = DmUtils.calcSegment(element.progress);
       if (_loadedSegments.add(segment)) {
         _segmentOrder.addLast(segment);
       }
       final bucket = element.progress ~/ 100;
+      changed.add(bucket);
       (_buckets[bucket] ??= <DanmakuElem>[]).add(element);
       (_segmentBuckets[segment] ??= <int>{}).add(bucket);
       _elementCount++;
+    }
+    for (final bucket in changed) {
+      _buckets[bucket] = _ordered(_buckets[bucket]!);
     }
   }
 

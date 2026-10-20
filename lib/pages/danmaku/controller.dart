@@ -307,10 +307,15 @@ class PlDanmakuController implements DanmakuTimelineSource {
   }
 
   @override
-  DanmakuTimelineRange readRange(int startUs, int endUs) => _cache.readRange(
+  DanmakuTimelineRange readRange(
+    int startUs,
+    int endUs, {
+    int? maxEntriesPerBucket,
+  }) => _cache.readRange(
     startUs,
     endUs,
     ruleRevision: _ruleRevision,
+    maxEntriesPerBucket: maxEntriesPerBucket,
     missingState: (segment) =>
         _fileInvalidated || _invalidatedSegments.contains(segment)
         ? DanmakuCoverageState.invalidated

@@ -62,6 +62,12 @@ class DanmakuSourceChange {
 
 abstract interface class DanmakuTimelineSource {
   Stream<DanmakuSourceChange> get changes;
-  DanmakuTimelineRange readRange(int startUs, int endUs);
+  /// 按媒体时间和来源次序读取；上限在各 100 ms 桶的范围交集内均匀抽样，
+  /// 覆盖状态仍描述完整请求范围。
+  DanmakuTimelineRange readRange(
+    int startUs,
+    int endUs, {
+    int? maxEntriesPerBucket,
+  });
   Future<void> ensureRange(int startUs, int endUs);
 }

@@ -9,6 +9,48 @@ DanmakuElem _element(int progress, int id) => DanmakuElem(
 );
 
 void main() {
+  test(
+    'dense local range sampling is bounded and stable across sorted writes',
+    () {
+      final items = [for (var i = 0; i < 10000; i++) _element(50, i)];
+      final cache = DanmakuCache()
+        ..addFileElements([
+          _element(99, 10001),
+          ...items,
+          _element(0, 10000),
+          _element(100000000, 10002),
+        ]);
+      final first = cache.readRange(50000, 51000, maxEntriesPerBucket: 120);
+      expect(first.entries.length, 120);
+      expect(first.isLoaded, isTrue);
+      expect(first.entries.map((e) => e.element), [
+        for (var i = 0; i < 120; i++) items[i * items.length ~/ 120],
+      ]);
+      expect(
+        cache
+            .readRange(50000, 51000, maxEntriesPerBucket: 120)
+            .entries
+            .map((e) => e.element),
+        first.entries.map((e) => e.element),
+      );
+      expect(
+        cache.readRange(50001, 99000, maxEntriesPerBucket: 120).entries,
+        isEmpty,
+      );
+      final appended = _element(50, 10003);
+      cache.addFileElements([appended]);
+      expect(
+        cache.readRange(50000, 51000).entries.last.element,
+        same(appended),
+      );
+      expect(first.entries.length, 120);
+      expect(
+        () => cache.readRange(0, 100000, maxEntriesPerBucket: 0),
+        throwsArgumentError,
+      );
+    },
+  );
+
   test('微秒范围按时间和原始次序排序，遵守半开边界', () {
     final first = _element(101, 1);
     final second = _element(101, 2);

@@ -19,8 +19,16 @@ class _Source implements DanmakuTimelineSource {
   @override
   Stream<DanmakuSourceChange> get changes => events.stream;
   @override
-  DanmakuTimelineRange readRange(int startUs, int endUs) =>
-      cache.readRange(startUs, endUs, ruleRevision: revision);
+  DanmakuTimelineRange readRange(
+    int startUs,
+    int endUs, {
+    int? maxEntriesPerBucket,
+  }) => cache.readRange(
+    startUs,
+    endUs,
+    ruleRevision: revision,
+    maxEntriesPerBucket: maxEntriesPerBucket,
+  );
   @override
   Future<void> ensureRange(int startUs, int endUs) async {
     requests.add((startUs, endUs));
