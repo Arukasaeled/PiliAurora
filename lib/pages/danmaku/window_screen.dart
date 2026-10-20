@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' show Timeline;
+import 'dart:math' as math;
 import 'dart:ui' show FlutterView;
 
 import 'package:canvas_danmaku/frame_rate_ticker.dart';
@@ -120,9 +121,12 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     if (_continuity != anchor!.continuity) {
       if (!renderer.containsPreparedTime(position)) renderer.reset(position);
       _continuity = anchor.continuity;
-    } else if (position < renderer.validFromUs) {
-      // 同一连续域的轻微校准等待媒体时间追上下界。
-      position = renderer.validFromUs;
+    } else {
+      // 原生校准可能落后于已外推的画面，同一连续域等待媒体时间追上。
+      position = math.max(
+        position,
+        math.max(_lastPositionUs, renderer.validFromUs),
+      );
     }
     _lastPositionUs = position;
     renderer

@@ -66,6 +66,91 @@ void _prepare(DanmakuWindowRenderer<void> renderer, int position) {
 }
 
 void main() {
+  for (final rate in [.5, 2.0]) {
+    testWidgets(
+      'rate change to $rate keeps scrolling monotonic across clock corrections',
+      (tester) async {
+        var now = 0;
+        final clock = _Clock(_anchor(validFor: 500000));
+        final renderer = _renderer();
+        final mediaPositions = <int>[];
+        addTearDown(renderer.dispose);
+        addTearDown(clock.events.close);
+        await tester.pumpWidget(
+          _host(
+            DanmakuWindowScreen<void>(
+              renderer: renderer,
+              clock: clock,
+              size: const Size(320, 120),
+              monotonicUs: () => now,
+              prepareFrame: (r, p, {required effectiveRate}) {
+                mediaPositions.add(p);
+                _prepare(r, p);
+              },
+            ),
+          ),
+        );
+        now = 200000;
+        await tester.pump(const Duration(milliseconds: 200));
+        final before = renderer.interaction.snapshot.single.bounds.left;
+        final generation = renderer.generation;
+        final positions = [before];
+        clock.emit(
+          _anchor(
+            position: 180000,
+            observed: now,
+            rate: rate,
+            validFor: 500000,
+          ),
+        );
+        positions.add(renderer.interaction.snapshot.single.bounds.left);
+        now += 100000;
+        await tester.pump(const Duration(milliseconds: 100));
+        positions.add(renderer.interaction.snapshot.single.bounds.left);
+        clock.emit(
+          _anchor(
+            position: 160000 + (100000 * rate).round(),
+            observed: now,
+            rate: rate,
+            validFor: 500000,
+          ),
+        );
+        positions.add(renderer.interaction.snapshot.single.bounds.left);
+        now += 100000;
+        await tester.pump(const Duration(milliseconds: 100));
+        positions.add(renderer.interaction.snapshot.single.bounds.left);
+        expect(renderer.generation, generation);
+        for (var index = 1; index < positions.length; index++) {
+          expect(
+            positions[index],
+            lessThanOrEqualTo(positions[index - 1]),
+            reason:
+                'same-domain clock calibration must not move scrolling text right: $positions',
+          );
+        }
+        expect(positions.last, lessThan(before));
+        expect(mediaPositions.last, 160000 + (200000 * rate).round());
+        clock
+          ..emit(null)
+          ..emit(
+            _anchor(
+              position: 100000,
+              observed: now,
+              continuity: 1,
+              rate: rate,
+              advancing: false,
+            ),
+          );
+        expect(
+          renderer.interaction.snapshot.single.bounds.left,
+          greaterThan(positions.last),
+          reason: 'a confirmed backward seek must still restore the earlier position',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
   testWidgets('same-domain clock correction keeps the latest geometry cut', (
     tester,
   ) async {
