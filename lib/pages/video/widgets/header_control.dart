@@ -900,9 +900,9 @@ class HeaderControlState extends State<HeaderControl>
   }
 
   void showDanmakuPool() {
-    final ctr = plPlayerController.danmakuInteraction;
-    if (ctr == null) return;
+    if (plPlayerController.danmakuInteraction == null) return;
     showBottomSheet((context, setState) {
+      final ctr = plPlayerController.danmakuInteraction;
       final theme = Theme.of(context);
       final isPortrait =
           MediaQuery.orientationOf(context) == Orientation.portrait;
@@ -948,7 +948,7 @@ class HeaderControlState extends State<HeaderControl>
                   ),
                   child: CustomScrollView(
                     slivers: [
-                      ?_buildDanmakuList(ctr.snapshot),
+                      ?_buildDanmakuList(ctr?.snapshot ?? const []),
                       const SliverToBoxAdapter(child: SizedBox(height: 12)),
                     ],
                   ),

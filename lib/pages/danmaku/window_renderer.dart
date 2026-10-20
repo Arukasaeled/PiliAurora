@@ -620,6 +620,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   DanmakuInteractionHandle<T> get interaction =>
       _WindowInteraction(this, _interactionEpoch);
   int get activeCount => _active.length;
+  int get presentationTimeUs => _mediaUs;
   int get activeSpecialCount =>
       _active.values.where((item) => item.specialBounds != null).length;
   bool hasPrepared(Object identity) => _planner.window.hasIdentity(identity);

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:get/get.dart';
@@ -120,7 +121,11 @@ class _PlDanmakuState extends State<PlDanmaku> {
     player.danmakuDisplay = _binding = DanmakuDisplayBinding(
       interaction: () => created.interaction,
       clear: () => created.reset(player.positionInMilliseconds * 1000),
-      echo: _echoes.add,
+      // 发送接口采用毫秒，投放时保留当前显示窗口的微秒下界。
+      echo: (content, mediaUs) => _echoes.add(
+        content,
+        math.max(mediaUs, created.presentationTimeUs),
+      ),
       seeking: created.suspendPresentation,
       remove: _echoes.remove,
     );

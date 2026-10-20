@@ -1084,6 +1084,7 @@ class LiveDanmaku extends StatefulWidget {
 class _LiveDanmakuState extends State<LiveDanmaku> {
   PlPlayerController get player => widget.plPlayerController;
   DanmakuDisplayBinding? _binding;
+  bool _enabled = false;
 
   @override
   void initState() {
@@ -1093,8 +1094,23 @@ class _LiveDanmakuState extends State<LiveDanmaku> {
   }
 
   void _statusChanged(PlayerStatus _) => _optionsChanged();
+  void _syncBinding() {
+    if (_enabled && player.isLive && _binding != null) {
+      player.danmakuDisplay = _binding;
+    } else if (identical(player.danmakuDisplay, _binding)) {
+      player.danmakuDisplay = null;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _enabled = TickerMode.valuesOf(context).enabled;
+    _syncBinding();
+  }
+
   void _optionsChanged() {
-    if (player.isLive && _binding != null) player.danmakuDisplay = _binding;
+    _syncBinding();
     if (mounted) setState(() {});
   }
 
@@ -1115,10 +1131,11 @@ class _LiveDanmakuState extends State<LiveDanmaku> {
           frameRate: frameRate,
           videoDisplaySyncActive: player.videoDisplaySyncActive,
           createdInteraction: (interaction, clear) {
-            player.danmakuDisplay = _binding = DanmakuDisplayBinding(
+            _binding = DanmakuDisplayBinding(
               interaction: interaction,
               clear: clear,
             );
+            _syncBinding();
           },
         ),
       );

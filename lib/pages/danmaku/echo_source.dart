@@ -19,7 +19,11 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
   final _echoes =
       <
         int,
-        ({DanmakuElem element, DanmakuContentItem<DanmakuExtra> content})
+        ({
+          DanmakuElem element,
+          DanmakuContentItem<DanmakuExtra> content,
+          int mediaUs,
+        })
       >{};
   final _removed = <int>{};
   final _changes = StreamController<DanmakuSourceChange>.broadcast(sync: true);
@@ -69,8 +73,8 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
       weight: 11,
     )..isSelf = true;
     if (_echoes.length == 64) _echoes.remove(_echoes.keys.first);
-    _echoes[id] = (element: element, content: content);
-    _changed(element.progress * 1000);
+    _echoes[id] = (element: element, content: content, mediaUs: mediaUs);
+    _changed(mediaUs);
   }
 
   DanmakuContentItem<DanmakuExtra>? contentFor(DanmakuElem element) =>
@@ -80,9 +84,7 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
     // 交互身份由编排器生成；快照的业务 id 由挂载处解析后传入。
     if (identity is! int) return;
     final echo = _echoes.remove(identity);
-    final sourceUs = echo == null
-        ? _positions[identity]
-        : echo.element.progress * 1000;
+    final sourceUs = echo == null ? _positions[identity] : echo.mediaUs;
     if (_removed.length == 256) _removed.remove(_removed.first);
     _removed.add(identity);
     _revision++;
@@ -143,9 +145,8 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
             ))
           entry,
       for (final echo in _echoes.values)
-        if (echo.element.progress * 1000 >= startUs &&
-            echo.element.progress * 1000 < endUs)
-          DanmakuTimelineEntry(echo.element),
+        if (echo.mediaUs >= startUs && echo.mediaUs < endUs)
+          DanmakuTimelineEntry(echo.element, localPositionUs: echo.mediaUs),
     ];
     final ordered = entries.indexed.toList()
       ..sort((a, b) {
@@ -153,11 +154,7 @@ class DanmakuEchoSource implements DanmakuTimelineSource {
         return time == 0 ? a.$1.compareTo(b.$1) : time;
       });
     final echoTimes =
-        _echoes.values
-            .map((echo) => echo.element.progress * 1000)
-            .toSet()
-            .toList()
-          ..sort();
+        _echoes.values.map((echo) => echo.mediaUs).toSet().toList()..sort();
     final coverage = <DanmakuRangeCoverage>[];
     for (final part in range.coverage) {
       var cursor = part.startUs;

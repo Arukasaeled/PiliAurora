@@ -30,7 +30,7 @@ void main() {
 
   for (final isLive in [false, true]) {
     testWidgets('保存帧率后当前${isLive ? '直播' : '视频'}弹幕立即更新且保留控制器', (tester) async {
-      final player = _Player();
+      final player = _Player(isLive: isLive);
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
@@ -93,6 +93,9 @@ void main() {
 }
 
 class _Player implements PlPlayerController {
+  _Player({required this.isLive});
+  @override
+  final bool isLive;
   @override
   final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier<bool>(true);
   @override

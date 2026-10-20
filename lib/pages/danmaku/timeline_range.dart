@@ -2,10 +2,12 @@ import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 
 /// 来源接入处将服务端毫秒转换为媒体微秒。
 class DanmakuTimelineEntry {
-  const DanmakuTimelineEntry(this.element);
+  const DanmakuTimelineEntry(this.element, {this.localPositionUs});
 
   final DanmakuElem element;
-  int get positionUs => element.progress * Duration.microsecondsPerMillisecond;
+  final int? localPositionUs;
+  int get positionUs =>
+      localPositionUs ?? element.progress * Duration.microsecondsPerMillisecond;
 }
 
 enum DanmakuCoverageState { loaded, missing, loading, invalidated, failed }

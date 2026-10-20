@@ -78,6 +78,20 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       () => {
         ...widget.renderer.statistics,
         'input': 'timeline',
+        'visible': _visible,
+        'opacity': widget.opacity,
+        'tickerEnabled': _enabled,
+        'presentationTimeUs': widget.renderer.presentationTimeUs,
+        'sampledAtUs': widget.monotonicUs?.call() ?? Timeline.now,
+        'mediaAnchor': {
+          'positionUs': _anchor?.positionUs,
+          'observedAtUs': _anchor?.observedAtUs,
+          'effectiveRate': _anchor?.effectiveRate,
+          'advancing': _anchor?.advancing,
+          'ready': _anchor?.ready,
+          'continuity': _anchor?.continuity,
+          'validForUs': _anchor?.validForUs,
+        },
         'scheduler': _ticker.diagnostics,
       },
     );

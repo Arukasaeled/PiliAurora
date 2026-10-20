@@ -418,6 +418,22 @@ void main() {
   });
 
   test('slow frames keep bounded wall times and reset after capture', () async {
+    diagnostics
+      ..register(
+        'player',
+        () => {
+          for (var i = 0; i < 64; i++)
+            'field$i': {'value': i, 'available': true},
+        },
+      )
+      ..register(
+        'danmaku.layer',
+        () => {
+          'scheduler': {'updates': 60, 'frameRequests': 60},
+          'mediaAnchor': {'positionUs': 1000500},
+          'token': 'fixture-private-value',
+        },
+      );
     await diagnostics.configure(tracing: true);
     const finish = 1700000000000000;
     final timings = List.generate(
@@ -440,6 +456,15 @@ void main() {
     expect(frames['count'], 80);
     expect(frames['slowFrames'], 80);
     expect(details, hasLength(16));
+    final layer =
+        (diagnostics.latest!['sources'] as Map)['danmaku.layer'] as Map;
+    expect(layer['scheduler'], containsPair('updates', 60));
+    expect(layer['mediaAnchor'], containsPair('positionUs', 1000500));
+    expect(
+      jsonEncode(diagnostics.latest),
+      isNot(contains('fixture-private-value')),
+    );
+    expect(diagnostics.latest!['diagnostics'], isA<Map>());
     expect(details.first, containsPair('buildMs', 20.0));
     expect(details.first, containsPair('rasterMs', 30.0));
     expect(

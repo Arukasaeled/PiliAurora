@@ -93,6 +93,19 @@ class PlPlayerController
       'previewCacheLimitBytes': previewCache.maxBytes,
       'live': isLive,
       'appLifecycle': WidgetsBinding.instance.lifecycleState?.name,
+      'session': {
+        'phase': _session.currentSnapshot.phase.name,
+        'stage': _session.currentSnapshot.stage.name,
+        'runtimeId': _session.currentSnapshot.runtimeId,
+        'requestId': _session.currentSnapshot.requestId,
+        'loadId': _session.currentSnapshot.loadId,
+        'playingIntent': _session.currentSnapshot.intent.playing,
+        'seeking': _session.currentSnapshot.actual.seeking,
+        'inhibitors': [
+          for (final inhibitor in _session.currentSnapshot.inhibitors)
+            inhibitor.source.name,
+        ],
+      },
       ..._runtime.videoFrameDiagnostics,
     },
   );
