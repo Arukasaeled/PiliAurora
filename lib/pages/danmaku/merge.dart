@@ -9,10 +9,31 @@ import 'package:pili_aurora/services/danmaku/work_quota.dart';
 import 'package:pili_aurora/pages/danmaku/element_size.dart';
 import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
 
-int estimateDanmakuWorkBytes(List<DanmakuElem> elements) => elements.fold<int>(
-  0,
-  (bytes, element) => bytes + estimateDanmakuElementBytes(element) * 4,
-);
+int estimateDanmakuInputBytes(List<DanmakuElem> elements) =>
+    64 +
+    8 * elements.length +
+    elements.fold<int>(
+      0,
+      (bytes, element) => bytes + estimateDanmakuElementBytes(element),
+    );
+
+/// 来源输入/结果各一份、排序双索引，加一个有界 worker 流水线。
+int estimateDanmakuWorkBytes(List<DanmakuElem> elements) =>
+    2 *
+        elements.fold<int>(
+          0,
+          (bytes, element) => bytes + estimateDanmakuElementBytes(element),
+        ) +
+    32 * elements.length +
+    orderedDanmakuWorkerBytes;
+
+/// 批次发送方、worker 输入与返回、接收方引用；游标另行持有跨批上下文。
+const orderedDanmakuWorkerBytes =
+    DanmakuProcessingBudget.cursorBytes +
+    DanmakuProcessingBudget.normalizationScratchBytes +
+    4 * DanmakuProcessingBudget.batchBytes +
+    2 * DanmakuProcessingBudget.rulesBytes +
+    256 * 64;
 
 /// 分段与文件合并共用后台路径，已获配批次沿用其处理预留。
 Future<List<DanmakuElem>> mergeDanmakuInBackground(
@@ -34,19 +55,24 @@ Future<List<DanmakuElem>> processDanmakuInBackground(
   DanmakuWorkToken? token,
   DanmakuWorkLease? lease,
 }) {
-  Future<List<DanmakuElem>> merge() => _mergeInWorker(elements, token, rules);
+  Future<List<DanmakuElem>> merge() {
+    lease?.requireBytes(estimateDanmakuWorkBytes(elements));
+    return _mergeInWorker(elements, token, rules);
+  }
+
   return lease != null
       ? lease.execute(merge)
       : DanmakuWorkQuota.instance.run(
           estimateDanmakuWorkBytes(elements),
           merge,
           token: token,
-          waitingBytes: estimateDanmakuWorkBytes(elements),
+          waitingBytes:
+              estimateDanmakuInputBytes(elements) + rules.storageBytes + 256,
         );
 }
 
-const _mergeBatchElements = 256;
-const _mergeBatchBytes = 512 * 1024;
+const _mergeBatchElements = DanmakuProcessingBudget.batchElements;
+const _mergeBatchBytes = DanmakuProcessingBudget.batchBytes;
 
 /// 已按来源稳定次序排序的文件批次，共用一个游标；接收方按范围转移结果。
 Future<void> processOrderedDanmakuBatches(
@@ -56,6 +82,8 @@ Future<void> processOrderedDanmakuBatches(
   required DanmakuWorkLease lease,
   DanmakuWorkToken? token,
 }) => lease.execute(() async {
+  lease.requireBytes(orderedDanmakuWorkerBytes);
+  rules.requireBudget();
   final output = ReceivePort();
   final events = StreamIterator<dynamic>(output);
   Isolate? worker;
@@ -68,6 +96,7 @@ Future<void> processOrderedDanmakuBatches(
       exited = true;
       throw StateError('弹幕处理 worker 提前退出');
     }
+    if (event is DanmakuWorkTooLarge) throw event;
     if (event is List) throw StateError('弹幕处理 worker 执行失败');
     return event;
   }
@@ -82,6 +111,7 @@ Future<void> processOrderedDanmakuBatches(
     input = await next() as SendPort;
     await for (final batch in batches) {
       if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
+      _requireBatch(batch);
       input.send(batch);
       consume(await next() as DanmakuMergeDelta);
     }
@@ -98,6 +128,19 @@ Future<void> processOrderedDanmakuBatches(
   }
 });
 
+void _requireBatch(List<DanmakuElem> batch) {
+  if (batch.length > _mergeBatchElements) {
+    throw DanmakuWorkTooLarge(batch.length, _mergeBatchElements);
+  }
+  final bytes = batch.fold<int>(
+    0,
+    (sum, element) => sum + estimateDanmakuElementBytes(element),
+  );
+  if (bytes > _mergeBatchBytes) {
+    throw DanmakuWorkTooLarge(bytes, _mergeBatchBytes);
+  }
+}
+
 void _mergeWorker((SendPort, DanmakuProcessingRules) request) {
   final (output, rules) = request;
   final input = ReceivePort();
@@ -107,14 +150,19 @@ void _mergeWorker((SendPort, DanmakuProcessingRules) request) {
     if (message == null) {
       input.close();
     } else {
-      final filtered = (message as List<DanmakuElem>)
-          .where(rules.retain)
-          .toList();
-      output.send(
-        rules.merge
-            ? cursor.appendDelta(filtered)
-            : DanmakuMergeDelta(filtered, const {}),
-      );
+      try {
+        final filtered = (message as List<DanmakuElem>)
+            .where(rules.retain)
+            .toList();
+        output.send(
+          rules.merge
+              ? cursor.appendDelta(filtered)
+              : DanmakuMergeDelta(filtered, const {}),
+        );
+      } on DanmakuWorkTooLarge catch (error) {
+        output.send(error);
+        input.close();
+      }
     }
   });
 }
@@ -169,6 +217,7 @@ Future<List<DanmakuElem>> _mergeInWorker(
   DanmakuProcessingRules rules,
 ) async {
   if (elements.isEmpty) return [];
+  rules.requireBudget();
   // 仅排序来源索引；protobuf 对象按有界批次复制到 worker。
   final order = rules.merge
       ? await _orderedIndices(elements, token)
@@ -185,6 +234,7 @@ Future<List<DanmakuElem>> _mergeInWorker(
       exited = true;
       throw StateError('弹幕合并 worker 提前退出');
     }
+    if (event is DanmakuWorkTooLarge) throw event;
     if (event is List) throw StateError('弹幕合并 worker 执行失败');
     return event;
   }
@@ -205,7 +255,10 @@ Future<List<DanmakuElem>> _mergeInWorker(
       var bytes = 0;
       while (start < order.length && batch.length < _mergeBatchElements) {
         final element = elements[order[start]];
-        final size = estimateDanmakuElementBytes(element) * 4;
+        final size = estimateDanmakuElementBytes(element);
+        if (size > _mergeBatchBytes) {
+          throw DanmakuWorkTooLarge(size, _mergeBatchBytes);
+        }
         if (batch.isNotEmpty && bytes + size > _mergeBatchBytes) break;
         batch.add(element);
         bytes += size;
@@ -285,11 +338,21 @@ class DanmakuMerger {
 /// 有序批次共用窗口状态。返回本批新增项；后续匹配会更新此前返回项的 count。
 /// 同时间条目保持调用方顺序，每次独立重算创建新的游标。
 class DanmakuMergeCursor {
+  DanmakuMergeCursor({
+    this.maxGroupBytes = DanmakuProcessingBudget.groupBytes,
+    this.maxNormalizedBytes = DanmakuProcessingBudget.normalizedBytes,
+  });
+  final int maxGroupBytes;
+  final int maxNormalizedBytes;
   final _groups = Queue<_MergeGroup>();
   final _exact = <(int, String), _MergeGroup>{};
   final _lengths = <(int, int), Queue<_MergeGroup>>{};
   final _normalizedTexts = <String, String>{};
   final _matcher = _DistanceMatcher();
+  int _groupBytes = 0;
+  int _normalizedBytes = 0;
+  int get groupBytes => _groupBytes;
+  int get normalizedBytes => _normalizedBytes;
 
   int? _lastProgress;
   int _nextIndex = 0;
@@ -309,6 +372,17 @@ class DanmakuMergeCursor {
   ) {
     var previous = _lastProgress;
     for (final element in elements) {
+      final bytes = estimateDanmakuElementBytes(element);
+      if (bytes > _mergeBatchBytes) {
+        throw DanmakuWorkTooLarge(bytes, _mergeBatchBytes);
+      }
+      if (element.content.length >
+          DanmakuProcessingBudget.maxElementEncodedBytes) {
+        throw DanmakuWorkTooLarge(
+          element.content.length,
+          DanmakuProcessingBudget.maxElementEncodedBytes,
+        );
+      }
       if (previous != null && element.progress < previous) {
         throw ArgumentError('合并批次必须沿媒体时间有序追加');
       }
@@ -321,15 +395,24 @@ class DanmakuMergeCursor {
       if (cached != null) return cached;
       final text = DanmakuMerger.normalize(content);
       // 重复原文复用归一化结果；缓存限界，分散文本不会持续增加匹配状态。
-      if (_normalizedTexts.length >= DanmakuMerger._maxGroups) {
-        _normalizedTexts.remove(_normalizedTexts.keys.first);
+      final bytes = 128 + 2 * (content.length + text.length);
+      while (_normalizedTexts.isNotEmpty &&
+          (_normalizedTexts.length >= DanmakuMerger._maxGroups ||
+              _normalizedBytes + bytes > maxNormalizedBytes)) {
+        final key = _normalizedTexts.keys.first;
+        final value = _normalizedTexts.remove(key)!;
+        _normalizedBytes -= 128 + 2 * (key.length + value.length);
       }
-      _normalizedTexts[content] = text;
+      if (bytes <= maxNormalizedBytes) {
+        _normalizedTexts[content] = text;
+        _normalizedBytes += bytes;
+      }
       return text;
     }
 
     void evict() {
       final group = _groups.removeFirst();
+      _groupBytes -= group.bytes;
       final key = (group.element.mode, group.text);
       if (identical(_exact[key], group)) _exact.remove(key);
       final lengthKey = (group.element.mode, group.runes.length);
@@ -361,7 +444,11 @@ class DanmakuMergeCursor {
         counts?[match.index] = match.element.count;
         continue;
       }
-      final runes = text.runes.toList();
+      final runes = Uint32List(text.runes.length);
+      var runeIndex = 0;
+      for (final rune in text.runes) {
+        runes[runeIndex++] = rune;
+      }
       // 语义特征每条提取一次，不随候选数量重复执行正则匹配。
       final meaning = DanmakuMerger._meaning
           .allMatches(text)
@@ -395,6 +482,10 @@ class DanmakuMergeCursor {
       }
       final group = _MergeGroup(element, text, runes, meaning, _nextIndex++);
       if (_groups.length >= DanmakuMerger._maxGroups) evict();
+      if (_groupBytes + group.bytes > maxGroupBytes) {
+        throw DanmakuWorkTooLarge(_groupBytes + group.bytes, maxGroupBytes);
+      }
+      _groupBytes += group.bytes;
       _groups.add(group);
       _exact[key] = group;
       (_lengths[(element.mode, runes.length)] ??= Queue()).add(group);
@@ -472,6 +563,11 @@ class _MergeGroup {
   final String text;
   final List<int> runes;
   final String meaning;
+  int get bytes =>
+      384 +
+      estimateDanmakuElementBytes(element) +
+      2 * (text.length + meaning.length) +
+      8 * runes.length;
 }
 
 double mergedDanmakuFontScale(

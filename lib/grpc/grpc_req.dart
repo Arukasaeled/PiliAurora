@@ -10,6 +10,7 @@ import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, compute;
@@ -59,7 +60,13 @@ abstract final class GrpcReq {
   }
 
   static Uint8List decompressProtobuf(Uint8List data, {int? maxDecodedBytes}) {
+    if (data.length < 5 || (data[0] != 0 && data[0] != 1)) {
+      throw const FormatException('gRPC 帧头无效');
+    }
     final length = ByteData.sublistView(data, 1, 5).getInt32(0, Endian.big);
+    if (length < 0 || length > data.length - 5) {
+      throw const FormatException('gRPC 帧长度越界');
+    }
 
     if (data[0] == 1) {
       if (maxDecodedBytes != null) {
@@ -84,15 +91,22 @@ abstract final class GrpcReq {
     }
   }
 
-  static LoadingState<T> _parse<T>(
-    (Uint8List, T Function(Uint8List), int?) args,
+  static (LoadingState<T>, int) _parse<T>(
+    (Uint8List, T Function(Uint8List), int?, int Function(Uint8List)?, int?)
+    args,
   ) {
     try {
       final data = decompressProtobuf(args.$1, maxDecodedBytes: args.$3);
+      final storage = args.$4?.call(data) ?? 0;
+      if (args.$5 case final limit?) {
+        final bytes =
+            2 * args.$1.length + 2 * (args.$3 ?? data.length) + 2 * storage;
+        if (bytes > limit) throw DanmakuWorkTooLarge(bytes, limit);
+      }
       final grpcResponse = args.$2(data);
-      return Success(grpcResponse);
+      return (Success(grpcResponse), storage);
     } catch (e) {
-      return Error(e.toString());
+      return (Error(e.toString()), 0);
     }
   }
 
@@ -102,6 +116,7 @@ abstract final class GrpcReq {
     T Function(Uint8List) grpcParser, {
     bool isolate = false,
     bool danmakuWork = false,
+    int Function(Uint8List)? inspectDecoded,
     DanmakuWorkToken? workToken,
     Future<void> Function(T, DanmakuWorkLease)? consume,
     Account? account,
@@ -143,18 +158,36 @@ abstract final class GrpcReq {
           final decodedLimit = danmakuWork
               ? GrpcDecodePolicy.estimatedDecodedBytes(data)
               : null;
-          Future<LoadingState<T>> decode() async => background
-              ? await compute(_parse<T>, (data, grpcParser, decodedLimit))
-              : _parse<T>((data, grpcParser, decodedLimit));
+          if (decodedLimit != null &&
+              decodedLimit > DanmakuProcessingBudget.maxDecodedBytes) {
+            throw DanmakuWorkTooLarge(
+              decodedLimit,
+              DanmakuProcessingBudget.maxDecodedBytes,
+            );
+          }
+          final parseArgs = (
+            data,
+            grpcParser,
+            decodedLimit,
+            inspectDecoded,
+            danmakuWork ? DanmakuWorkQuota.instance.maxBytes : null,
+          );
+          Future<(LoadingState<T>, int)> decode() async => background
+              ? await compute(_parse<T>, parseArgs)
+              : _parse<T>(parseArgs);
           final result = danmakuWork
               ? await DanmakuWorkQuota.instance.runWithLease(
-                  data.length +
-                      GrpcDecodePolicy.estimatedDecodedBytes(data) * 16,
+                  DanmakuWorkQuota.instance.maxBytes,
                   (lease) async {
-                    final decoded = await decode();
+                    final (decoded, storage) = await decode();
                     if (!(workToken?.isCancelled ?? false)) {
                       if (decoded case Success(:final response)) {
-                        await consume?.call(response, lease);
+                        await consume?.call(
+                          response,
+                          lease.retaining(
+                            2 * data.length + 2 * decodedLimit! + storage,
+                          ),
+                        );
                       }
                     }
                     return decoded;
@@ -162,7 +195,7 @@ abstract final class GrpcReq {
                   token: workToken,
                   waitingBytes: data.length + 256,
                 )
-              : await decode();
+              : (await decode()).$1;
           operation?.finish(error: result is Error ? result.errMsg : null);
           return result;
         } on DanmakuWorkBusy {

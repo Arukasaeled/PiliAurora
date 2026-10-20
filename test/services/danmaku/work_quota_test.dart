@@ -2,8 +2,58 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 
 void main() {
+  test(
+    'global quota diagnostics remain readable through cancelled work',
+    () async {
+      final quota = DanmakuWorkQuota.instance;
+      final token = DanmakuWorkToken();
+      final entered = Completer<void>();
+      final finish = Completer<void>();
+      final pending = quota.run(23, () async {
+        entered.complete();
+        await finish.future;
+      }, token: token);
+      await entered.future;
+      token.cancel();
+      Map<String, Object?> read() => Diagnostics.instance.readSources(
+        prefix: 'danmaku.processWorkQuota',
+      );
+      expect(
+        read()['danmaku.processWorkQuota'],
+        containsPair('obsoleteRunningTasks', 1),
+      );
+      expect(
+        read()['danmaku.processWorkQuota'],
+        containsPair('obsoleteReservedBytes', 23),
+      );
+      final localQuota = DanmakuWorkQuota();
+      expect(localQuota.snapshot['runningTasks'], 0);
+      expect(read().keys, ['danmaku.processWorkQuota']);
+      finish.complete();
+      await pending;
+      expect(
+        read()['danmaku.processWorkQuota'],
+        containsPair('obsoleteRunningTasks', 0),
+      );
+      expect(
+        read()['danmaku.processWorkQuota'],
+        containsPair('obsoleteReservedBytes', 0),
+      );
+    },
+  );
+  test('retained storage reduces child allowance and child expires with its parent', () async {
+    final quota = DanmakuWorkQuota(maxBytes: 10);
+    late DanmakuWorkLease child;
+    await quota.runWithLease(10, (lease) {
+      child = lease.retaining(4)..requireBytes(6);
+      expect(() => child.requireBytes(7), throwsA(isA<DanmakuWorkTooLarge>()));
+    });
+    expect(() => child.requireBytes(0), throwsStateError);
+    await expectLater(child.execute(() => 1), throwsStateError);
+  });
   test(
     'waiting count and bytes reject excess work, cancellation returns capacity',
     () async {
@@ -93,7 +143,11 @@ void main() {
       await done.future;
     }, token: token);
     await entered.future;
+    expect(quota.snapshot['obsoleteRunningTasks'], 0);
+    expect(quota.snapshot['obsoleteReservedBytes'], 0);
     token.cancel();
+    expect(quota.snapshot['obsoleteRunningTasks'], 1);
+    expect(quota.snapshot['obsoleteReservedBytes'], 1);
     var started = false;
     final second = quota.run(1, () => started = true);
     await Future<void>.delayed(Duration.zero);
@@ -102,6 +156,8 @@ void main() {
     await first;
     await second;
     expect(started, isTrue);
+    expect(quota.snapshot['obsoleteRunningTasks'], 0);
+    expect(quota.snapshot['obsoleteReservedBytes'], 0);
   });
 
   test('cancellation between reservation and start releases permit', () async {

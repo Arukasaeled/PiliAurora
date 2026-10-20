@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
 import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
 import 'package:pili_aurora/models/user/danmaku_rule.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
@@ -23,6 +24,75 @@ DanmakuElem _dm(
 );
 
 void main() {
+  test('ordered worker cancellation retains quota until worker exit', () async {
+    final quota = DanmakuWorkQuota();
+    final token = DanmakuWorkToken();
+    late Future<void> successor;
+    var successorStarted = false;
+    final pending = quota.runWithLease(
+      quota.maxBytes,
+      (lease) => processOrderedDanmakuBatches(
+        Stream.value([_dm('worker has processed this batch', 0)]),
+        rules: DanmakuProcessingRules(),
+        lease: lease,
+        token: token,
+        consume: (_) {
+          expect(quota.snapshot['runningTasks'], 1);
+          token.cancel();
+          successor = quota.run(1, () {
+            successorStarted = true;
+          });
+          expect(successorStarted, isFalse);
+        },
+      ),
+    );
+    await expectLater(pending, throwsA(isA<DanmakuWorkCancelled>()));
+    await successor;
+    expect(successorStarted, isTrue);
+    expect(quota.snapshot['runningTasks'], 0);
+  });
+  test('oversized rule description fails before constructing its snapshot', () {
+    expect(
+      () => DanmakuProcessingRules(
+        filter: RuleFilter(['x' * (1024 * 1024)], [], {}),
+      ),
+      throwsA(isA<DanmakuWorkTooLarge>()),
+    );
+  });
+  test('cursor bytes reject new groups without silently changing matching semantics', () {
+    final cursor = DanmakuMergeCursor(
+      maxGroupBytes: 1500,
+      maxNormalizedBytes: 160,
+    );
+    final original = cursor.appendOrdered([_dm('original', 0)]).single;
+    expect(
+      () => cursor.appendOrdered([_dm('different', 1)]),
+      throwsA(isA<DanmakuWorkTooLarge>()),
+    );
+    expect(original.count, 1);
+    expect(cursor.groupBytes, lessThanOrEqualTo(1500));
+    expect(cursor.normalizedBytes, lessThanOrEqualTo(160));
+  });
+  test(
+    'insufficient inherited lease and oversized first item are rejected',
+    () async {
+      final quota = DanmakuWorkQuota();
+      await expectLater(
+        quota.runWithLease(
+          1024,
+          (lease) => mergeDanmakuInBackground([_dm('small', 0)], lease: lease),
+        ),
+        throwsA(isA<DanmakuWorkTooLarge>()),
+      );
+      await expectLater(
+        mergeDanmakuInBackground([
+          _dm('x' * DanmakuProcessingBudget.batchBytes, 0),
+        ]),
+        throwsA(isA<DanmakuWorkTooLarge>()),
+      );
+      expect(DanmakuWorkQuota.instance.snapshot['runningTasks'], 0);
+    },
+  );
   test('worker snapshots filters, marks own messages and preserves disabled merge order', () async {
     final filter = RuleFilter(
       ['blocked'],

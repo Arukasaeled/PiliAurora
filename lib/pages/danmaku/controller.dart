@@ -217,7 +217,7 @@ class PlDanmakuController implements DanmakuTimelineSource {
           estimateDanmakuWorkBytes(elems),
           (lease) => _processDanmaku(elems, segmentIndex, lease),
           token: _ruleWork,
-          waitingBytes: estimateDanmakuWorkBytes(elems),
+          waitingBytes: estimateDanmakuInputBytes(elems) + 256,
         );
       }
     } on DanmakuWorkBusy {

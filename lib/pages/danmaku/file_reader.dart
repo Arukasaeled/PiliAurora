@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/services/danmaku/work_quota.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
 
 List<DanmakuElem> _decodeElements(List<Uint8List> messages) =>
     messages.map(DanmakuElem.fromBuffer).toList();
@@ -13,8 +14,8 @@ List<DanmakuElem> _decodeElements(List<Uint8List> messages) =>
 Stream<List<DanmakuElem>> readDanmakuFile(
   File file, {
   DanmakuWorkToken? token,
-  int batchElements = 256,
-  int batchBytes = 512 * 1024,
+  int batchElements = DanmakuProcessingBudget.batchElements,
+  int batchBytes = DanmakuProcessingBudget.batchBytes,
 }) async* {
   if (batchElements <= 0 || batchBytes <= 0) throw ArgumentError('文件批次预算必须为正数');
   final handle = await file.open();
@@ -22,23 +23,41 @@ Stream<List<DanmakuElem>> readDanmakuFile(
     final reader = _FileWireReader(handle, await handle.length());
     var messages = <Uint8List>[];
     var bytes = 0;
+    var decodedBytes = 0;
     while (reader.position < reader.length) {
       if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
       final tag = await reader.tag();
       if (tag == 10) {
         final length = await reader.varint();
         reader.require(length);
+        final limit = math.min(
+          batchBytes,
+          DanmakuProcessingBudget.maxElementEncodedBytes,
+        );
+        if (length > limit) throw DanmakuWorkTooLarge(length, limit);
         if (messages.isNotEmpty && bytes + length > batchBytes) {
           yield await compute(_decodeElements, messages);
           messages = [];
           bytes = 0;
+          decodedBytes = 0;
         }
-        messages.add(await reader.bytes(length));
+        final message = await reader.bytes(length);
+        final size = inspectDanmakuProtobuf(message, element: true);
+        if (size > batchBytes) throw DanmakuWorkTooLarge(size, batchBytes);
+        if (messages.isNotEmpty && decodedBytes + size > batchBytes) {
+          yield await compute(_decodeElements, messages);
+          messages = [];
+          bytes = 0;
+          decodedBytes = 0;
+        }
+        messages.add(message);
         bytes += length;
+        decodedBytes += size;
         if (messages.length >= batchElements || bytes >= batchBytes) {
           yield await compute(_decodeElements, messages);
           messages = [];
           bytes = 0;
+          decodedBytes = 0;
         }
       } else {
         await reader.skipField(tag);

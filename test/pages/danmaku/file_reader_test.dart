@@ -19,12 +19,23 @@ Future<File> _fixture(List<int> bytes) async {
 }
 
 void main() {
+  test('oversized first element fails before decoding instead of bypassing batch budget', () async {
+    final file = await _fixture(
+      DmSegMobileReply(elems: [DanmakuElem(content: 'x' * 3000)])
+          .writeToBuffer(),
+    );
+    await expectLater(
+      readDanmakuFile(file, batchBytes: 2048).drain<void>(),
+      throwsA(isA<DanmakuWorkTooLarge>()),
+    );
+  });
   test(
     'field-wise reading matches protobuf across buffers and batch boundaries',
     () async {
       final reply = DmSegMobileReply(
         elems: [
-          DanmakuElem(content: '长' * 35000, progress: 360100, mode: 7),
+          DanmakuElem(content: '长' * 15000, progress: 360100, mode: 7),
+          DanmakuElem(content: '另' * 15000, progress: 360101, mode: 7),
           for (var i = 0; i < 8; i++) DanmakuElem(content: '条目$i', progress: i),
         ],
         state: 1,
@@ -35,7 +46,7 @@ void main() {
       final batches = await readDanmakuFile(
         file,
         batchElements: 2,
-        batchBytes: 2048,
+        batchBytes: 128 * 1024,
       ).toList();
       expect(batches.every((batch) => batch.length <= 2), isTrue);
       expect(

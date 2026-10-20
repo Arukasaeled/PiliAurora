@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
+
 class DanmakuWorkBusy implements Exception {
   const DanmakuWorkBusy();
 }
@@ -37,12 +39,14 @@ class DanmakuWorkToken {
 
 /// 同一批次后续阶段复用获配资格，直到结果整理结束。
 class DanmakuWorkLease {
-  DanmakuWorkLease._(this.reservedBytes);
+  DanmakuWorkLease._(this.reservedBytes, [this._parent]);
   final int reservedBytes;
+  final DanmakuWorkLease? _parent;
   bool _active = true;
 
   /// 后续阶段在建立副本前复核同一批次的预留。
   void requireBytes(int bytes) {
+    _parent?.requireBytes(0);
     if (!_active) throw StateError('来源处理额度已归还');
     if (bytes < 0) throw ArgumentError.value(bytes);
     if (bytes > reservedBytes) {
@@ -50,8 +54,14 @@ class DanmakuWorkLease {
     }
   }
 
+  /// 前一阶段仍持有的输入/解析结果从下一阶段的可用额度中扣除。
+  DanmakuWorkLease retaining(int bytes) {
+    requireBytes(bytes);
+    return DanmakuWorkLease._(reservedBytes - bytes, this);
+  }
+
   Future<T> execute<T>(FutureOr<T> Function() work) async {
-    if (!_active) throw StateError('来源处理额度已归还');
+    requireBytes(0);
     return await work();
   }
 }
@@ -68,7 +78,16 @@ class DanmakuWorkQuota {
        assert(maxWaitingTasks > 0),
        assert(maxWaitingBytes > 0);
 
-  static final instance = DanmakuWorkQuota();
+  static final instance = _createProcessQuota();
+
+  static DanmakuWorkQuota _createProcessQuota() {
+    final quota = DanmakuWorkQuota();
+    Diagnostics.instance.register(
+      'danmaku.processWorkQuota',
+      () => quota.snapshot,
+    );
+    return quota;
+  }
 
   final int maxTasks;
   final int maxBytes;
@@ -79,17 +98,32 @@ class DanmakuWorkQuota {
   final _waiting =
       Queue<({int bytes, int waitingBytes, Completer<void> ready})>();
   int _waitingBytes = 0;
+  final _running = <DanmakuWorkLease, ({DanmakuWorkToken? token, int bytes})>{};
 
   bool get hasWaitingCapacity =>
       _waiting.length < maxWaitingTasks &&
       _waitingBytes + 256 <= maxWaitingBytes;
 
-  Map<String, int> get snapshot => {
-    'runningTasks': _tasks,
-    'reservedBytes': _bytes,
-    'waitingTasks': _waiting.length,
-    'waitingBytes': _waitingBytes,
-  };
+  Map<String, int> get snapshot {
+    var obsoleteTasks = 0;
+    var obsoleteBytes = 0;
+    // 预约绑定的 token 已取消，任务实际结束前继续保留在途记录。
+    for (final task in _running.values) {
+      if (task.token?.isCancelled ?? false) {
+        obsoleteTasks++;
+        obsoleteBytes += task.bytes;
+      }
+    }
+    return {
+      'runningTasks': _tasks,
+      'reservedBytes': _bytes,
+      'waitingTasks': _waiting.length,
+      'waitingBytes': _waitingBytes,
+      'obsoleteRunningTasks': obsoleteTasks,
+      'obsoleteReservedBytes': obsoleteBytes,
+    };
+  }
+
   int _tasks = 0;
   int _bytes = 0;
 
@@ -152,11 +186,13 @@ class DanmakuWorkQuota {
       token?._listeners.remove(cancelWaiting);
     }
     final lease = DanmakuWorkLease._(ticket.bytes);
+    _running[lease] = (token: token, bytes: ticket.bytes);
     try {
       if (token?.isCancelled ?? false) throw const DanmakuWorkCancelled();
       return await work(lease);
     } finally {
       lease._active = false;
+      _running.remove(lease);
       _tasks--;
       _bytes -= ticket.bytes;
       _drain();
