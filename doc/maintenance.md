@@ -34,6 +34,8 @@ Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`
 
 统计弹幕实际频率时，按 Player、媒体代次和 `targetFrameRate` 分组，对相邻且目标不变、active、非 muted 的采样作累计计数差分；排除暂停、缓冲与目标切换边界。`targetFrameRate=0` 表示跟随屏幕，不能与 60/90 FPS 阶段混算。`locked/independent` 切换本身不足以证明实际更新频率异常。
 
+连续滚动由 ticker 统一推进。点播锚点校准、来源就绪、直播消息和组件重建合并到后续限帧更新，避免通知频率改变实际滚动节奏；直播重建保留两次更新之间的累计运动时间。首次显示、暂停和媒体连续域切换仍按各自状态及时处理。直播图层另以 `presentationTimeUs` 记录已呈现时间，`motionUs` 可包含尚未呈现的累计时间。
+
 弹幕调度快照另提供 `frameCallbacks`（收到的 Dart 帧回调）和 `deadlineSkips`（早于更新截止时间而略过的回调）。结合 `updates/frameRequests` 差分，区分引擎未交付回调与回调到达后未更新。`updateGapBuckets` 记录连续更新的系统帧时间间隔，桶互斥，上限分别为 10/20/30/40/60/100ms，最后一桶大于100ms；按相邻快照差分读取窗口分布。`maxUpdateGapUs` 为累计最大间隔，`longUpdateGaps` 统计超过目标档位正常屏幕槽位量化的间隔，例如120Hz上的60FPS超过约16.67ms、90FPS正常的1/2槽交替不计为长间隔。暂停、静音和切档中断连续统计；所有计数继续累计。这些是弹幕更新时序，最终呈现还需对照 SurfaceFlinger 或 Perfetto。
 
 帧调度矩阵覆盖约 5.7ms 以内的回调/批次迟到；20–31ms 的 Timer 迟到会按迟到量丢失更新槽，由 `test/pages/danmaku/frame_late_delivery_test.dart` 单独回归，不能用矩阵的 16.7ms 上限判断该场景。

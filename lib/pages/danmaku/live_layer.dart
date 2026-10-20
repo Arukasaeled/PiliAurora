@@ -93,6 +93,10 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         ...?_renderer?.statistics,
         'input': 'live',
         'motionUs': _motionUs,
+        'presentationTimeUs': _renderer?.presentationTimeUs,
+        'sampledAtUs': _now,
+        'visible': _visible,
+        'running': widget.running,
         'candidates': _queue.candidateCount,
         'resourceTasks': _queue.runningTasks,
         'resourceReservedBytes': _queue.reservedBytes,
@@ -128,6 +132,11 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final now = _now;
+    if (_enabled && widget.visible && widget.running) {
+      _motionUs += now - _lastUs;
+    }
+    _lastUs = now;
     _enabled = TickerMode.valuesOf(context).enabled;
     if (_renderer == null) {
       _renderer = DanmakuWindowRenderer<T>(
@@ -146,7 +155,6 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
       devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
       fontFamily: DefaultTextStyle.of(context).style.fontFamily,
     );
-    _lastUs = _now;
     _syncSubscription();
     _wake();
   }
@@ -176,6 +184,11 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   @override
   void didUpdateWidget(LiveDanmakuLayer<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final now = _now;
+    if (_enabled && oldWidget.visible && oldWidget.running) {
+      _motionUs += now - _lastUs;
+    }
+    _lastUs = now;
     if (oldWidget.messages != widget.messages) {
       unawaited(_subscription?.cancel());
       _subscription = null;
@@ -195,7 +208,6 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
       devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
       fontFamily: DefaultTextStyle.of(context).style.fontFamily,
     );
-    _lastUs = _now;
     _syncSubscription();
     _wake();
   }
@@ -205,7 +217,8 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   }
 
   void _wake() {
-    if (_queued || _disposed || !_visible) return;
+    // 运动期间由 ticker 合并消息与配置，避免额外帧抢先推进滚动。
+    if (_ticker.isActive || _queued || _disposed || !_visible) return;
     _queued = true;
     _wakeFrame = SchedulerBinding.instance.scheduleFrameCallback((_) {
       _wakeFrame = null;

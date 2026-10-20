@@ -109,16 +109,27 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   }
 
   void _bindInputs() {
-    _inputs = widget.inputChanges?.listen((_) => _update());
+    _inputs = widget.inputChanges?.listen((_) {
+      if (!_ticker.isActive) _update();
+    });
   }
 
   void _acceptAnchor(PlaybackMediaAnchor? anchor) {
+    final previous = _anchor;
     _anchor = anchor;
     if (anchor == null || !anchor.ready) {
       _continuity = null;
       widget.renderer.suspendPresentation();
     }
-    _update();
+    // 连续播放的采样只校准时钟，呈现统一由限帧回调推进。
+    // 暂停、恢复和连续域变化仍立即处理，及时冻结或切换窗口。
+    if (!_ticker.isActive ||
+        anchor == null ||
+        !anchor.advancing ||
+        previous?.advancing != true ||
+        previous?.continuity != anchor.continuity) {
+      _update();
+    }
     _syncTicker();
   }
 
@@ -196,7 +207,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     super.didChangeDependencies();
     _view = View.of(context);
     _enabled = TickerMode.valuesOf(context).enabled;
-    _update();
+    if (!_ticker.isActive) _update();
     _syncTicker();
   }
 
@@ -221,7 +232,9 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       widget.renderer.addListener(_syncTicker);
       _continuity = null;
     }
-    _update();
+    if (!_ticker.isActive || !identical(oldWidget.renderer, widget.renderer)) {
+      _update();
+    }
     _syncTicker();
   }
 

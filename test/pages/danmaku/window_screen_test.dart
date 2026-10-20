@@ -66,6 +66,121 @@ void _prepare(DanmakuWindowRenderer<void> renderer, int position) {
 }
 
 void main() {
+  testWidgets('parent rebuilds preserve scrolling time and frame cadence', (
+    tester,
+  ) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    var now = 0;
+    final clock = _Clock(_anchor());
+    final renderer = _renderer();
+    addTearDown(renderer.dispose);
+    addTearDown(clock.events.close);
+    Widget screen() => _host(
+      DanmakuWindowScreen<void>(
+        renderer: renderer,
+        clock: clock,
+        size: const Size(320, 120),
+        frameRate: 30,
+        monotonicUs: () => now,
+        prepareFrame: (r, p, {required effectiveRate}) => _prepare(r, p),
+      ),
+    );
+    await tester.pumpWidget(screen());
+    final positions = <int>{};
+    for (var slot = 1; slot <= 120; slot++) {
+      final next = (slot * 1000000 / 120).round();
+      await tester.binding.delayed(Duration(microseconds: next - now));
+      now = next;
+      await tester.pumpWidget(screen());
+      positions.add(renderer.presentationTimeUs);
+    }
+    expect(positions.length, inInclusiveRange(29, 31));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  for (final refreshRate in [120, 165]) {
+    for (final sampleStride in [1, 5]) {
+      for (final target in [30, 60, 90]) {
+        testWidgets(
+          '$sampleStride-slot clock samples respect $target FPS presentation and gaps on $refreshRate Hz',
+          (
+            tester,
+          ) async {
+            tester.view.display.refreshRate = refreshRate.toDouble();
+            addTearDown(tester.view.display.resetRefreshRate);
+            var now = 0;
+            final clock = _Clock(_anchor());
+            final renderer = _renderer();
+            final inputs = StreamController<Object?>.broadcast(sync: true);
+            addTearDown(renderer.dispose);
+            addTearDown(clock.events.close);
+            addTearDown(inputs.close);
+            await tester.pumpWidget(
+              _host(
+                DanmakuWindowScreen<void>(
+                  renderer: renderer,
+                  clock: clock,
+                  size: const Size(320, 120),
+                  frameRate: target,
+                  inputChanges: inputs.stream,
+                  monotonicUs: () => now,
+                  prepareFrame: (r, p, {required effectiveRate}) =>
+                      _prepare(r, p),
+                ),
+              ),
+            );
+            final positions = <int>{};
+            final moves = <int>[];
+            var previous = renderer.presentationTimeUs;
+            final initial = renderer.interaction.snapshot.single.bounds;
+            for (var slot = 1; slot <= refreshRate; slot++) {
+              final next = (slot * 1000000 / refreshRate).round();
+              await tester.binding.delayed(Duration(microseconds: next - now));
+              now = next;
+              if (slot % sampleStride == 0) {
+                clock.emit(_anchor(position: now, observed: now));
+              }
+              if (slot % 7 == 0) {
+                for (var i = 0; i < 3; i++) {
+                  inputs.add(null);
+                }
+              }
+              tester.binding.scheduleFrame();
+              await tester.pump();
+              positions.add(renderer.presentationTimeUs);
+              expect(
+                renderer.interaction.snapshot.single.bounds.left,
+                closeTo(
+                  initial.left -
+                      (320 + initial.width) *
+                          renderer.presentationTimeUs /
+                          8000000,
+                  0.0001,
+                ),
+              );
+              if (renderer.presentationTimeUs != previous) moves.add(now);
+              previous = renderer.presentationTimeUs;
+            }
+            expect(positions.length, inInclusiveRange(target - 1, target + 1));
+            for (var i = 1; i < moves.length; i++) {
+              expect(
+                moves[i] - moves[i - 1],
+                inInclusiveRange(
+                  (refreshRate / target).floor() * 1000000 ~/ refreshRate - 1,
+                  ((refreshRate / target).ceil() * 1000000 / refreshRate)
+                          .ceil() +
+                      1,
+                ),
+              );
+            }
+            await tester.pumpWidget(const SizedBox.shrink());
+          },
+        );
+      }
+    }
+  }
+
   for (final rate in [.5, 2.0]) {
     testWidgets(
       'rate change to $rate keeps scrolling monotonic across clock corrections',
