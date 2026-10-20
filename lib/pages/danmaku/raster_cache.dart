@@ -14,7 +14,23 @@ const danmakuActiveRasterBytes =
     1024 *
     1024;
 
-typedef DanmakuRasterKey = (String, int, bool, bool, int?, double);
+typedef DanmakuRasterKey = (String, int, bool, bool, int?, double, Object?);
+
+class _InlineRasterKey {
+  _InlineRasterKey(List<DanmakuInlineImage> images)
+    : entries = [
+        for (final image in images)
+          (image.placeholder, image.width, image.height, image.image),
+      ];
+  final List<(String, double, double, ui.Image)> entries;
+  @override
+  int get hashCode => Object.hashAll(entries);
+  @override
+  bool operator ==(Object other) =>
+      other is _InlineRasterKey &&
+      entries.length == other.entries.length &&
+      entries.indexed.every((entry) => entry.$2 == other.entries[entry.$1]);
+}
 
 class DanmakuRaster {
   DanmakuRaster(this.width, this.height, this.bytes, this.paragraph);
@@ -121,6 +137,9 @@ class DanmakuRasterCache {
     content.selfSend,
     content.count,
     content.fontSizeScale,
+    content.inlineImages.isEmpty
+        ? null
+        : _InlineRasterKey(content.inlineImages),
   );
 
   ui.Image? rasterize(DanmakuContentItem content, DanmakuRaster entry) {

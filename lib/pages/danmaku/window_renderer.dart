@@ -19,12 +19,45 @@ class DanmakuWindowContent<T> {
 }
 
 class _ActiveRaster<T> {
-  _ActiveRaster(this.item, this.image, {this.specialBounds});
+  _ActiveRaster(this.item, this.image, {this.specialBounds, Object? backing})
+    : backing = backing ?? image,
+      bytes = image.width * image.height * 4;
   DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>> item;
   final ui.Image image;
   final Rect? specialBounds;
   DanmakuSpecialFrame? specialFrame;
-  int get bytes => image.width * image.height * 4;
+  final Object backing;
+  final int bytes;
+  bool released = false;
+  void release() {
+    if (released) return;
+    released = true;
+    image.dispose();
+  }
+}
+
+class _ConfigurationTarget {
+  _ConfigurationTarget(this.rasters, this.size);
+  final DanmakuRasterCache rasters;
+  final Size size;
+  final prepared =
+      <
+        Object,
+        ({
+          ui.Image image,
+          double width,
+          double height,
+          Rect? specialBounds,
+          Object backing,
+        })?
+      >{};
+  int bytes = 0;
+  void dispose() {
+    for (final raster in prepared.values) {
+      raster?.image.dispose();
+    }
+    rasters.clear();
+  }
 }
 
 /// 普通窗口的显示资源适配；同一媒体时刻用于绘制与命中。
@@ -37,7 +70,11 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     this.maxActiveBytes = danmakuActiveRasterBytes,
     int rasterCacheMaxBytes = 16 * 1024 * 1024,
     int rasterCacheMaxEntries = 512,
-  }) : _size = size,
+    int? maxWorkingSetBytes,
+  }) : maxWorkingSetBytes =
+           maxWorkingSetBytes ??
+           maxActiveBytes + rasterCacheMaxBytes + 4 * 1024 * 1024,
+       _size = size,
        rasters = DanmakuRasterCache(
          option: option,
          devicePixelRatio: devicePixelRatio,
@@ -62,14 +99,399 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     );
   }
 
-  final Size _size;
-  final DanmakuRasterCache rasters;
-  late final DanmakuWindowPlanner<DanmakuContentItem<T>> _planner;
+  Size _size;
+  DanmakuRasterCache rasters;
+  late DanmakuWindowPlanner<DanmakuContentItem<T>> _planner;
+  _ConfigurationTarget? _configuration;
+  bool get hasPendingConfiguration => _configuration != null;
+  Rect get _displayClip {
+    final target = _configuration;
+    final size = target?.size ?? _size;
+    final area = math.min(
+      rasters.option.area,
+      target?.rasters.option.area ?? rasters.option.area,
+    );
+    return Rect.fromLTWH(0, 0, size.width, size.height * area);
+  }
+
+  /// 连续更新覆盖尚未生效的目标，准备工作由帧入口分批推进。
+  void requestConfiguration({
+    required DanmakuOption option,
+    required Size size,
+    required double devicePixelRatio,
+    String? fontFamily,
+  }) {
+    if (_disposed) return;
+    if (!size.width.isFinite ||
+        !size.height.isFinite ||
+        size.width < 0 ||
+        size.height < 0 ||
+        !devicePixelRatio.isFinite ||
+        devicePixelRatio <= 0) {
+      throw ArgumentError('弹幕尺寸和 DPI 必须有效');
+    }
+    final current = _configuration?.rasters ?? rasters;
+    final currentSize = _configuration?.size ?? _size;
+    if (currentSize == size &&
+        current.devicePixelRatio == devicePixelRatio &&
+        current.fontFamily == fontFamily &&
+        _sameOptions(current.option, option)) {
+      return;
+    }
+    _configuration?.dispose();
+    _configuration = _ConfigurationTarget(
+      DanmakuRasterCache(
+        option: option,
+        devicePixelRatio: devicePixelRatio,
+        fontFamily: fontFamily,
+        maxBytes: rasters.maxBytes,
+        maxEntries: rasters.maxEntries,
+        maxItemBytes: rasters.maxItemBytes,
+      ),
+      size,
+    );
+  }
+
+  static bool _sameOptions(DanmakuOption a, DanmakuOption b) =>
+      a.fontSize == b.fontSize &&
+      a.fontWeight == b.fontWeight &&
+      a.area == b.area &&
+      a.duration == b.duration &&
+      a.staticDuration == b.staticDuration &&
+      a.hideTop == b.hideTop &&
+      a.hideBottom == b.hideBottom &&
+      a.hideScroll == b.hideScroll &&
+      a.hideSpecial == b.hideSpecial &&
+      a.strokeWidth == b.strokeWidth &&
+      a.scrollFixedVelocity == b.scrollFixedVelocity &&
+      a.massiveMode == b.massiveMode &&
+      a.static2Scroll == b.static2Scroll &&
+      a.safeArea == b.safeArea &&
+      a.lineHeight == b.lineHeight;
+
+  /// 每次最多准备一小批活动资源，准备峰值共用实例工作集预算。
+  bool prepareConfiguration({int maxItems = 16}) {
+    if (maxItems <= 0) throw ArgumentError.value(maxItems);
+    final target = _configuration;
+    if (target == null) return true;
+    target.prepared.removeWhere((identity, raster) {
+      if (_active.containsKey(identity)) return false;
+      if (raster != null) {
+        target.bytes -= raster.image.width * raster.image.height * 4;
+        raster.image.dispose();
+      }
+      return true;
+    });
+    var count = 0;
+    for (final active in _active.values) {
+      final identity = active.item.identity;
+      if (target.prepared.containsKey(identity)) continue;
+      if (count++ >= math.min(maxItems, 16)) return false;
+      target.prepared[identity] = null;
+      final content = active.item.payload.candidate.payload;
+      if (target.size.isEmpty || target.rasters.option.hideWhat(content.type)) {
+        continue;
+      }
+      final next = target.rasters;
+      if (!active.released &&
+          next.option.fontSize == rasters.option.fontSize &&
+          next.option.fontWeight == rasters.option.fontWeight &&
+          next.option.strokeWidth == rasters.option.strokeWidth &&
+          next.devicePixelRatio == rasters.devicePixelRatio &&
+          next.fontFamily == rasters.fontFamily &&
+          target.bytes + active.bytes <= maxActiveBytes) {
+        final motion = active.item.payload.trajectory!;
+        target.prepared[identity] = (
+          image: active.image.clone(),
+          width: motion.width,
+          height: motion.height,
+          specialBounds: active.specialBounds,
+          backing: active.backing,
+        );
+        target.bytes += active.bytes;
+        continue;
+      }
+      ui.Image? image;
+      double width, height;
+      Rect? bounds;
+      Object backing;
+      if (content is SpecialDanmakuContentItem<T>) {
+        if (!DanmakuRenderGuard.canRasterizeSpecial(
+          content,
+          target.rasters.devicePixelRatio,
+          target.rasters.option.strokeWidth,
+          target.rasters.option.fontWeight,
+          fontFamily: target.rasters.fontFamily,
+        )) {
+          continue;
+        }
+        if (!_reserveConfigurationBytes(
+          _specialBytes(content, target.rasters),
+        )) {
+          continue;
+        }
+        final raster = target.rasters.textRenderer.rasterizeSpecial(
+          content: content,
+          strokeWidth: target.rasters.option.strokeWidth,
+          fontWeight: target.rasters.option.fontWeight,
+        );
+        image = raster.image;
+        backing = image;
+        bounds = raster.bounds;
+        width = bounds.width;
+        height = bounds.height;
+      } else {
+        var raster = target.rasters.get(content);
+        if (raster == null || target.bytes + raster.bytes > maxActiveBytes) {
+          continue;
+        }
+        if (!_reserveConfigurationBytes(raster.bytes + 512)) continue;
+        // 回收缓存可能同时释放刚测量的段落，按当前目标重新取得。
+        raster = target.rasters.get(content);
+        if (raster == null) continue;
+        backing = raster;
+        image = target.rasters.rasterize(content, raster)?.clone();
+        if (image == null) continue;
+        width = raster.width;
+        height = raster.height;
+      }
+      final bytes = image.width * image.height * 4;
+      if (target.bytes + bytes > maxActiveBytes) {
+        image.dispose();
+        continue;
+      }
+      target.bytes += bytes;
+      target.prepared[identity] = (
+        image: image,
+        width: width,
+        height: height,
+        specialBounds: bounds,
+        backing: backing,
+      );
+    }
+    return true;
+  }
+
+  void _commitConfiguration(int mediaUs) {
+    final target = _configuration;
+    if (target == null ||
+        _active.keys.any((id) => !target.prepared.containsKey(id))) {
+      return;
+    }
+    final oldOption = rasters.option;
+    final option = target.rasters.option;
+    final trackHeight = target.rasters.measureTrackHeight();
+    final tracks = target.size.isEmpty || trackHeight <= 0
+        ? 0
+        : math.max(
+            0,
+            (target.size.height * option.area / trackHeight).floor() -
+                (option.safeArea && option.area == 1 ? 1 : 0),
+          );
+    final items =
+        <DanmakuWindowItem<DanmakuArrangement<DanmakuContentItem<T>>>>[];
+    final replacement = <Object, _ActiveRaster<T>>{};
+    for (final active in _active.values) {
+      final item = active.item;
+      final raster = target.prepared.remove(item.identity);
+      if (raster == null) continue;
+      if (item.endUs <= mediaUs) {
+        raster.image.dispose();
+        continue;
+      }
+      final old = item.payload;
+      final motion = old.trajectory!;
+      final held = _held?.identity == item.identity;
+      final velocity = old.scrolling
+          ? DanmakuGeometry.scrollVelocity(
+              target.size.width,
+              raster.width,
+              option.durationInMilliseconds,
+              fixed: option.scrollFixedVelocity,
+            )
+          : 0.0;
+      final x = motion.xAt(mediaUs / 1000);
+      final remaining = old.scrolling
+          ? ((x + raster.width) / velocity * 1000).ceil()
+          : (held ? _held!.remainingUs : item.endUs - mediaUs) +
+                ((option.staticDuration - oldOption.staticDuration) * 1000000)
+                    .round();
+      final end = active.specialBounds != null
+          ? item.endUs
+          : held
+          ? 0x7fffffffffffffff
+          : mediaUs + remaining;
+      if (end <= mediaUs) {
+        raster.image.dispose();
+        continue;
+      }
+      if (held) {
+        _held = (
+          identity: item.identity,
+          remainingUs: math.max(0, remaining),
+          velocity: velocity,
+        );
+      }
+      final candidate = old.candidate;
+      final updated = DanmakuWindowItem(
+        identity: item.identity,
+        sourceUs: item.sourceUs,
+        startUs: mediaUs,
+        endUs: end,
+        estimatedBytes: item.estimatedBytes,
+        payload: DanmakuArrangement(
+          DanmakuMeasuredCandidate(
+            identity: candidate.identity,
+            sourceUs: candidate.sourceUs,
+            width: raster.width,
+            height: raster.height,
+            type: candidate.type,
+            payload: candidate.payload,
+            selfSend: candidate.selfSend,
+            specialDurationUs: candidate.specialDurationUs,
+            estimatedBytes: candidate.estimatedBytes,
+          ),
+          DanmakuTrajectory(
+            startMs: mediaUs / 1000,
+            endMs: end / 1000,
+            startX: x,
+            y: motion.y,
+            width: raster.width,
+            height: raster.height,
+            velocity: held ? 0 : velocity,
+          ),
+          trackHeight > 0 ? (motion.y / trackHeight).floor() : old.track,
+          old.scrolling,
+          suspended: held,
+        ),
+      );
+      items.add(updated);
+      replacement[item.identity] = _ActiveRaster(
+        updated,
+        raster.image,
+        specialBounds: raster.specialBounds,
+        backing: raster.backing,
+      );
+    }
+    for (final active in _active.values) {
+      active.release();
+    }
+    rasters.clear();
+    rasters = target.rasters;
+    _size = target.size;
+    // 复用窗口实例以保留单调递增的 generation，旧目标无法提交。
+    _planner = DanmakuWindowPlanner(
+      option: option,
+      width: _size.width,
+      trackHeight: trackHeight,
+      trackCount: tracks,
+      padding: 1 / rasters.devicePixelRatio,
+      window: _planner.window,
+    );
+    _planner.window.reset(mediaUs);
+    _planner.window.extend(
+      items,
+      generation: generation,
+      preparedUntilUs: mediaUs + 1,
+    );
+    _active
+      ..clear()
+      ..addAll(replacement);
+    if (!_active.containsKey(_held?.identity)) _held = null;
+    for (final raster in target.prepared.values) {
+      raster?.image.dispose();
+    }
+    _configuration = null;
+    _unavailable.clear();
+  }
+
   final int maxActiveBytes;
+  final int maxWorkingSetBytes;
+
+  /// 图片按 backing 计一次，缓存与活动 clone 之间转移不增加总账。
+  int get workingSetBytes {
+    final target = _configuration;
+    var bytes =
+        rasters.bytes +
+        (target?.rasters.bytes ?? 0) +
+        _planner.window.estimatedBytes +
+        (rasters.length + (target?.rasters.length ?? 0)) * 512 +
+        (target?.prepared.length ?? 0) * 256;
+    final backings = <Object>{};
+    void include(Object backing, ui.Image image) {
+      if (!backings.add(backing)) return;
+      if (backing is DanmakuRaster && backing.image != null) return;
+      bytes += image.width * image.height * 4;
+    }
+
+    for (final active in _active.values) {
+      if (!active.released) include(active.backing, active.image);
+    }
+    if (target != null) {
+      for (final raster in target.prepared.values) {
+        if (raster != null) include(raster.backing, raster.image);
+      }
+    }
+    return bytes;
+  }
+
+  int _specialBytes(
+    SpecialDanmakuContentItem content,
+    DanmakuRasterCache cache,
+  ) {
+    final paragraph = cache.textRenderer.generateParagraph(
+      content: content,
+      fontSize: content.fontSize,
+      fontWeight: cache.option.fontWeight,
+    );
+    final width = paragraph.maxIntrinsicWidth + cache.option.strokeWidth;
+    final height = paragraph.height + cache.option.strokeWidth;
+    paragraph.dispose();
+    final matrix = content.matrix;
+    final cosZ = matrix == null ? math.cos(content.rotateZ) : matrix[5];
+    final sinZ = matrix == null ? math.sin(content.rotateZ) : matrix[1];
+    final cosY = matrix == null ? 1.0 : matrix[10];
+    final xs = [
+      0.0,
+      width * cosZ * cosY,
+      -height * sinZ * cosY,
+      width * cosZ * cosY - height * sinZ * cosY,
+    ];
+    final ys = [0.0, width * sinZ, height * cosZ, width * sinZ + height * cosZ];
+    return ((xs.reduce(math.max) - xs.reduce(math.min)) *
+                cache.devicePixelRatio)
+            .ceil() *
+        ((ys.reduce(math.max) - ys.reduce(math.min)) * cache.devicePixelRatio)
+            .ceil() *
+        4;
+  }
+
+  bool _reserveConfigurationBytes(int bytes) {
+    if (workingSetBytes + bytes <= maxWorkingSetBytes) return true;
+    // 先取消可回收缓存，再逐批释放旧图片；轨迹与选择留到提交帧。
+    rasters.clear();
+    _configuration?.rasters.clear();
+    if (workingSetBytes + bytes <= maxWorkingSetBytes) return true;
+    for (final active in _active.values) {
+      if (active.released) continue;
+      active.release();
+      if (workingSetBytes + bytes <= maxWorkingSetBytes) return true;
+    }
+    return workingSetBytes + bytes <= maxWorkingSetBytes;
+  }
+
   final _active = <Object, _ActiveRaster<T>>{};
   final _unavailable = <Object>{};
   int _mediaUs = 0;
-  int activeBytes = 0;
+  int get activeBytes {
+    final seen = <Object>{};
+    return _active.values.fold(
+      0,
+      (sum, item) =>
+          sum + (!item.released && seen.add(item.backing) ? item.bytes : 0),
+    );
+  }
+
   bool _disposed = false;
   int _interactionEpoch = 0;
   ({Object identity, int remainingUs, double velocity})? _held;
@@ -236,6 +658,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     required int preparedUntilUs,
   }) {
     if (_disposed ||
+        _configuration != null ||
         generation != _planner.window.generation ||
         contents.length > DanmakuDisplayLimits.maxPerBatch) {
       return false;
@@ -294,6 +717,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   bool present(int mediaUs, {bool allowUnprepared = false}) {
     if (_disposed) return false;
     _mediaUs = math.max(0, mediaUs);
+    _commitConfiguration(_mediaUs);
     final visible = _planner.window.visibleAt(
       mediaUs,
       allowUnprepared: allowUnprepared,
@@ -306,8 +730,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     };
     _active.removeWhere((identity, raster) {
       if (desired.containsKey(identity)) return false;
-      activeBytes -= raster.bytes;
-      raster.image.dispose();
+      raster.release();
       return true;
     });
     for (final item in desired.values) {
@@ -319,6 +742,10 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       if (_unavailable.contains(item.identity)) continue;
       final content = item.payload.candidate.payload;
       if (content is SpecialDanmakuContentItem<T>) {
+        if (!_reserveConfigurationBytes(_specialBytes(content, rasters))) {
+          _unavailable.add(item.identity);
+          continue;
+        }
         final raster = rasters.textRenderer.rasterizeSpecial(
           content: content,
           strokeWidth: rasters.option.strokeWidth,
@@ -335,22 +762,36 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
           raster.image,
           specialBounds: raster.bounds,
         );
-        activeBytes += bytes;
         continue;
       }
-      final raster = rasters.get(content);
-      if (raster == null || activeBytes + raster.bytes > maxActiveBytes) {
+      var raster = rasters.get(content);
+      if (raster == null ||
+          activeBytes +
+                  (_active.values.any(
+                        (active) =>
+                            !active.released && active.backing == raster,
+                      )
+                      ? 0
+                      : raster.bytes) >
+              maxActiveBytes) {
         _unavailable.add(item.identity);
         continue;
       }
+      if (!_reserveConfigurationBytes(
+        raster.image == null ? raster.bytes + 512 : 0,
+      )) {
+        _unavailable.add(item.identity);
+        continue;
+      }
+      raster = rasters.get(content);
+      if (raster == null) continue;
       final image = rasters.rasterize(content, raster);
       if (image == null) {
         _unavailable.add(item.identity);
         continue;
       }
-      final active = _ActiveRaster(item, image.clone());
+      final active = _ActiveRaster(item, image.clone(), backing: raster);
       _active[item.identity] = active;
-      activeBytes += active.bytes;
     }
     for (final active in _active.values) {
       if (active.specialBounds != null) {
@@ -377,6 +818,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   }
 
   DanmakuDisplaySnapshot<T>? _snapshotFor(_ActiveRaster<T> active) {
+    if (active.released) return null;
     final content = active.item.payload.candidate.payload;
     final motion = active.item.payload.trajectory!;
     final bounds = active.specialBounds == null
@@ -395,10 +837,12 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
       bounds: bounds,
       selectable: active.specialBounds == null,
       selected: active.item.identity == _held?.identity,
+      selfSend: content.selfSend,
     );
   }
 
   DanmakuDisplaySnapshot<T>? hitTest(Offset point) {
+    if (!_displayClip.contains(point)) return null;
     final held = _active[_held?.identity];
     final selected = held == null ? null : _snapshotFor(held);
     if (selected != null && selected.bounds.contains(point)) return selected;
@@ -499,6 +943,8 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   }
 
   void _paintOrdinary(Canvas canvas, _ActiveRaster<T> active, Paint paint) {
+    if (active.released) return;
+    paint.color = const Color(0xffffffff);
     final motion = active.item.payload.trajectory!;
     final position = Offset(motion.xAt(_mediaUs / 1000), motion.y);
     if (active.image.width == motion.width.ceil()) {
@@ -522,7 +968,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     if (_disposed || opacity <= 0 || _active.isEmpty) return;
     canvas
       ..save()
-      ..clipRect(Offset.zero & size);
+      ..clipRect((Offset.zero & size).intersect(_displayClip));
     if (opacity < 1) {
       canvas.saveLayer(
         Offset.zero & size,
@@ -538,7 +984,7 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
     }
     for (final active in _active.values) {
       final frame = active.specialFrame;
-      if (frame == null) continue;
+      if (frame == null || active.released) continue;
       paint.color = frame.color;
       if (active.image.width == frame.bounds.width.ceil()) {
         canvas.drawImage(active.image, frame.bounds.topLeft, paint);
@@ -565,13 +1011,19 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
   }
 
   void reset(int fromUs) {
+    // 数据域失效撤回已准备的资源，最新显示配置继续作为下一帧目标。
+    final target = _configuration;
+    if (target != null) {
+      target.dispose();
+      target.prepared.clear();
+      target.bytes = 0;
+    }
     _interactionEpoch++;
     _held = null;
     for (final active in _active.values) {
-      active.image.dispose();
+      active.release();
     }
     _active.clear();
-    activeBytes = 0;
     _unavailable.clear();
     _planner.window.reset(fromUs);
     _mediaUs = fromUs;
@@ -589,6 +1041,8 @@ class DanmakuWindowRenderer<T> extends ChangeNotifier {
 
   @override
   void dispose() {
+    _configuration?.dispose();
+    _configuration = null;
     reset(_mediaUs);
     _disposed = true;
     rasters.clear();

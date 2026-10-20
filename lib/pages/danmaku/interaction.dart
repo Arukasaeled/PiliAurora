@@ -8,6 +8,7 @@ class DanmakuDisplaySnapshot<T> {
     required this.bounds,
     required this.selectable,
     required this.selected,
+    this.selfSend = false,
   });
   final Object identity;
   final String text;
@@ -15,6 +16,7 @@ class DanmakuDisplaySnapshot<T> {
   final Rect bounds;
   final bool selectable;
   final bool selected;
+  final bool selfSend;
 }
 
 /// 句柄绑定显示实例的生命周期，活动对象和图片由显示模块持有。

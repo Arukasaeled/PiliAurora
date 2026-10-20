@@ -112,6 +112,9 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       _continuity = anchor.continuity;
     }
     _lastPositionUs = position;
+    renderer
+      ..prepareConfiguration()
+      ..present(position, allowUnprepared: true);
     widget.prepareFrame(
       renderer,
       position,
@@ -133,7 +136,8 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     final animate =
         _visible &&
         (_anchor?.ready ?? false) &&
-        ((widget.needsPreparation?.call() ?? false) ||
+        (widget.renderer.hasPendingConfiguration ||
+            (widget.needsPreparation?.call() ?? false) ||
             (advancing && widget.renderer.needsContinuousFrames));
     if (animate && !_ticker.isActive) {
       _ticker.start();
