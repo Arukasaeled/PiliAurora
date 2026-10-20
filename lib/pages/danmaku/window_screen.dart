@@ -21,6 +21,7 @@ class DanmakuWindowScreen<T> extends StatefulWidget {
     required this.clock,
     required this.size,
     required this.prepareFrame,
+    this.needsPreparation,
     this.inputChanges,
     this.opacity = 1,
     this.frameRate = 0,
@@ -33,6 +34,7 @@ class DanmakuWindowScreen<T> extends StatefulWidget {
   final PlaybackMediaClock clock;
   final Size size;
   final DanmakuPrepareFrame<T> prepareFrame;
+  final bool Function()? needsPreparation;
   final Stream<Object?>? inputChanges;
   final double opacity;
   final int frameRate;
@@ -114,9 +116,11 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     final animate =
         _visible &&
         (_anchor?.ready ?? false) &&
-        (_anchor?.advancing ?? false) &&
-        (widget.monotonicUs?.call() ?? Timeline.now) - _anchor!.observedAtUs <
-            _anchor!.validForUs;
+        ((widget.needsPreparation?.call() ?? false) ||
+            ((_anchor?.advancing ?? false) &&
+                (widget.monotonicUs?.call() ?? Timeline.now) -
+                        _anchor!.observedAtUs <
+                    _anchor!.validForUs));
     if (animate && !_ticker.isActive) {
       _ticker.start();
     } else if (!animate && _ticker.isActive) {

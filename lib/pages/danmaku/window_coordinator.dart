@@ -48,6 +48,8 @@ class DanmakuWindowCoordinator<T> {
   int? _lastRequestUs;
   bool _disposed = false;
   bool requestFailed = false;
+  bool _needsPreparation = false;
+  bool get needsPreparation => !_disposed && _needsPreparation;
 
   void _changed(DanmakuSourceChange change) {
     if (_disposed) return;
@@ -79,6 +81,7 @@ class DanmakuWindowCoordinator<T> {
 
   void prepareFrame(DanmakuWindowRenderer<T> target, int mediaUs) {
     if (_disposed || !identical(target, renderer)) return;
+    _needsPreparation = false;
     if (_lastMediaUs != null &&
         mediaUs - _lastMediaUs! > aheadUs &&
         (mediaUs < renderer.validFromUs || mediaUs >= renderer.validUntilUs)) {
@@ -179,11 +182,15 @@ class DanmakuWindowCoordinator<T> {
       }
       remaining -= end - _offset;
       _offset = end;
-      if (!complete) return;
+      if (!complete) {
+        _needsPreparation = true;
+        return;
+      }
       _pending = null;
       _nextBucketUs = endUs;
     }
     if (_nextBucketUs >= untilUs && _pending == null) _refilling = false;
+    _needsPreparation = _refilling;
   }
 
   void dispose() {

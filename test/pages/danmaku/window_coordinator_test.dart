@@ -49,12 +49,14 @@ class _Source implements DanmakuTimelineSource {
 }
 
 class _Clock implements PlaybackMediaClock {
+  _Clock({this.advancing = true});
+  final bool advancing;
   @override
-  PlaybackMediaAnchor get currentMediaAnchor => const PlaybackMediaAnchor(
+  PlaybackMediaAnchor get currentMediaAnchor => PlaybackMediaAnchor(
     positionUs: 0,
     observedAtUs: 0,
     effectiveRate: 1,
-    advancing: true,
+    advancing: advancing,
     ready: true,
     continuity: 0,
     validForUs: 10000000,
@@ -233,7 +235,7 @@ void main() {
   });
 
   testWidgets(
-    'source ready drives a mounted media window without position callbacks',
+    'paused source ready completes bounded preparation and stops scheduling',
     (tester) async {
       final source = _Source();
       final renderer = _renderer();
@@ -245,8 +247,7 @@ void main() {
       addTearDown(renderer.dispose);
       addTearDown(coordinator.dispose);
       addTearDown(source.events.close);
-      var now = 0;
-      final clock = _Clock();
+      final clock = _Clock(advancing: false);
       addTearDown(clock.events.close);
       await tester.pumpWidget(
         Directionality(
@@ -262,8 +263,9 @@ void main() {
                   clock: clock,
                   size: const Size(500, 200),
                   inputChanges: coordinator.updates,
-                  monotonicUs: () => now,
+                  monotonicUs: () => 0,
                   prepareFrame: coordinator.prepareFrame,
+                  needsPreparation: () => coordinator.needsPreparation,
                 ),
               ),
             ),
@@ -271,11 +273,16 @@ void main() {
         ),
       );
       expect(renderer.activeCount, 0);
+      expect(coordinator.needsPreparation, isFalse);
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(tester.hasRunningAnimations, isFalse);
       source.load([for (var i = 0; i < 6; i++) _dm('arrived$i', 0)]);
       expect(renderer.activeCount, 4);
-      now = 500000;
-      await tester.pump(const Duration(milliseconds: 500));
+      expect(coordinator.needsPreparation, isTrue);
+      await tester.pumpAndSettle(const Duration(milliseconds: 16));
       expect(renderer.activeCount, 6);
+      expect(coordinator.needsPreparation, isFalse);
+      expect(tester.hasRunningAnimations, isFalse);
       source.invalidate();
       expect(renderer.activeCount, 0);
       await tester.pumpWidget(const SizedBox.shrink());
