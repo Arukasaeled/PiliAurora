@@ -8,6 +8,56 @@ import 'package:pili_aurora/pages/danmaku/live_layer.dart';
 import 'package:pili_aurora/pages/danmaku/live_queue.dart';
 
 void main() {
+  testWidgets('直播跟随屏幕时的位移不随回调交付延迟变化', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+    var now = origin;
+    final messages = StreamController<LiveDanmakuMessage<void>>.broadcast(
+      sync: true,
+    );
+    late DanmakuInteractionHandle<void> Function() interaction;
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: MediaQuery(
+          data: const MediaQueryData(),
+          child: LiveDanmakuLayer<void>(
+            messages: messages.stream,
+            running: true,
+            visible: true,
+            option: const DanmakuOption(duration: 8),
+            size: const Size(800, 400),
+            monotonicUs: () => now,
+            createdInteraction: (get, _) => interaction = get,
+          ),
+        ),
+      ),
+    );
+    messages.add(
+      LiveDanmakuMessage(identity: 'one', receivedAtUs: now, text: 'scroll'),
+    );
+    await tester.pump();
+    final lefts = <double>[];
+    for (var slot = 1; slot <= 30; slot++) {
+      final delivered = origin + slot * 8333 + (slot.isEven ? 6000 : 1000);
+      await tester.binding.delayed(Duration(microseconds: delivered - now));
+      now = delivered;
+      tester.binding.handleBeginFrame(
+        Duration(microseconds: origin + (slot + 1) * 8333),
+      );
+      tester.binding.handleDrawFrame();
+      lefts.add(interaction().snapshot.single.bounds.left);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await messages.close();
+    final step = lefts[0] - lefts[1];
+    expect(step, greaterThan(0));
+    for (var i = 2; i < lefts.length; i++) {
+      expect(lefts[i - 1] - lefts[i], closeTo(step, .0001));
+    }
+  });
+
   testWidgets(
     'parent rebuilds retain live elapsed time between limited frames',
     (tester) async {
@@ -30,6 +80,7 @@ void main() {
             size: const Size(800, 400),
             frameRate: 30,
             monotonicUs: () => now,
+            frameTimeUs: () => now,
             createdInteraction: (get, _) => interaction = get,
           ),
         ),
@@ -88,6 +139,7 @@ void main() {
             size: const Size(800, 400),
             frameRate: 30,
             monotonicUs: () => now,
+            frameTimeUs: () => now,
             createdInteraction: (get, _) => interaction = get,
           ),
         ),
@@ -150,6 +202,7 @@ void main() {
             option: const DanmakuOption(massiveMode: true),
             size: const Size(800, 400),
             monotonicUs: () => 0,
+            frameTimeUs: () => 0,
             createdInteraction: (get, _) => interaction = get,
           ),
         ),
@@ -191,6 +244,7 @@ void main() {
             option: const DanmakuOption(duration: 2),
             size: const Size(800, 400),
             monotonicUs: () => now,
+            frameTimeUs: () => now,
             createdInteraction: (get, _) => interaction = get,
           ),
         ),

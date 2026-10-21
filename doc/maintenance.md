@@ -34,13 +34,17 @@ Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`
 
 统计弹幕实际频率时，按 Player、媒体代次和 `targetFrameRate` 分组，对相邻且目标不变、active、非 muted 的采样作累计计数差分；排除暂停、缓冲与目标切换边界。`targetFrameRate=0` 表示跟随屏幕，不能与 60/90 FPS 阶段混算。`locked/independent` 切换本身不足以证明实际更新频率异常。
 
-连续滚动由 ticker 统一推进。点播锚点校准、来源就绪、直播消息和组件重建合并到后续限帧更新，避免通知频率改变实际滚动节奏；直播重建保留两次更新之间的累计运动时间。首次显示、暂停和媒体连续域切换仍按各自状态及时处理。直播图层另以 `presentationTimeUs` 记录已呈现时间，`motionUs` 可包含尚未呈现的累计时间。
+连续滚动由 ticker 统一推进，位移按引擎帧目标时间计算，回调实际交付时刻用于锚点有效期、消息年龄和暂停边界。点播锚点校准、来源就绪、直播消息和组件重建合并到后续限帧更新，避免通知频率改变实际滚动节奏；直播重建保留两次更新之间的累计运动时间。首次显示、暂停和媒体连续域切换仍按各自状态及时处理。直播图层以 `presentationTimeUs` 记录投影到帧目标的已呈现时间，`motionUs` 记录截至实际采样时刻的累计运动时间，两者可以相差当前帧的预测余量。
+
+Android 点播的滚动弹幕与视频共用 Flutter 输出 Surface。存在新鲜的原生视频请求采样时，持续接收 vsync，弹幕位置与准备工作仍按所选档位更新；持续合成期间沿用自身更新节奏，避免视频锁相重新移动位移槽位。诊断的 `requestEveryVsync` 区分连续帧请求与弹幕更新频率。视频采样清空或超过 1.5 秒后恢复按需请求；固定弹幕驻留、暂停、隐藏和空图层沿用原有启停规则。此策略增加输出提交次数，CPU/GPU 成本随目标设备和负载实测。
+
+点播连续帧按媒体有效速率外推，小幅锚点校准在帧目标时钟下以最多 5% 的速度差收敛，减少原生视频位置采样和通知延迟造成的停顿、跳动。超过 50ms 的显示空档或明显时钟偏移重新贴合媒体锚点；暂停、连续域切换和锚点有效期限沿用原有边界。
 
 媒体时钟的整组 libmpv 属性读取在 worker isolate 执行，采样时刻保留读取位置时的单调时间。通知积压时合并为最新一次，返回后核对 Player、文件、seek 和连续域；播放器释放前等待读取退出。排查 UI 回调迟到时，需同时测量同步属性读取的阻塞时间。
 
 弹幕调度快照另提供 `frameCallbacks`（收到的 Dart 帧回调）和 `deadlineSkips`（早于更新截止时间而略过的回调）。结合 `updates/frameRequests` 差分，区分引擎未交付回调与回调到达后未更新。`updateGapBuckets` 记录连续更新的系统帧时间间隔，桶互斥，上限分别为 10/20/30/40/60/100ms，最后一桶大于100ms；按相邻快照差分读取窗口分布。`maxUpdateGapUs` 为累计最大间隔，`longUpdateGaps` 统计超过目标档位正常屏幕槽位量化的间隔，例如120Hz上的60FPS超过约16.67ms、90FPS正常的1/2槽交替不计为长间隔。暂停、静音和切档中断连续统计；所有计数继续累计。这些是弹幕更新时序，最终呈现还需对照 SurfaceFlinger 或 Perfetto。
 
-帧调度矩阵覆盖约 5.7ms 以内的回调/批次迟到；20–31ms 的 Timer 迟到会按迟到量丢失更新槽，由 `test/pages/danmaku/frame_late_delivery_test.dart` 单独回归，不能用矩阵的 16.7ms 上限判断该场景。
+帧调度矩阵覆盖约 5.7ms 以内的回调/批次迟到。`test/pages/danmaku/frame_late_delivery_test.dart` 另覆盖回调交付跨过帧目标后，按剩余时间请求仍可到达的下一更新槽位；20–31ms 的 Timer 迟到会按迟到量合并错过的更新。唤醒预算持续扣除交付延迟，超过目标时刻后也沿用同一时间基准。
 
 Android `media.output.preloaded` 记录预挂载策略、证据和解码前 selected 值；mpv 在 on_preloaded 之后选轨，该阶段允许唯一候选尚未 selected，FILE_LOADED 继续核对实际选轨。`runtime.shutdown.*` 分段记录文件卸载、订阅清理、输出释放与 Player 释放；`player.disposed` 是诊断停止事件，不代表原生释放完成。Surface 释放先同步解除 VO/wid，再等待 JNI 删除回执。
 

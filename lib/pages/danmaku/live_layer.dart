@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
@@ -24,6 +25,7 @@ class LiveDanmakuLayer<T> extends StatefulWidget {
     this.videoDisplaySyncActive,
     this.createdInteraction,
     this.monotonicUs,
+    this.frameTimeUs,
   });
   final Stream<LiveDanmakuMessage<T>> messages;
   final bool running, visible;
@@ -31,6 +33,9 @@ class LiveDanmakuLayer<T> extends StatefulWidget {
   final Size size;
   final int frameRate;
   final int Function()? monotonicUs;
+
+  /// 与单调时钟同域的帧目标时间；测试可分别控制目标与实际交付。
+  final int Function()? frameTimeUs;
   final ValueListenable<bool>? videoDisplaySyncActive;
   final void Function(DanmakuInteractionHandle<T> Function(), VoidCallback)?
   createdInteraction;
@@ -41,6 +46,7 @@ class LiveDanmakuLayer<T> extends StatefulWidget {
 class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   DanmakuWindowRenderer<T>? _renderer;
   int _motionUs = 0;
+  int _presentationUs = 0;
   final _contents = <Object, DanmakuContentItem<T>>{};
   late final FrameRateTicker _ticker;
   late final LiveDanmakuQueue<T> _queue;
@@ -53,6 +59,9 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   bool _updatedThisFrame = false;
   late int _lastUs;
   int get _now => widget.monotonicUs?.call() ?? liveDanmakuNowUs();
+  int get _frameTimeUs =>
+      widget.frameTimeUs?.call() ??
+      SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds;
   bool get _visible => widget.visible && _enabled && !widget.size.isEmpty;
   @override
   void initState() {
@@ -71,11 +80,11 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         final renderer = _renderer!;
         final before = renderer.activeCount;
         final prepared = renderer.prepare(
-          [DanmakuWindowContent(item, _motionUs, item)],
+          [DanmakuWindowContent(item, _presentationUs, item)],
           generation: renderer.generation,
-          preparedUntilUs: _motionUs + 1,
+          preparedUntilUs: _presentationUs + 1,
         );
-        renderer.present(_motionUs, allowUnprepared: true);
+        renderer.present(_presentationUs, allowUnprepared: true);
         final accepted = prepared && renderer.activeCount > before;
         if (accepted) _contents[item] = item;
         return accepted;
@@ -161,6 +170,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
 
   void _clear() {
     _queue.clear();
+    _presentationUs = _motionUs;
     _renderer?.reset(_motionUs);
     for (final content in _contents.values) {
       content.dispose();
@@ -241,19 +251,27 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
       _motionUs += now - _lastUs;
     }
     _lastUs = now;
+    // 运动按帧目标投影，消息年龄和暂停边界仍使用实际单调时间。
+    // 暂停可能发生在上一帧预测位置之前，保留已显示位置直至时间追上。
+    _presentationUs = math.max(
+      renderer.presentationTimeUs,
+      _motionUs + (widget.running ? _frameTimeUs - now : 0),
+    );
     renderer
       ..prepareConfiguration()
-      ..present(_motionUs, allowUnprepared: true);
+      ..present(_presentationUs, allowUnprepared: true);
     if (!renderer.hasPendingConfiguration &&
-        renderer.validUntilUs <= _motionUs) {
+        renderer.validUntilUs <= _presentationUs) {
       renderer.prepare(
         [],
         generation: renderer.generation,
-        preparedUntilUs: _motionUs + 1,
+        preparedUntilUs: _presentationUs + 1,
       );
     }
     renderer.trimBefore(
-      _motionUs < renderer.validUntilUs ? _motionUs : renderer.validUntilUs,
+      _presentationUs < renderer.validUntilUs
+          ? _presentationUs
+          : renderer.validUntilUs,
     );
     final active = renderer.interaction.snapshot
         .map((item) => item.identity)

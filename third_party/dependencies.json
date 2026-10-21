@@ -50,7 +50,7 @@
     },
     {
       "name": "canvas_danmaku",
-      "version": "0.2.6+piliaurora.8",
+      "version": "0.2.6+piliaurora.9",
       "upstream_version": "0.2.6",
       "path": "third_party/canvas_danmaku",
       "source": {

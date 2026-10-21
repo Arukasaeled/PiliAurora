@@ -59,6 +59,7 @@ void main() {
             clock: clock,
             size: const Size(640, 360),
             monotonicUs: () => 0,
+            frameTimeUs: () => 0,
             prepareFrame: coordinator.prepareFrame,
             needsPreparation: () => coordinator.needsPreparation,
             nextPreparationUs: () => coordinator.nextPreparationUs,

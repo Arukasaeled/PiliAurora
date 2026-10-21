@@ -357,6 +357,7 @@ void main() {
                   size: const Size(500, 200),
                   inputChanges: coordinator.updates,
                   monotonicUs: () => 0,
+                  frameTimeUs: () => 0,
                   prepareFrame: coordinator.prepareFrame,
                   needsPreparation: () => coordinator.needsPreparation,
                 ),

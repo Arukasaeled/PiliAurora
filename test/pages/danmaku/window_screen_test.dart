@@ -65,7 +65,170 @@ void _prepare(DanmakuWindowRenderer<void> renderer, int position) {
   );
 }
 
+void _prepareMixed(DanmakuWindowRenderer<void> renderer, int position) {
+  if (renderer.validUntilUs != renderer.validFromUs) return;
+  renderer.prepare(
+    [
+      DanmakuWindowContent('a', 0, DanmakuContentItem<void>('scroll')),
+      for (final at in [0, 500000]) ...[
+        DanmakuWindowContent(
+          'top-$at',
+          at,
+          DanmakuContentItem<void>('top', type: DanmakuItemType.top),
+        ),
+        DanmakuWindowContent(
+          'bottom-$at',
+          at,
+          DanmakuContentItem<void>('bottom', type: DanmakuItemType.bottom),
+        ),
+      ],
+    ],
+    generation: renderer.generation,
+    preparedUntilUs: 10000000,
+  );
+}
+
 void main() {
+  for (final videoRate in [24, 30, 60]) {
+    testWidgets('$videoRate FPS 混合滚动与固定弹幕的锚点抖动不造成停顿和跳动', (
+      tester,
+    ) async {
+      tester.view.display.refreshRate = 120;
+      addTearDown(tester.view.display.resetRefreshRate);
+      final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+      var now = origin;
+      final clock = _Clock(_anchor(observed: origin));
+      final renderer = DanmakuWindowRenderer<void>(
+        option: const DanmakuOption(
+          fontSize: 20,
+          duration: 8,
+          staticDuration: .25,
+          safeArea: false,
+        ),
+        size: const Size(320, 120),
+      );
+      addTearDown(renderer.dispose);
+      addTearDown(clock.events.close);
+      await tester.pumpWidget(
+        _host(
+          DanmakuWindowScreen<void>(
+            renderer: renderer,
+            clock: clock,
+            size: const Size(320, 120),
+            monotonicUs: () => now,
+            prepareFrame: (r, p, {required effectiveRate}) =>
+                _prepareMixed(r, p),
+          ),
+        ),
+      );
+      final positions = <int>[];
+      final lefts = <double>[];
+      var fixedPeak = 0;
+      var fixedExpiries = 0;
+      var previousFixed = 0;
+      final fixedBounds = <Object, Rect>{};
+      final stride = 120 ~/ videoRate;
+      for (var slot = 1; slot <= 120; slot++) {
+        final sampled = slot % stride == 0;
+        final delay = sampled && (slot ~/ stride).isEven ? 6000 : 1000;
+        final delivered = origin + slot * 8333 + delay;
+        await tester.binding.delayed(Duration(microseconds: delivered - now));
+        now = delivered;
+        if (sampled) {
+          // time-pos 按视频帧推进；属性读取时刻包含本次通知的交付延迟。
+          clock.emit(_anchor(position: slot * 8333, observed: now));
+        }
+        tester.binding.handleBeginFrame(
+          Duration(microseconds: origin + (slot + 1) * 8333),
+        );
+        tester.binding.handleDrawFrame();
+        positions.add(renderer.presentationTimeUs);
+        final displayed = renderer.interaction.snapshot;
+        lefts.add(displayed.singleWhere((s) => s.identity == 'a').bounds.left);
+        final fixed = displayed.where((s) => s.identity != 'a').length;
+        for (final item in displayed.where((s) => s.identity != 'a')) {
+          final bounds = fixedBounds.putIfAbsent(
+            item.identity,
+            () => item.bounds,
+          );
+          expect(item.bounds, bounds);
+        }
+        if (fixed > fixedPeak) fixedPeak = fixed;
+        if (previousFixed > 0 && fixed == 0) fixedExpiries++;
+        previousFixed = fixed;
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      final steps = [
+        for (var i = 1; i < positions.length; i++)
+          positions[i] - positions[i - 1],
+      ];
+      expect(steps, everyElement(inInclusiveRange(7883, 8783)));
+      expect(positions.last, closeTo(121 * 8333, 10000));
+      expect(fixedPeak, 2);
+      expect(fixedExpiries, 2);
+      expect(fixedBounds.keys.toSet(), {
+        'top-0',
+        'bottom-0',
+        'top-500000',
+        'bottom-500000',
+      });
+      final nominalStep = (lefts.first - lefts.last) / (lefts.length - 1);
+      for (var i = 1; i < lefts.length; i++) {
+        expect(
+          lefts[i - 1] - lefts[i],
+          closeTo(nominalStep, nominalStep * .1),
+        );
+      }
+    });
+  }
+
+  testWidgets('回调交付抖动不改变跟随屏幕时的逐帧位移', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final origin = tester.binding.clock.now().microsecondsSinceEpoch;
+    var now = origin;
+    final clock = _Clock(_anchor(observed: origin));
+    final renderer = _renderer();
+    addTearDown(renderer.dispose);
+    addTearDown(clock.events.close);
+    await tester.pumpWidget(
+      _host(
+        DanmakuWindowScreen<void>(
+          renderer: renderer,
+          clock: clock,
+          size: const Size(320, 120),
+          monotonicUs: () => now,
+          prepareFrame: (r, p, {required effectiveRate}) => _prepare(r, p),
+        ),
+      ),
+    );
+    final positions = <int>[];
+    final lefts = <double>[];
+    for (var slot = 1; slot <= 30; slot++) {
+      final delivered = origin + slot * 8333 + (slot.isEven ? 6000 : 1000);
+      await tester.binding.delayed(Duration(microseconds: delivered - now));
+      now = delivered;
+      clock.emit(_anchor(position: now - origin, observed: now));
+      tester.binding.handleBeginFrame(
+        Duration(microseconds: origin + (slot + 1) * 8333),
+      );
+      tester.binding.handleDrawFrame();
+      positions.add(renderer.presentationTimeUs);
+      lefts.add(renderer.interaction.snapshot.single.bounds.left);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    final gaps = [
+      for (var i = 1; i < positions.length; i++)
+        positions[i] - positions[i - 1],
+    ];
+    expect(gaps, everyElement(8333));
+    final step = lefts[0] - lefts[1];
+    expect(step, greaterThan(0));
+    for (var i = 2; i < lefts.length; i++) {
+      expect(lefts[i - 1] - lefts[i], closeTo(step, .0001));
+    }
+  });
+
   testWidgets('parent rebuilds preserve scrolling time and frame cadence', (
     tester,
   ) async {
@@ -83,6 +246,7 @@ void main() {
         size: const Size(320, 120),
         frameRate: 30,
         monotonicUs: () => now,
+        frameTimeUs: () => now,
         prepareFrame: (r, p, {required effectiveRate}) => _prepare(r, p),
       ),
     );
@@ -125,6 +289,7 @@ void main() {
                   frameRate: target,
                   inputChanges: inputs.stream,
                   monotonicUs: () => now,
+                  frameTimeUs: () => now,
                   prepareFrame: (r, p, {required effectiveRate}) =>
                       _prepare(r, p),
                 ),
@@ -198,6 +363,7 @@ void main() {
               clock: clock,
               size: const Size(320, 120),
               monotonicUs: () => now,
+              frameTimeUs: () => now,
               prepareFrame: (r, p, {required effectiveRate}) {
                 mediaPositions.add(p);
                 _prepare(r, p);
@@ -281,6 +447,7 @@ void main() {
           clock: clock,
           size: const Size(320, 120),
           monotonicUs: () => 0,
+          frameTimeUs: () => 0,
           prepareFrame: (r, p, {required effectiveRate}) {
             positions.add(p);
             _prepare(r, p);
@@ -328,6 +495,7 @@ void main() {
             clock: clock,
             size: const Size(320, 120),
             monotonicUs: () => now,
+            frameTimeUs: () => now,
             nextPreparationUs: () => nextPreparation,
             prepareFrame: (r, p, {required effectiveRate}) {
               frames++;
@@ -387,6 +555,7 @@ void main() {
           clock: clock,
           size: const Size(320, 120),
           monotonicUs: () => 0,
+          frameTimeUs: () => 0,
           prepareFrame: (r, p, {required effectiveRate}) {
             rates.add(effectiveRate);
             _prepare(r, p);
@@ -416,6 +585,7 @@ void main() {
             clock: clock,
             size: const Size(320, 120),
             monotonicUs: () => now,
+            frameTimeUs: () => now,
             prepareFrame: (r, p, {required effectiveRate}) {
               positions.add(p);
               _prepare(r, p);
@@ -469,6 +639,7 @@ void main() {
             clock: clock,
             size: const Size(320, 120),
             monotonicUs: () => now,
+            frameTimeUs: () => now,
             prepareFrame: (r, p, {required effectiveRate}) {
               positions.add(p);
               _prepare(r, p);
@@ -510,6 +681,7 @@ void main() {
             inputChanges: updates.stream,
             size: const Size(320, 120),
             monotonicUs: () => 0,
+            frameTimeUs: () => 0,
             prepareFrame: (r, p, {required effectiveRate}) {
               frames++;
               if (ready) _prepare(r, p);
@@ -552,6 +724,7 @@ void main() {
                 opacity: opacity,
                 size: const Size(320, 120),
                 monotonicUs: () => now,
+                frameTimeUs: () => now,
                 prepareFrame: (r, p, {required effectiveRate}) {
                   positions.add(p);
                   _prepare(r, p);

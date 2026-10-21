@@ -4,7 +4,9 @@ import 'dart:math' as math;
 import 'dart:ui' show FlutterView;
 
 import 'package:canvas_danmaku/frame_rate_ticker.dart';
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
@@ -32,6 +34,7 @@ class DanmakuWindowScreen<T> extends StatefulWidget {
     this.videoFrameTimings,
     this.videoDisplaySyncActive,
     this.monotonicUs,
+    this.frameTimeUs,
   });
 
   final DanmakuWindowRenderer<T> renderer;
@@ -47,6 +50,9 @@ class DanmakuWindowScreen<T> extends StatefulWidget {
   final ValueListenable<bool>? videoDisplaySyncActive;
   final int Function()? monotonicUs;
 
+  /// 与单调时钟同域的帧目标时间；测试可分别控制目标与实际交付。
+  final int Function()? frameTimeUs;
+
   @override
   State<DanmakuWindowScreen<T>> createState() => _DanmakuWindowScreenState<T>();
 }
@@ -58,6 +64,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   PlaybackMediaAnchor? _anchor;
   int? _continuity;
   int _lastPositionUs = 0;
+  int? _lastFrameTimeUs;
   bool _enabled = false;
   FlutterView? _view;
   Timer? _wake;
@@ -66,12 +73,24 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   @override
   void initState() {
     super.initState();
+    // 按当前帧的目标时间外推位置，避免回调交付抖动改变相邻帧位移。
     _ticker = FrameRateTicker(
-      (_) => _update(),
+      (_) => _update(
+        frameTimeUs:
+            widget.frameTimeUs?.call() ??
+            SchedulerBinding
+                .instance
+                .currentSystemFrameTimeStamp
+                .inMicroseconds,
+      ),
       frameRate: widget.frameRate,
       videoFrameTimings: widget.videoFrameTimings,
       videoDisplaySyncActive: widget.videoDisplaySyncActive,
       screenRefreshRate: () => _view?.display.refreshRate ?? 0,
+      continuousVideoVsync: defaultTargetPlatform == TargetPlatform.android,
+      preserveVideoPhase: const bool.fromEnvironment(
+        'PILIAURORA_CONTENT_COMPOSITION',
+      ),
     );
     _unregisterDiagnostics = Diagnostics.instance.register(
       'danmaku.layer.$hashCode',
@@ -135,11 +154,11 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
 
   bool get _visible => _enabled && widget.opacity > 0;
 
-  void _update() {
+  void _update({int? frameTimeUs}) {
     if (!_visible) return;
     final anchor = _anchor;
     var position = anchor?.positionAt(
-      widget.monotonicUs?.call() ?? Timeline.now,
+      frameTimeUs ?? widget.monotonicUs?.call() ?? Timeline.now,
     );
     if (position == null) return;
     final renderer = widget.renderer;
@@ -147,6 +166,25 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       if (!renderer.containsPreparedTime(position)) renderer.reset(position);
       _continuity = anchor.continuity;
     } else {
+      final previousFrame = _lastFrameTimeUs;
+      if (frameTimeUs != null &&
+          previousFrame != null &&
+          frameTimeUs > previousFrame &&
+          frameTimeUs - previousFrame <= 50000 &&
+          anchor.advancing &&
+          frameTimeUs < anchor.observedAtUs + anchor.validForUs) {
+        final advance = (frameTimeUs - previousFrame) * anchor.effectiveRate;
+        final projected = _lastPositionUs + advance.round();
+        final error = position - projected;
+        // time-pos 随视频帧离散推进，接收时刻还包含通知延迟。
+        // 连续帧的小幅校准分摊到后续帧，速度偏差限于 5%。
+        // 超过 50ms 的显示空档或明显时钟偏移重新贴合媒体时间。
+        if (error.abs() <= 100000 * anchor.effectiveRate &&
+            frameTimeUs - previousFrame < anchor.validForUs) {
+          final correction = (advance * .05).round();
+          position = projected + error.clamp(-correction, correction);
+        }
+      }
       // 原生校准可能落后于已外推的画面，同一连续域等待媒体时间追上。
       position = math.max(
         position,
@@ -154,6 +192,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       );
     }
     _lastPositionUs = position;
+    _lastFrameTimeUs = frameTimeUs;
     renderer
       ..prepareConfiguration()
       ..present(position, allowUnprepared: true);
