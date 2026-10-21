@@ -591,6 +591,23 @@ void main() {
     await runtime.released;
   });
 
+  test('页面关闭但媒体租约尚未释放时，原生播放器立即暂停', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('movie'), start: PlaybackStartPolicy.play);
+    final lease = owner.acquireKeepAlive()!;
+    expect(runtime.playCalls.last, isTrue);
+
+    owner.close();
+    await _until(() => !runtime.playCalls.last);
+    expect(session.isDisposed, isFalse);
+
+    lease.close();
+    await runtime.released;
+    expect(session.isDisposed, isTrue);
+  });
+
   test('关闭inactive owner不影响当前活动owner的播放', () async {
     final runtime = _FakeRuntime();
     final session = PlaybackSession(runtime: runtime);
@@ -1229,6 +1246,12 @@ class _FakeRuntime implements PlaybackRuntimePort {
     bool playing,
     PlaybackExecutionContext context,
   ) {
+    // 与原生运行时一致：失去归属的命令不会触碰播放器。
+    if (!context.isCurrent()) {
+      return Future.value(
+        const PlaybackRuntimeCommandResult(applied: false),
+      );
+    }
     final index = _playIndex++;
     if (onSetPlaying != null) return onSetPlaying!(playing, context, index);
     playCalls.add(playing);

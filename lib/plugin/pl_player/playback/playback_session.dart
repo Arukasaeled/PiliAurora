@@ -848,7 +848,7 @@ class PlaybackSession implements PlaybackMediaClock {
           isCurrent: () =>
               !_closingRequested &&
               revision == _intentRevision &&
-              owner != null &&
+              // 最后一个页面退出时仍需向原生提交暂停，归属为空也是有效状态。
               identical(owner, _activeOwner) &&
               _writerPermitted,
         );
