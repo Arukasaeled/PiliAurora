@@ -22,6 +22,8 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 
 视频详情或播放器 → 弹幕 API 与解析 → 弹幕状态和渲染。Windows 高密度场景请记录编码、分辨率、输出尺寸、弹幕密度、硬件解码状态、构建模式和复现时长。
 
+弹幕加载为空时，先对照 `grpcDecode` 与来源快照中的 `elements/rawSegments/pendingSegments`。响应已收到但出现 `DanmakuWorkTooLarge` 时，分别核对解压、protobuf 预检和合并阶段的预算。已知元素字段槽位包含在元素基数内，未知字段另行计费；解码 worker 退出后保留存活的缓冲区与解析结果，合并沿用同一租约，已预留的输入计费一次。当前进程处理配额为 64 MiB，解压响应上限为 8 MiB，单条编码上限为 64 KiB；相关回归见 `test/grpc/decode_policy_test.dart` 与 `test/pages/danmaku/controller_test.dart`。
+
 Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，`danmaku.layer.*` 快照的 `scheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 是提交给引擎的帧请求数，含被合并的请求。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Android 与 Windows 使用同一图层快照。图层还记录活动图片、缓存、窗口、配置准备和工作集预算；直播包含候选、资源任务和在途预留。计数读取沿用现有诊断周期。
 
 `danmaku.processWorkQuota` 独立记录进程处理任务、预留字节和等待描述，来源页面卸载后继续保留。`obsoleteRunningTasks/obsoleteReservedBytes` 表示预约绑定的取消 token 已失效、任务仍未实际结束的占用。来源快照另有 `rawEstimatedBytes`、`processedEstimatedBytes/processedByteLimit`；显示工作集包含仍持有的表情源图及直播图片任务预留。这些字段按代码中的存储计费规则统计，RSS 与 GPU 使用现有进程和平台采样读取。

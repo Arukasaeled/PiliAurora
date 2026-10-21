@@ -185,7 +185,8 @@ abstract final class GrpcReq {
                         await consume?.call(
                           response,
                           lease.retaining(
-                            2 * data.length + 2 * decodedLimit! + storage,
+                            // compute 已结束；下一阶段保留主 isolate 的输入与解析结果。
+                            data.length + decodedLimit! + storage,
                           ),
                         );
                       }

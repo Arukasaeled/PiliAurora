@@ -7,6 +7,7 @@ import 'package:pili_aurora/services/danmaku/work_quota.dart';
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/painting.dart';
 import 'package:dio/dio.dart';
+import 'package:fixnum/fixnum.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
@@ -50,6 +51,42 @@ void main() {
     Request.dio.httpClientAdapter.close(force: true);
   });
   tearDownAll(() => Request.dio.close(force: true));
+
+  test(
+    'dense valid gRPC segment remains available after decode and processing',
+    () async {
+      final reply = DmSegMobileReply(
+        elems: [
+          for (var i = 0; i < 17502; i++)
+            DanmakuElem(
+              id: Int64(i + 1),
+              progress: i * 18,
+              mode: 1,
+              fontsize: 25,
+              color: 0xffffff,
+              midHash: 'sender-hash',
+              content: '正常弹幕$i',
+              ctime: Int64(1700000000),
+              weight: 5,
+              action: '',
+              pool: 0,
+              idStr: '${i + 1}',
+              attr: 0,
+              extra: 'metadata' * 15,
+            ),
+        ],
+      );
+      Request.dio.httpClientAdapter = _DmAdapter()..reply = reply;
+      final source = PlDanmakuController(1, _Player(), false);
+      addTearDown(source.dispose);
+      await source.ensureRange(0, 360000000);
+      final range = source.readRange(0, 360000000);
+      expect(range.isLoaded, isTrue);
+      expect(range.entries, hasLength(reply.elems.length));
+      expect(range.entries.first.element.content, '正常弹幕0');
+      expect(range.entries.last.element.content, '正常弹幕17501');
+    },
+  );
 
   test('paused production source fails once and resumes on explicit successful retry', () async {
     final adapter = _DmAdapter()
@@ -527,6 +564,7 @@ class _DmAdapter implements HttpClientAdapter {
   int calls = 0;
   bool fail = false;
   int progress = 100;
+  DmSegMobileReply? reply;
 
   @override
   Future<ResponseBody> fetch(
@@ -544,9 +582,11 @@ class _DmAdapter implements HttpClientAdapter {
         },
       );
     }
-    final reply = DmSegMobileReply(
-      elems: [_dm('重复', progress), _dm('重复', progress + 1)],
-    );
+    final reply =
+        this.reply ??
+        DmSegMobileReply(
+          elems: [_dm('重复', progress), _dm('重复', progress + 1)],
+        );
     return ResponseBody.fromBytes(
       GrpcReq.compressProtobuf(reply.writeToBuffer()),
       200,

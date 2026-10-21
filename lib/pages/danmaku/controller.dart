@@ -251,7 +251,14 @@ class PlDanmakuController implements DanmakuTimelineSource {
     }
     try {
       if (lease != null) {
-        await lease.execute(() => _processDanmaku(elems, segmentIndex, lease));
+        await lease.execute(
+          () => _processDanmaku(
+            elems,
+            segmentIndex,
+            lease,
+            inputAlreadyReserved: true,
+          ),
+        );
       } else {
         await DanmakuWorkQuota.instance.runWithLease(
           estimateDanmakuWorkBytes(elems),
@@ -277,8 +284,9 @@ class PlDanmakuController implements DanmakuTimelineSource {
   Future<void> _processDanmaku(
     List<DanmakuElem> elems,
     int? segmentIndex,
-    DanmakuWorkLease lease,
-  ) async {
+    DanmakuWorkLease lease, {
+    bool inputAlreadyReserved = false,
+  }) async {
     if (_disposed) return;
     final revision = _ruleRevision;
     final workToken = _ruleWork;
@@ -302,6 +310,7 @@ class PlDanmakuController implements DanmakuTimelineSource {
         rules: rules,
         lease: lease,
         token: workToken,
+        inputAlreadyReserved: inputAlreadyReserved,
       );
     } on DanmakuWorkCancelled {
       return;

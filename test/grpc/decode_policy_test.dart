@@ -18,6 +18,18 @@ Uint8List _frame(Uint8List bytes, {bool compressed = false}) {
 }
 
 void main() {
+  test('wire inspection covers known storage and retained unknown fields', () {
+    for (final element in [
+      DanmakuElem(content: '中文与 emoji 🎉', extra: 'metadata'),
+      DanmakuElem.fromBuffer([0xc0, 0x0c, 1, 0xc2, 0x0c, 3, 1, 2, 3]),
+      DanmakuElem.fromBuffer([0xd8, 1, 127]),
+    ]) {
+      expect(
+        inspectDanmakuProtobuf(element.writeToBuffer(), element: true),
+        greaterThanOrEqualTo(estimateDanmakuElementBytes(element)),
+      );
+    }
+  });
   test(
     'six thousand ordinary elements retain room for decode and merge phases',
     () {

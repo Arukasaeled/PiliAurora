@@ -37,6 +37,8 @@ CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dar
 
 `pages/danmaku/file_store_test.dart` 检查有序产物复用、原文件更换、取消和释放清理；`controller_test.dart` 检查暂停失败后的显式重试、最新范围收敛和规则重算；`cache_test.dart` 检查字节淘汰与覆盖状态。`window_coordinator_test.dart` 和 `echo_source_test.dart` 检查局部失效、旧就绪事件隔离及来源等待期间的本地回显；进程预留与取消后占用归还由 `services/danmaku/work_quota_test.dart` 覆盖。
 
+`controller_test.dart` 另以 1.75 万条合法弹幕经过生产 gRPC 解码、共享租约、过滤合并和缓存提交，检查高密度分段可以完整加载；`grpc/decode_policy_test.dart` 核对已知字段与未知字段的存储估算，同时保留单条超限、字段数超限及有界 gzip 解压回归。
+
 消息测试按业务状态、分享和协议分为 `messaging_test.dart`、`sharing_test.dart`、`protocol_test.dart`。运行入口与实际服务验证范围见[消息模块](../lib/services/messaging/README.md#验证)。
 
 `pages/danmaku/native_video_frame_sync_test.dart` 使用独立的纹理刷新请求批次，覆盖引擎不提供零 Build timing 时的 60 FPS 相位学习、30 FPS 视频配 60 FPS 弹幕在 120 Hz 上的相位变化、匹配到失配再匹配时的退化与恢复、mpv 显示同步状态切换与订阅释放、批次限界、请求时间抖动、29.97 FPS 漂移与来源释放。相位变化测试同时断言弹幕更新频率和视频、弹幕合计刷新的次数。屏幕槽位与呈现的结论来自设备检查。

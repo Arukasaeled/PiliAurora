@@ -49,7 +49,8 @@ int _unknownBytes(UnknownFieldSet fields, int depth) {
   return bytes;
 }
 
-/// 解析前扫描 wire，不分配字段值。计入消息、字段、UTF-16/未知字节存储。
+/// 解析前扫描 wire，不分配字段值。已知元素的字段槽位包含在 512 字节基数内，
+/// 另计字符串、重复消息列表与未知字段，保持与缓存的元素计费口径一致。
 /// schema: 0=reply, 1=element, 2=AI flags, 3=flag, 4=colorful, 5=unknown group。
 int inspectDanmakuProtobuf(List<int> data, {bool element = false}) {
   if (element && data.length > DanmakuProcessingBudget.maxElementEncodedBytes) {
@@ -93,14 +94,34 @@ int inspectDanmakuProtobuf(List<int> data, {bool element = false}) {
           DanmakuProcessingBudget.maxElementFields,
         );
       }
-      bytes += 128;
       switch (wire) {
         case 0:
-          varint(end);
-          bytes += 32;
+          final value = varint(end);
+          final known =
+              schema == 1 &&
+              switch (number) {
+                1 ||
+                2 ||
+                3 ||
+                4 ||
+                5 ||
+                8 ||
+                9 ||
+                11 ||
+                13 ||
+                15 ||
+                25 ||
+                26 ||
+                100 ||
+                101 => true,
+                24 => DmColorfulType.valueOf(value) != null,
+                27 => DmFromType.valueOf(value) != null,
+                _ => false,
+              };
+          if (!known) bytes += 160;
         case 1:
           offset += 8;
-          bytes += 32;
+          bytes += 160;
         case 2:
           final length = varint(end);
           if (length < 0 || length > end - offset) {
@@ -123,17 +144,32 @@ int inspectDanmakuProtobuf(List<int> data, {bool element = false}) {
                 DanmakuProcessingBudget.maxElementEncodedBytes,
               );
             }
-            bytes += scan(offset + length, nested, depth + 1);
+            bytes +=
+                (schema == 0 && number == 1 ? 8 : 128) +
+                scan(offset + length, nested, depth + 1);
           } else {
+            final knownString =
+                schema == 1 &&
+                (number == 6 ||
+                    number == 7 ||
+                    number == 10 ||
+                    number == 12 ||
+                    number == 22 ||
+                    number == 23);
             // packed int64 每字节最多一个值；字符串每字节最多一个 UTF-16 code unit。
-            bytes += schema == 0 && number == 4 ? 32 * length : 64 + 2 * length;
+            bytes += knownString
+                ? 2 * length
+                : 128 +
+                      (schema == 0 && number == 4
+                          ? 32 * length
+                          : 64 + 2 * length);
             offset += length;
           }
         case 3:
-          bytes += scan(end, 5, depth + 1, number);
+          bytes += 128 + scan(end, 5, depth + 1, number);
         case 5:
           offset += 4;
-          bytes += 32;
+          bytes += 160;
         default:
           throw const FormatException('弹幕字段类型无效');
       }

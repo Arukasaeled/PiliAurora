@@ -17,9 +17,12 @@ int estimateDanmakuInputBytes(List<DanmakuElem> elements) =>
       (bytes, element) => bytes + estimateDanmakuElementBytes(element),
     );
 
-/// 来源输入/结果各一份、排序双索引，加一个有界 worker 流水线。
-int estimateDanmakuWorkBytes(List<DanmakuElem> elements) =>
-    2 *
+/// 输入与结果、排序双索引及有界 worker；解码租约已保留的输入不重复预约。
+int estimateDanmakuWorkBytes(
+  List<DanmakuElem> elements, {
+  bool inputAlreadyReserved = false,
+}) =>
+    (inputAlreadyReserved ? 1 : 2) *
         elements.fold<int>(
           0,
           (bytes, element) => bytes + estimateDanmakuElementBytes(element),
@@ -54,9 +57,15 @@ Future<List<DanmakuElem>> processDanmakuInBackground(
   required DanmakuProcessingRules rules,
   DanmakuWorkToken? token,
   DanmakuWorkLease? lease,
+  bool inputAlreadyReserved = false,
 }) {
   Future<List<DanmakuElem>> merge() {
-    lease?.requireBytes(estimateDanmakuWorkBytes(elements));
+    lease?.requireBytes(
+      estimateDanmakuWorkBytes(
+        elements,
+        inputAlreadyReserved: inputAlreadyReserved,
+      ),
+    );
     return _mergeInWorker(elements, token, rules);
   }
 
