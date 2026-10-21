@@ -446,6 +446,8 @@ class PlaybackSession implements PlaybackMediaClock {
       'requestId': request.id,
       'stage': stage.name,
     });
+    // 地址解析也属于加载阶段；先暂停旧媒体，避免加载态下声音继续推进。
+    unawaited(_scheduleWriterIfReady());
     return request;
   }
 
@@ -803,6 +805,12 @@ class PlaybackSession implements PlaybackMediaClock {
   }
 
   bool get _effectivePlaying {
+    if (_phase != PlaybackPhase.ready &&
+        !((_phase == PlaybackPhase.loading ||
+                _phase == PlaybackPhase.recovering) &&
+            _writerLoadRequestId == _requestId)) {
+      return false;
+    }
     final owner = _activeOwner;
     if (owner == null ||
         owner._requiresLoad ||
@@ -814,7 +822,7 @@ class PlaybackSession implements PlaybackMediaClock {
   }
 
   Future<void> _scheduleWriterIfReady() {
-    if (_phase == PlaybackPhase.ready) return _ensureWriter();
+    if (_writerPermitted) return _ensureWriter();
     return Future<void>.value();
   }
 
@@ -926,6 +934,10 @@ class PlaybackSession implements PlaybackMediaClock {
 
   bool get _writerPermitted =>
       _phase == PlaybackPhase.ready ||
+      (_runtimePositionAvailable &&
+          (_phase == PlaybackPhase.loading ||
+              _phase == PlaybackPhase.recovering ||
+              _phase == PlaybackPhase.failed)) ||
       ((_phase == PlaybackPhase.loading ||
               _phase == PlaybackPhase.recovering) &&
           _writerLoadRequestId != null &&
@@ -1650,6 +1662,8 @@ class PlaybackSession implements PlaybackMediaClock {
 
   void _publishFailure(PlaybackFailure failure) {
     if (_closingRequested || _disposed) return;
+    _intentRevision++;
+    _settlePlayingWaiters(const CommandResult.superseded());
     _failure = failure;
     _phase = PlaybackPhase.failed;
     _stage = failure.stage;
@@ -1660,6 +1674,7 @@ class PlaybackSession implements PlaybackMediaClock {
       'operation': failure.operation,
     });
     _publish();
+    unawaited(_scheduleWriterIfReady());
   }
 
   void _failLoad(_AcceptedRequest request, PlaybackFailure failure) {

@@ -762,7 +762,7 @@ void main() {
     expect(runtime.loadedPlans.last.reloadPosition, isNull);
     expect(runtime.shaderCalls, isEmpty);
     expect(session.currentSnapshot.intent.playing, isTrue);
-    expect(runtime.playCalls, [true, true]);
+    expect(runtime.playCalls, [true, false, true]);
 
     owner.close();
     await runtime.released;
@@ -892,6 +892,87 @@ void main() {
     expect((await nextLoad).outcome, LoadOutcome.ready);
     expect(runtime.loadedKeys, ['first', 'second']);
     expect(session.currentPlan?.contentKey, 'second');
+  });
+
+  test('地址重新解析时暂停旧媒体，失败后保持静音与用户意图', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    addTearDown(() async {
+      owner.close();
+      await runtime.released;
+    });
+    await owner.load(_plan('movie'), start: PlaybackStartPolicy.play);
+    final resolving = Completer<PlaybackPlan?>();
+    final query = owner.query((_) => resolving.future);
+    await _until(() => !runtime.playCalls.last);
+    expect(session.currentSnapshot.phase, PlaybackPhase.loading);
+    expect(session.currentSnapshot.intent.playing, isTrue);
+    resolving.complete(null);
+    expect((await query).outcome, LoadOutcome.failed);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.intent.playing, isTrue);
+  });
+
+  test('运行时失败使迟到的 play 收敛到暂停', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final playing = Completer<void>();
+    final started = Completer<void>();
+    addTearDown(() async {
+      if (!playing.isCompleted) playing.complete();
+      owner.close();
+      await runtime.released;
+    });
+    await owner.load(_plan('movie'));
+    runtime.onSetPlaying = (value, context, index) async {
+      if (value) {
+        started.complete();
+        await playing.future;
+      }
+      runtime.playCalls.add(value);
+      return const PlaybackRuntimeCommandResult();
+    };
+    final command = owner.setPlaying(true);
+    await started.future;
+    runtime._events.add(
+      PlaybackRuntimeFailure(
+        runtimeId: runtime.runtimeId,
+        loadId: session.loadId,
+        failure: const PlaybackFailure(
+          category: PlaybackFailureCategory.source,
+          operation: 'read',
+          stage: PlaybackStage.observing,
+          recoverable: true,
+          cause: 'source-failed',
+        ),
+      ),
+    );
+    playing.complete();
+    await command;
+    await _until(() => runtime.playCalls.length >= 3);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.phase, PlaybackPhase.failed);
+  });
+
+  test('重新加载中用户暂停，输出就绪后保持暂停', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    addTearDown(() async {
+      owner.close();
+      await runtime.released;
+    });
+    await owner.load(_plan('movie'), start: PlaybackStartPolicy.play);
+    final resolving = Completer<PlaybackPlan?>();
+    final query = owner.query((_) => resolving.future);
+    await _until(() => !runtime.playCalls.last);
+    await owner.setPlaying(false);
+    resolving.complete(_plan('movie'));
+    expect((await query).outcome, LoadOutcome.ready);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.intent.playing, isFalse);
   });
 
   test('同页切来源及地址查询完成后从最新位置续播', () async {
