@@ -1,0 +1,278 @@
+import 'dart:async';
+import 'dart:ffi';
+import 'package:media_kit/ffi/ffi.dart';
+import 'package:media_kit/generated/libmpv/bindings.dart' as generated;
+import 'dart:io';
+import 'dart:convert';
+import 'dart:developer' show Timeline;
+import 'dart:math' as math;
+import 'dart:ui' show FramePhase;
+
+import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
+import 'frame_plan_window.dart';
+import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock_worker.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/android_raster_scheduling.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
+
+final _expected = DynamicLibrary.open('libpacing.so').lookupFunction<Int64 Function(Int64), int Function(int)>('pili_frame_expected');
+int plannedFrameUs() => _expected(SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds);
+final _videoDirty = DynamicLibrary.open('libpacing.so').lookupFunction<Int32 Function(), int Function()>('pili_video_dirty');
+bool probeGate = false, probeDirty = true;
+class _ProbeBinding extends WidgetsFlutterBinding {
+  @override void drawFrame() {
+    if (probeGate && !probeDirty && _videoDirty() == 0) return;
+    probeDirty = false;
+    super.drawFrame();
+  }
+}
+late bool probeAsync;
+late bool probeUseGate;
+late bool probeContinuous;
+late bool probeIndependent;
+Future<void> main() async {
+  probeAsync = (await File('/data/user/0/io.github.wallpap.piliaurora.profile/cache/clock-mode.txt').readAsString()).trim() == 'async';
+  probeUseGate = (await File('/data/user/0/io.github.wallpap.piliaurora.profile/cache/gate-mode.txt').readAsString()).trim() == 'true';
+  probeContinuous = (await File('/data/user/0/io.github.wallpap.piliaurora.profile/cache/pacing-mode.txt').readAsString()).trim() == 'true';
+  probeIndependent = (await File('/data/user/0/io.github.wallpap.piliaurora.profile/cache/phase-mode.txt').readAsString()).trim() == 'independent';
+  _ProbeBinding();
+  MediaKit.ensureInitialized();
+  final player = await Player.create(configuration: const PlayerConfiguration(
+    options: {'video-sync': 'display-resample', 'audio': 'no'},
+  ));
+  final frames = ValueNotifier<List<int>>(const []);
+  final video = await VideoController.create(player,
+    configuration: hardwareVideoConfiguration(enabled: true, configured: 'mediacodec',
+      onAndroidFrameTimings: (value) => frames.value = value));
+  final clock = _Clock(player);
+  runApp(MaterialApp(home: _Probe(video, frames, clock)));
+  await player.setPlaylistMode(PlaylistMode.loop);
+  await player.open(const Media(String.fromEnvironment('JANK_MEDIA_URI')));
+}
+
+class _Clock implements PlaybackMediaClock {
+  _Clock(this.player) {
+    subscription = player.stream.position.listen((_) {
+      if (closed || pending != null) return;
+      final handle = player.handle, path = player.nativeLibraryPath, domain = continuity;
+      final index = entryId == null ? int.tryParse(player.getProperty('playlist-pos')) : null;
+      entryId ??= index == null ? null : int.tryParse(player.getProperty('playlist/$index/id'));
+      final entry = entryId;
+      if (entry == null) return;
+      final operation = probeAsync
+          ? sampleNativeMediaClockOnWorker(handleAddress:handle,libraryPath:path,playlistEntryId:entry,continuity:domain)
+          : Future.value(_readClock(handle, path, domain));
+      pending = operation.then((anchor) {
+        if (closed || anchor == null || continuity != domain) return;
+        currentMediaAnchor = anchor;
+        if (recording) samples.add([anchor.observedAtUs, anchor.positionUs]);
+        events.add(anchor);
+      }).whenComplete(() => pending = null);
+    });
+  }
+  bool closed = false;
+  Future<void> close() async {
+    closed = true;
+    await subscription.cancel();
+    await pending;
+    await events.close();
+  }
+  Future<void>? pending;
+  int? entryId;
+  final Player player;
+  int continuity = 0;
+  late final StreamSubscription<Duration> subscription;
+  final events = StreamController<PlaybackMediaAnchor?>.broadcast(sync: true);
+  final samples = <List<int>>[];
+  bool recording = false;
+  @override PlaybackMediaAnchor? currentMediaAnchor;
+  @override Stream<PlaybackMediaAnchor?> get mediaAnchors => events.stream;
+}
+
+class _Probe extends StatefulWidget {
+  const _Probe(this.video, this.frames, this.clock);
+  final VideoController video;
+  final ValueNotifier<List<int>> frames;
+  final _Clock clock;
+  @override State<_Probe> createState() => _ProbeState();
+}
+
+class _ProbeState extends State<_Probe> {
+  int stage = 0;
+  static const rates = [60];
+  final motion = <List<int>>[];
+  final frameTimings = <FrameTiming>[];
+  DanmakuWindowRenderer<void>? renderer;
+  AndroidRasterScheduling? affinity;
+  Timer? timer;
+  bool recording = false;
+  int lastTarget = -1;
+  int? fixtureStart;
+  int nextSecond = 0;
+  int fixtureSampleBucket = -1;
+  final fixtureSamples = <List<int>>[];
+
+  @override void initState() {
+    super.initState();
+    SchedulerBinding.instance.addTimingsCallback(onTimings);
+    unawaited(widget.video.waitUntilFirstFrameRendered.then((_) async {
+      affinity = await AndroidRasterScheduling.open();
+      affinity?.useAppCpus(true);
+      measure();
+    }));
+  }
+
+  void onTimings(List<FrameTiming> timings) => frameTimings.addAll(timings);
+
+  void record() {
+    probeDirty = true;
+    final target = SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds;
+    if (!recording || target == lastTarget) return;
+    lastTarget = target;
+    motion.add([Timeline.now, plannedFrameUs(), renderer!.presentationTimeUs]);
+    final bucket = target ~/ 100000;
+    if (bucket != fixtureSampleBucket) {
+      fixtureSampleBucket = bucket;
+      final ids = renderer!.interaction.snapshot.map((s)=>s.identity.toString()).toList();
+      fixtureSamples.add([target,
+        ids.where((s)=>s.startsWith('scroll')).length,
+        ids.where((s)=>s.startsWith('top')).length,
+        ids.where((s)=>s.startsWith('bottom')).length]);
+    }
+  }
+
+  void prepare(DanmakuWindowRenderer<void> r, int position) {
+    fixtureStart ??= position;
+    while(fixtureStart!+nextSecond*1000000 < position+1000000) {
+      final second=nextSecond++;
+      final from=fixtureStart!+second*1000000;
+      final inputs=<DanmakuWindowContent<void>>[
+        for(var i=0;i<(second==0?6:2);i++)
+          DanmakuWindowContent('scroll-$second-$i',from+i*150000,
+            DanmakuContentItem<void>('滚动弹幕 $second-$i')),
+        if(second.isEven) ...[
+          DanmakuWindowContent('top-$second',from,
+            DanmakuContentItem<void>('顶部固定弹幕 $second',type:DanmakuItemType.top)),
+          DanmakuWindowContent('bottom-$second',from,
+            DanmakuContentItem<void>('底部固定弹幕 $second',type:DanmakuItemType.bottom)),
+        ],
+      ]..sort((a,b)=>a.sourceUs.compareTo(b.sourceUs));
+      if(!r.prepare(inputs,generation:r.generation,preparedUntilUs:from+1000000)) {
+        throw StateError('mixed fixture preparation failed');
+      }
+    }
+    r.trimBefore(math.max(fixtureStart!,position-1000000));
+  }
+
+  Future<void> measure() async {
+    widget.clock.continuity++;
+    fixtureStart = null; nextSecond = 0; fixtureSampleBucket = -1;
+    renderer?.reset(30000000);
+    await widget.video.player.seek(const Duration(seconds: 30));
+    timer = Timer(const Duration(seconds: 4), () {
+      final start = Timeline.now;
+      motion.clear();
+      fixtureSamples.clear();
+      widget.clock.samples.clear();
+      widget.clock.recording = recording = true; probeGate = probeUseGate;
+      debugPrint('PILI_MOTION start ${jsonEncode({'stage':stage,'target':rates[stage],'startedUs':start})}');
+      timer = Timer(const Duration(seconds: 8), () {
+        widget.clock.recording = recording = false; probeGate = false;
+        final ratios = <double>[];
+        final steps = <int>[];
+        for(var i=1;i<motion.length;i++) {
+          final dt=motion[i][1]-motion[i-1][1];
+          final dp=motion[i][2]-motion[i-1][2];
+          if(dt<=0) continue;
+          ratios.add(dp/dt); steps.add(dp);
+        }
+        ratios.sort();
+        debugPrint('PILI_MOTION ${jsonEncode({
+          'stage':stage,'target':rates[stage],'startedUs':start,'endedUs':Timeline.now,
+          'updates':motion.length,'zeroSteps':steps.where((s)=>s==0).length,
+          'slowSteps':ratios.where((s)=>s<0.5).length,
+          'fastSteps':ratios.where((s)=>s>1.5).length,
+          'minRatio':ratios.isEmpty?null:ratios.first,'maxRatio':ratios.isEmpty?null:ratios.last,
+          'maxStepUs':steps.isEmpty?null:steps.reduce(math.max),
+          'affinity':affinity?.diagnostics,
+          'asyncClock':probeAsync,'gate':probeUseGate,'fixture':'scroll-top-bottom','continuousVsync':probeContinuous,'hwdec':widget.video.player.getProperty('hwdec-current'),'codec':widget.video.player.getProperty('video-codec'),'width':widget.video.player.getProperty('video-params/w'),'height':widget.video.player.getProperty('video-params/h'),'fps':widget.video.player.getProperty('container-fps'),'dropped':widget.video.player.getProperty('frame-drop-count'),
+          'durationsSeconds':[renderer!.rasters.option.duration,renderer!.rasters.option.staticDuration],
+        })}');
+        for (var i=0;i<motion.length;i+=10) {
+          debugPrint('PILI_MOTION data ${jsonEncode({'stage':stage,'motion':motion.sublist(i,math.min(i+10,motion.length))})}');
+        }
+        for (var i=0;i<widget.clock.samples.length;i+=10) {
+          debugPrint('PILI_MOTION data ${jsonEncode({'stage':stage,'anchors':widget.clock.samples.sublist(i,math.min(i+10,widget.clock.samples.length))})}');
+        }
+        for(var i=0;i<fixtureSamples.length;i+=10) {
+          debugPrint('PILI_MOTION fixture ${jsonEncode({'stage':stage,'rows':fixtureSamples.sublist(i,math.min(i+10,fixtureSamples.length))})}');
+        }
+        for (final entry in Diagnostics.instance.readSources(prefix:'danmaku.layer.').values) {
+          if(entry is Map) debugPrint('PILI_MOTION scheduler ${jsonEncode(entry['scheduler'])}');
+        }
+        final end = Timeline.now;
+        timer = Timer(const Duration(milliseconds: 1500), () {
+          final rows = [for(final f in frameTimings)
+            if(f.timestampInMicroseconds(FramePhase.buildStart)>=start &&
+               f.timestampInMicroseconds(FramePhase.buildStart)<end)
+              [f.frameNumber,
+               f.timestampInMicroseconds(FramePhase.vsyncStart),
+               f.timestampInMicroseconds(FramePhase.buildStart),
+               f.timestampInMicroseconds(FramePhase.buildFinish),
+               f.timestampInMicroseconds(FramePhase.rasterStart),
+               f.timestampInMicroseconds(FramePhase.rasterFinish)]];
+          for(var i=0;i<rows.length;i+=5) {
+            debugPrint('PILI_MOTION timings ${jsonEncode({'stage':stage,'rows':rows.sublist(i,math.min(i+5,rows.length))})}');
+          }
+          frameTimings.clear();
+          if(stage<rates.length-1) {setState(()=>stage++);measure();}
+          else { debugPrint('PILI_MOTION done'); }
+        });
+      });
+    });
+  }
+
+  @override Widget build(BuildContext context) => Scaffold(backgroundColor: Colors.black,
+    body: LayoutBuilder(builder:(context,constraints) {
+      renderer ??= DanmakuWindowRenderer<void>(
+        option:const DanmakuOption(fontSize:20,duration:8,staticDuration:3,safeArea:false),
+        size:constraints.biggest,devicePixelRatio:MediaQuery.devicePixelRatioOf(context))..addListener(record);
+      return Stack(fit:StackFit.expand, children:[
+        Center(child:FittedBox(child:SimpleVideo(controller:widget.video))),
+        DanmakuWindowScreen<void>(key:ValueKey(stage),continuousVideoVsync:probeContinuous,renderer:renderer!,clock:widget.clock,size:constraints.biggest,
+          frameRate:rates[stage],frameTimeUs:plannedFrameUs,videoFrameTimings:probeIndependent?null:widget.frames,videoDisplaySyncActive:probeIndependent?ValueNotifier(false):null,
+          prepareFrame:(r,p,{required effectiveRate}) => prepare(r,p))]);
+    }));
+
+  @override void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(onTimings);
+    timer?.cancel();affinity?.restore();renderer?.dispose();
+    unawaited(() async { await widget.clock.close(); await widget.video.player.dispose(); }());widget.frames.dispose();super.dispose();
+  }
+}
+
+
+
+
+
+PlaybackMediaAnchor? _readClock(int handle, String path, int continuity) {
+  final mpv = generated.MPV(DynamicLibrary.open(path));
+  final context = Pointer<generated.mpv_handle>.fromAddress(handle);
+  String read(String property) {
+    final name = property.toNativeUtf8();
+    final value = mpv.mpv_get_property_string(context, name);
+    try { return value == nullptr ? '' : value.toDartString(); }
+    finally { calloc.free(name); if (value != nullptr) mpv.mpv_free(value.cast()); }
+  }
+  final index = int.tryParse(read('playlist-pos'));
+  final entry = index == null ? null : int.tryParse(read('playlist/$index/id'));
+  if (entry == null) return null;
+  return sampleNativeMediaClock(readProperty:read,playlistEntryId:entry,continuity:continuity,monotonicNowUs:()=>Timeline.now);
+}
