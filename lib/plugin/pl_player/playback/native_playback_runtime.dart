@@ -8,7 +8,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:pili_aurora/http/browser_ua.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
-import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock_sampling.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock_worker.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_load_readiness.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_runtime_slot.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
@@ -102,6 +103,7 @@ class NativePlaybackRuntime
   int _mediaClockSeekSequence = 0;
   int _mediaClockContinuity = 0;
   bool _mediaClockSeekPending = false;
+  final _mediaClockSampling = NativeMediaClockSampling();
   bool _seekSubmissionBlocked = false;
   final _seekSubmissionChanges = StreamController<void>.broadcast(sync: true);
   Timer? _seekObservationTimeout;
@@ -920,6 +922,7 @@ class NativePlaybackRuntime
 
   @override
   void sampleMediaClock() {
+    _mediaClockSampling.invalidate();
     final player = _player;
     final binding = _activeBinding;
     if (player == null ||
@@ -932,25 +935,42 @@ class NativePlaybackRuntime
         _mediaClockSeekPending) {
       return;
     }
-    try {
-      final anchor = sampleNativeMediaClock(
-        readProperty: player.getProperty,
-        playlistEntryId: binding.entryId!,
-        continuity: _mediaClockContinuity,
-        monotonicNowUs: () => Timeline.now,
-      );
-      if (anchor == null) return;
-      _emit(
-        PlaybackRuntimeMediaAnchor(
-          runtimeId: runtimeId,
-          loadId: binding.loadId,
-          seekSequence: _mediaClockSeekSequence,
-          anchor: anchor,
-        ),
-      );
-    } catch (_) {
-      // 原生文件退出期间属性可能不可读，等待下一份有效采样。
-    }
+    final continuity = _mediaClockContinuity;
+    final seekSequence = _mediaClockSeekSequence;
+    final handleAddress = player.handle;
+    final libraryPath = player.nativeLibraryPath;
+    bool isCurrent() =>
+        !_shutdownRequested &&
+        identical(_player, player) &&
+        identical(_activeBinding, binding) &&
+        !binding.retiring &&
+        !_nativeLifecycleUnknown &&
+        _pendingLoad == null &&
+        !_mediaClockSeekPending &&
+        _mediaClockContinuity == continuity &&
+        _mediaClockSeekSequence == seekSequence;
+
+    _mediaClockSampling.request(
+      () => isCurrent()
+          ? sampleNativeMediaClockOnWorker(
+              handleAddress: handleAddress,
+              libraryPath: libraryPath,
+              playlistEntryId: binding.entryId!,
+              continuity: continuity,
+            )
+          : Future.value(null),
+      (anchor) {
+        if (!isCurrent()) return;
+        _emit(
+          PlaybackRuntimeMediaAnchor(
+            runtimeId: runtimeId,
+            loadId: binding.loadId,
+            seekSequence: seekSequence,
+            anchor: anchor,
+          ),
+        );
+      },
+    );
   }
 
   void _subscribePlayerState(Player player) {
@@ -1955,6 +1975,7 @@ class NativePlaybackRuntime
       await _hookRegistration?.dispose();
       _hookRegistration = null;
       recordStage('subscriptions-released');
+      await _mediaClockSampling.close();
       await _videoController?.releaseOutput();
       recordStage('output-released');
       try {
@@ -1992,6 +2013,8 @@ class NativePlaybackRuntime
         await subscription.cancel();
       }
       _subscriptions.clear();
+      _mediaClockSampling.invalidate();
+      await _mediaClockSampling.idle;
       await _hookRegistration?.dispose();
       await _videoController?.releaseOutput();
       if (!player.disposed) await player.dispose();

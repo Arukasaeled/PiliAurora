@@ -1086,6 +1086,9 @@ class NativePlayer extends PlatformPlayer {
     return ctx.address;
   }
 
+  /// Library used by this handle, including a caller-supplied libmpv path.
+  String get nativeLibraryPath => NativeLibrary.path;
+
   /// Sets property for the internal libmpv instance of this [Player].
   /// Please use this method only if you know what you are doing, existing methods in [Player] implementation are suited for the most use cases.
   ///

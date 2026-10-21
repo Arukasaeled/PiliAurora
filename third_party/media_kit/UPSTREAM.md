@@ -1,6 +1,6 @@
 # media_kit 本地版本
 
-- 本地版本：`1.1.11+piliaurora.3`；来源包版本：`1.1.11`。
+- 本地版本：`1.1.11+piliaurora.4`；来源包版本：`1.1.11`。
 - 来源仓库：https://github.com/My-Responsitories/media-kit.git
 - 来源提交：`73771ec38176be2d984a3049c28177bce23b54a0`。
 - 来源子目录：`media_kit`。
@@ -19,3 +19,5 @@
 2026-10-16：以单一 native event reader 复制 start/file-loaded/end-file、track-list 变化与队列溢出事实；仅在读到 NONE 后发出批次 drain 确认。生命周期 hook 使用受限同步 API，追踪借用及 continue-once，带取消/截止时间竞争。播放器释放等待 hook、输出、reader 退出后在 worker isolate 执行 mpv destroy，并公开真实 released 回执；FILE_LOADED 同批次提供可空的轨道、音频和 seekability 快照。后续 video-out-params 变化复制为带当前文件身份的事件，供暂停加载等待实际输出几何。
 
 2026-10-19：seek 可携带观察序号；单一事件 reader 以命令请求回执、SEEK 与同文件 PLAYBACK_RESTART 关联完成。新文件、退出和事件队列溢出清除旧关联，在途记录阻止重复 seek 覆盖。原生提交回执与落点完成分别通知调用方。
+
+2026-10-21：公开句柄所用的 nativeLibraryPath，供媒体时钟在 worker isolate 读取属性时复用实际加载的库路径，包含调用方指定路径。
