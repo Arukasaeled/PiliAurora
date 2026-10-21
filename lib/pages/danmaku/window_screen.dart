@@ -65,7 +65,8 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   int? _continuity;
   int _lastPositionUs = 0;
   int? _lastFrameTimeUs;
-  bool _settlingRateChange = false;
+  bool _settlingClock = false;
+  int? _pausedAtUs;
   bool _enabled = false;
   FlutterView? _view;
   Timer? _wake;
@@ -140,13 +141,12 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     if (anchor != null &&
         previous != null &&
         anchor.continuity == previous.continuity &&
-        anchor.advancing &&
-        previous.advancing &&
         anchor.effectiveRate != previous.effectiveRate) {
-      _settlingRateChange = true;
+      _settlingClock = true;
     }
     if (anchor == null || !anchor.ready) {
       _continuity = null;
+      _pausedAtUs = null;
       widget.renderer.suspendPresentation();
     }
     // 连续播放的采样只校准时钟，呈现统一由限帧回调推进。
@@ -156,31 +156,60 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
         !anchor.advancing ||
         previous?.advancing != true ||
         previous?.continuity != anchor.continuity) {
-      _update();
+      _update(
+        preserveMotionPhase:
+            anchor != null &&
+            previous != null &&
+            previous.continuity == anchor.continuity &&
+            ((!anchor.advancing && previous.advancing) || _pausedAtUs != null),
+      );
     }
     _syncTicker();
   }
 
   bool get _visible => _enabled && widget.opacity > 0;
 
-  void _update({int? frameTimeUs}) {
-    if (!_visible) return;
+  void _update({int? frameTimeUs, bool preserveMotionPhase = false}) {
+    if (!_visible) {
+      _pausedAtUs = null;
+      _lastFrameTimeUs = null;
+      return;
+    }
     final anchor = _anchor;
-    var position = anchor?.positionAt(
-      frameTimeUs ?? widget.monotonicUs?.call() ?? Timeline.now,
-    );
+    final updateTimeUs =
+        frameTimeUs ?? widget.monotonicUs?.call() ?? Timeline.now;
+    var position = anchor?.positionAt(updateTimeUs);
+    var nextFrameTimeUs = frameTimeUs;
     if (position == null) return;
     final renderer = widget.renderer;
     if (_continuity != anchor!.continuity) {
       if (!renderer.containsPreparedTime(position)) renderer.reset(position);
       _continuity = anchor.continuity;
-      _settlingRateChange = false;
+      _settlingClock = false;
+      _pausedAtUs = null;
     } else {
       final previousFrame = _lastFrameTimeUs;
-      if (frameTimeUs != null &&
+      if (preserveMotionPhase || _pausedAtUs != null) {
+        // 状态交接保留已呈现相位，帧目标原点仅平移实际暂停时长。
+        position = _lastPositionUs;
+        _settlingClock = true;
+        if (!anchor.advancing) {
+          _pausedAtUs ??= updateTimeUs;
+          nextFrameTimeUs = previousFrame ?? updateTimeUs;
+        } else {
+          final pausedUs = math.max(0, updateTimeUs - _pausedAtUs!);
+          nextFrameTimeUs = (previousFrame ?? updateTimeUs) + pausedUs;
+          _pausedAtUs = null;
+        }
+      } else if (frameTimeUs != null &&
+          previousFrame != null &&
+          frameTimeUs <= previousFrame) {
+        position = _lastPositionUs;
+        nextFrameTimeUs = previousFrame;
+      } else if (frameTimeUs != null &&
           previousFrame != null &&
           frameTimeUs > previousFrame &&
-          frameTimeUs - previousFrame <= 50000 &&
+          (frameTimeUs - previousFrame <= 50000 || _settlingClock) &&
           anchor.advancing &&
           frameTimeUs < anchor.observedAtUs + anchor.validForUs) {
         final advance = (frameTimeUs - previousFrame) * anchor.effectiveRate;
@@ -189,13 +218,13 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
         // time-pos 随视频帧离散推进，接收时刻还包含通知延迟。
         // 连续帧的小幅校准分摊到后续帧，速度偏差限于 5%。
         // 降速后的采样差仍包含旧速率下的离散位置误差，继续平滑收敛。
-        // 超过 50ms 的显示空档或普通播放中的明显偏移重新贴合媒体时间。
+        // 普通播放超过 50ms 的空档重新贴合；切速交接继续消化已有相位差。
         final nearAnchor = error.abs() <= 100000 * anchor.effectiveRate;
-        if (nearAnchor) _settlingRateChange = false;
-        if ((nearAnchor || _settlingRateChange) &&
+        if ((nearAnchor || _settlingClock) &&
             frameTimeUs - previousFrame < anchor.validForUs) {
           final correction = (advance * .05).round();
           position = projected + error.clamp(-correction, correction);
+          if (error.abs() <= correction) _settlingClock = false;
         }
       }
       // 原生校准可能落后于已外推的画面，同一连续域等待媒体时间追上。
@@ -205,7 +234,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
       );
     }
     _lastPositionUs = position;
-    _lastFrameTimeUs = frameTimeUs;
+    _lastFrameTimeUs = nextFrameTimeUs;
     renderer
       ..prepareConfiguration()
       ..present(position, allowUnprepared: true);

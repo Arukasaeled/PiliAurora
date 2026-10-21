@@ -89,6 +89,102 @@ void _prepareMixed(DanmakuWindowRenderer<void> renderer, int position) {
 }
 
 void main() {
+  for (final lead in [-6000, 0, 12000]) {
+    for (final settleFrame in [false, true]) {
+      testWidgets('长按松手的短暂状态交接保留已呈现位置 $lead/$settleFrame', (tester) async {
+        var now = 0;
+        final clock = _Clock(_anchor(position: 1000000, rate: 2));
+        final renderer = _renderer();
+        addTearDown(renderer.dispose);
+        addTearDown(clock.events.close);
+        await tester.pumpWidget(
+          _host(
+            DanmakuWindowScreen<void>(
+              renderer: renderer,
+              clock: clock,
+              size: const Size(320, 120),
+              monotonicUs: () => now,
+              frameTimeUs: () => now + lead,
+              prepareFrame: (r, p, {required effectiveRate}) => _prepare(r, p),
+            ),
+          ),
+        );
+        for (var frame = 0; frame < 15; frame++) {
+          now += 16667;
+          await tester.pump(const Duration(microseconds: 16667));
+        }
+        if (settleFrame) {
+          clock.emit(
+            _anchor(
+              position: renderer.presentationTimeUs + 80000,
+              observed: now,
+            ),
+          );
+          now += 16667;
+          await tester.pump(const Duration(microseconds: 16667));
+        }
+        final before = renderer.presentationTimeUs;
+        final bounds = renderer.interaction.snapshot.single.bounds;
+        // 松手时保留原生位置与已校准呈现之间的相位差，交接中短暂停止推进。
+        clock.emit(
+          _anchor(
+            position: before + 80000,
+            observed: now,
+            rate: settleFrame ? 1 : 2,
+            advancing: false,
+          ),
+        );
+        expect(renderer.presentationTimeUs, before);
+        expect(renderer.interaction.snapshot.single.bounds, bounds);
+        now += 60000;
+        await tester.pump(const Duration(microseconds: 60000));
+        expect(renderer.presentationTimeUs, before);
+        clock.emit(_anchor(position: before + 80000, observed: now));
+        expect(renderer.presentationTimeUs, before);
+        now += 16667;
+        await tester.pump(const Duration(microseconds: 16667));
+        expect(
+          renderer.presentationTimeUs - before,
+          inInclusiveRange(15800, 17550),
+        );
+        clock.emit(_anchor(position: 100000, continuity: 1, advancing: false));
+        expect(renderer.presentationTimeUs, 100000);
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+  }
+
+  testWidgets('长按松手的显示空档不叠加原生校准位移', (tester) async {
+    var now = 0;
+    final clock = _Clock(_anchor(position: 1000000, rate: 2));
+    final renderer = _renderer();
+    addTearDown(renderer.dispose);
+    addTearDown(clock.events.close);
+    await tester.pumpWidget(
+      _host(
+        DanmakuWindowScreen<void>(
+          renderer: renderer,
+          clock: clock,
+          size: const Size(320, 120),
+          monotonicUs: () => now,
+          frameTimeUs: () => now,
+          prepareFrame: (r, p, {required effectiveRate}) => _prepare(r, p),
+        ),
+      ),
+    );
+    now += 16667;
+    await tester.pump(const Duration(microseconds: 16667));
+    final before = renderer.presentationTimeUs;
+    clock.emit(_anchor(position: before + 80000, observed: now));
+    now += 100000;
+    await tester.pump(const Duration(microseconds: 100000));
+    expect(
+      renderer.presentationTimeUs - before,
+      inInclusiveRange(94000, 106000),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final rates in [
     [1.0, 2.0],
     [2.0, 1.0],
@@ -485,7 +581,21 @@ void main() {
           );
         }
         expect(positions.last, lessThan(before));
-        expect(mediaPositions.last, 160000 + (200000 * rate).round());
+        // 0.5 倍下按 5% 校准 35ms 相位差需要 1.4 秒，随后仍须精确贴合。
+        for (var frame = 0; frame < 120; frame++) {
+          now += 16667;
+          clock.emit(
+            _anchor(
+              position: 160000 + ((now - 200000) * rate).round(),
+              observed: now,
+              rate: rate,
+              validFor: 500000,
+            ),
+          );
+          await tester.pump(const Duration(microseconds: 16667));
+        }
+        expect(mediaPositions.last, 160000 + ((now - 200000) * rate).round());
+        final beforeSeek = renderer.interaction.snapshot.single.bounds.left;
         clock
           ..emit(null)
           ..emit(
@@ -499,7 +609,7 @@ void main() {
           );
         expect(
           renderer.interaction.snapshot.single.bounds.left,
-          greaterThan(positions.last),
+          greaterThan(beforeSeek),
           reason: 'a confirmed backward seek must still restore the earlier position',
         );
         await tester.pumpWidget(const SizedBox.shrink());
@@ -671,11 +781,14 @@ void main() {
       now = 100000;
       await tester.pump(const Duration(milliseconds: 100));
       expect(positions.last, 100000);
+      final stoppedAt = positions.last;
       clock.emit(_anchor(position: 200000, observed: now, advancing: false));
+      // 暂停保持屏幕当前帧，原生校准差留到恢复后的连续帧处理。
+      expect(positions.last, stoppedAt);
       final frames = positions.length;
       now = 900000;
       await tester.pump(const Duration(seconds: 1));
-      expect(positions.last, 200000);
+      expect(positions.last, stoppedAt);
       expect(positions.length, frames);
       final previousHandle = renderer.interaction;
       final layouts = renderer.rasters.layouts;
