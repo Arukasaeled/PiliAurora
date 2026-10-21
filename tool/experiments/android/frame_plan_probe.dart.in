@@ -22,6 +22,8 @@ import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock_worker.
 import 'package:pili_aurora/plugin/pl_player/utils/android_raster_scheduling.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
 
+const probeRateSwitch = bool.fromEnvironment('PILIAURORA_PROBE_RATE_SWITCH');
+
 final _expected = DynamicLibrary.open('libpacing.so').lookupFunction<Int64 Function(Int64), int Function(int)>('pili_frame_expected');
 int plannedFrameUs() => _expected(SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds);
 final _videoDirty = DynamicLibrary.open('libpacing.so').lookupFunction<Int32 Function(), int Function()>('pili_video_dirty');
@@ -59,23 +61,27 @@ Future<void> main() async {
 
 class _Clock implements PlaybackMediaClock {
   _Clock(this.player) {
-    subscription = player.stream.position.listen((_) {
-      if (closed || pending != null) return;
-      final handle = player.handle, path = player.nativeLibraryPath, domain = continuity;
-      final index = entryId == null ? int.tryParse(player.getProperty('playlist-pos')) : null;
-      entryId ??= index == null ? null : int.tryParse(player.getProperty('playlist/$index/id'));
-      final entry = entryId;
-      if (entry == null) return;
-      final operation = probeAsync
-          ? sampleNativeMediaClockOnWorker(handleAddress:handle,libraryPath:path,playlistEntryId:entry,continuity:domain)
-          : Future.value(_readClock(handle, path, domain));
-      pending = operation.then((anchor) {
-        if (closed || anchor == null || continuity != domain) return;
-        currentMediaAnchor = anchor;
-        if (recording) samples.add([anchor.observedAtUs, anchor.positionUs]);
-        events.add(anchor);
-      }).whenComplete(() => pending = null);
-    });
+    subscription = player.stream.position.listen((_) => sample());
+  }
+  void sample() {
+    if (closed || pending != null) return;
+    final handle = player.handle, path = player.nativeLibraryPath, domain = continuity;
+    final index = entryId == null ? int.tryParse(player.getProperty('playlist-pos')) : null;
+    entryId ??= index == null ? null : int.tryParse(player.getProperty('playlist/$index/id'));
+    final entry = entryId;
+    if (entry == null) return;
+    final operation = probeAsync
+        ? sampleNativeMediaClockOnWorker(handleAddress:handle,libraryPath:path,playlistEntryId:entry,continuity:domain)
+        : Future.value(_readClock(handle, path, domain));
+    pending = operation.then((anchor) {
+      if (closed || anchor == null || continuity != domain) return;
+      currentMediaAnchor = anchor;
+      if (recording) {
+        samples.add([anchor.observedAtUs, anchor.positionUs,
+          if (probeRateSwitch) (anchor.effectiveRate*1000).round()]);
+      }
+      events.add(anchor);
+    }).whenComplete(() => pending = null);
   }
   bool closed = false;
   Future<void> close() async {
@@ -112,6 +118,7 @@ class _ProbeState extends State<_Probe> {
   DanmakuWindowRenderer<void>? renderer;
   AndroidRasterScheduling? affinity;
   Timer? timer;
+  final rateTimers = <Timer>[];
   bool recording = false;
   int lastTarget = -1;
   int? fixtureStart;
@@ -136,7 +143,12 @@ class _ProbeState extends State<_Probe> {
     final target = SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds;
     if (!recording || target == lastTarget) return;
     lastTarget = target;
-    motion.add([Timeline.now, plannedFrameUs(), renderer!.presentationTimeUs]);
+    final anchor = widget.clock.currentMediaAnchor;
+    motion.add([Timeline.now, plannedFrameUs(), renderer!.presentationTimeUs,
+      if (probeRateSwitch) ...[
+        ((anchor?.effectiveRate??0)*1000).round(),
+        anchor?.observedAtUs??0, anchor?.positionUs??0,
+      ]]);
     final bucket = target ~/ 100000;
     if (bucket != fixtureSampleBucket) {
       fixtureSampleBucket = bucket;
@@ -182,9 +194,22 @@ class _ProbeState extends State<_Probe> {
       fixtureSamples.clear();
       widget.clock.samples.clear();
       widget.clock.recording = recording = true; probeGate = probeUseGate;
+      if (probeRateSwitch) {
+        const speeds = [2.0, 1.0, 3.0, .5, 2.0, .5, 1.0];
+        for (var i=0;i<speeds.length;i++) {
+          rateTimers.add(Timer(Duration(seconds:i+1), () async {
+            final requested = Timeline.now;
+            await widget.video.player.setRate(speeds[i]);
+            widget.clock.sample();
+            debugPrint('PILI_MOTION rate ${jsonEncode({'requestedUs':requested,'appliedUs':Timeline.now,'speed':speeds[i]})}');
+          }));
+        }
+      }
       debugPrint('PILI_MOTION start ${jsonEncode({'stage':stage,'target':rates[stage],'startedUs':start})}');
       timer = Timer(const Duration(seconds: 8), () {
         widget.clock.recording = recording = false; probeGate = false;
+        for (final timer in rateTimers) { timer.cancel(); }
+        rateTimers.clear();
         final ratios = <double>[];
         final steps = <int>[];
         for(var i=1;i<motion.length;i++) {
@@ -254,6 +279,7 @@ class _ProbeState extends State<_Probe> {
   @override void dispose() {
     SchedulerBinding.instance.removeTimingsCallback(onTimings);
     timer?.cancel();affinity?.restore();renderer?.dispose();
+    for (final timer in rateTimers) { timer.cancel(); }
     unawaited(() async { await widget.clock.close(); await widget.video.player.dispose(); }());widget.frames.dispose();super.dispose();
   }
 }

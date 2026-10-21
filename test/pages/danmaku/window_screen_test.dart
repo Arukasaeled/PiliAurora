@@ -89,6 +89,81 @@ void _prepareMixed(DanmakuWindowRenderer<void> renderer, int position) {
 }
 
 void main() {
+  for (final rates in [
+    [1.0, 2.0],
+    [2.0, 1.0],
+    [3.0, .5],
+    [.5, 2.0, .5, 2.0, .5],
+  ]) {
+    testWidgets('倍速切换 ${rates.join(' → ')} 保留逐帧运动', (tester) async {
+      tester.view.display.refreshRate = 120;
+      addTearDown(tester.view.display.resetRefreshRate);
+      var now = 0;
+      final clock = _Clock(_anchor(rate: rates.first));
+      final renderer = _renderer();
+      addTearDown(renderer.dispose);
+      addTearDown(clock.events.close);
+      await tester.pumpWidget(
+        _host(
+          DanmakuWindowScreen<void>(
+            renderer: renderer,
+            clock: clock,
+            size: const Size(320, 120),
+            monotonicUs: () => now,
+            frameTimeUs: () => now,
+            prepareFrame: (r, p, {required effectiveRate}) => _prepare(r, p),
+          ),
+        ),
+      );
+      for (var frame = 0; frame < 30; frame++) {
+        now += 8333;
+        await tester.pump(const Duration(microseconds: 8333));
+      }
+      final generation = renderer.generation;
+      for (var change = 1; change < rates.length; change++) {
+        final before = rates[change - 1];
+        final after = rates[change];
+        final atSwitch = renderer.presentationTimeUs;
+        // 切速后的 time-pos 仍可能落在上一视频帧；保留旧速率下 40ms 的采样差。
+        final sampled = atSwitch - (40000 * before).round();
+        final steps = <int>[];
+        var previous = atSwitch;
+        final frames = before == 3 ? 720 : 30;
+        for (var frame = 0; frame < frames; frame++) {
+          clock.emit(
+            _anchor(
+              position: sampled + (frame * 8333 * after).round(),
+              observed: now,
+              rate: after,
+            ),
+          );
+          now += 8333;
+          await tester.pump(const Duration(microseconds: 8333));
+          final position = renderer.presentationTimeUs;
+          steps.add(position - previous);
+          previous = position;
+        }
+        expect(renderer.generation, generation);
+        final nominal = 8333 * after;
+        expect(
+          steps,
+          everyElement(
+            inInclusiveRange((nominal * .94).floor(), (nominal * 1.06).ceil()),
+          ),
+          reason: '切速、长按加速和松手恢复均不应出现静止帧或位置跳变',
+        );
+        if (frames == 720) {
+          expect(
+            previous,
+            closeTo(sampled + frames * 8333 * after, 1000),
+            reason: '持续播放后应收敛到原生媒体时间',
+          );
+        }
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   for (final videoRate in [24, 30, 60]) {
     testWidgets('$videoRate FPS 混合滚动与固定弹幕的锚点抖动不造成停顿和跳动', (
       tester,

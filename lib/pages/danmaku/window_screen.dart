@@ -65,6 +65,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   int? _continuity;
   int _lastPositionUs = 0;
   int? _lastFrameTimeUs;
+  bool _settlingRateChange = false;
   bool _enabled = false;
   FlutterView? _view;
   Timer? _wake;
@@ -136,6 +137,14 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
   void _acceptAnchor(PlaybackMediaAnchor? anchor) {
     final previous = _anchor;
     _anchor = anchor;
+    if (anchor != null &&
+        previous != null &&
+        anchor.continuity == previous.continuity &&
+        anchor.advancing &&
+        previous.advancing &&
+        anchor.effectiveRate != previous.effectiveRate) {
+      _settlingRateChange = true;
+    }
     if (anchor == null || !anchor.ready) {
       _continuity = null;
       widget.renderer.suspendPresentation();
@@ -165,6 +174,7 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
     if (_continuity != anchor!.continuity) {
       if (!renderer.containsPreparedTime(position)) renderer.reset(position);
       _continuity = anchor.continuity;
+      _settlingRateChange = false;
     } else {
       final previousFrame = _lastFrameTimeUs;
       if (frameTimeUs != null &&
@@ -178,8 +188,11 @@ class _DanmakuWindowScreenState<T> extends State<DanmakuWindowScreen<T>> {
         final error = position - projected;
         // time-pos 随视频帧离散推进，接收时刻还包含通知延迟。
         // 连续帧的小幅校准分摊到后续帧，速度偏差限于 5%。
-        // 超过 50ms 的显示空档或明显时钟偏移重新贴合媒体时间。
-        if (error.abs() <= 100000 * anchor.effectiveRate &&
+        // 降速后的采样差仍包含旧速率下的离散位置误差，继续平滑收敛。
+        // 超过 50ms 的显示空档或普通播放中的明显偏移重新贴合媒体时间。
+        final nearAnchor = error.abs() <= 100000 * anchor.effectiveRate;
+        if (nearAnchor) _settlingRateChange = false;
+        if ((nearAnchor || _settlingRateChange) &&
             frameTimeUs - previousFrame < anchor.validForUs) {
           final correction = (advance * .05).round();
           position = projected + error.clamp(-correction, correction);

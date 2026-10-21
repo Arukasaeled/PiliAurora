@@ -66,3 +66,15 @@ python tool/experiments/android/prepare_frame_plan_probe.py
 隔离包 cache 另提供 `clock-mode.txt`（`sync/async`）、`gate-mode.txt`（`true/false`）、`pacing-mode.txt`（持续请求 `true/false`）和 `phase-mode.txt`（`independent` 可禁用视频锁相）。异步路径调用生产的 `sampleNativeMediaClockOnWorker`；同步路径供同包对照。全部原片使用独立进程、相同 seek、预热和测量窗口。
 
 新增原生记录为 `plan frameId/cookie/start/expected/deadline/swapStart/swapEnd`、`video_request sequence/time` 和 `video_consume sequence/time/PTS`。只在同一测量窗口内统计视频帧保持时长和序号缺口，并核对每个消费记录所对应的 swap／EGL 帧；启动、seek 和预热阶段分开。连续性和提交成本分别验收，CPU 时间单列；单段通过后继续重复采样。
+
+### 播放倍速切换
+
+使用 `python tool/engine/frame_plan/prepare_device_probe.py` 生成生产绑定的入口；构建探针时追加 `--dart-define PILIAURORA_PROBE_RATE_SWITCH=true`。在同一8秒窗口内，探针每秒依次切换到 `2 / 1 / 3 / 0.5 / 2 / 0.5 / 1` 倍，覆盖加速、降速和连续两轮临时加速／恢复的原生时钟路径。
+
+此模式的 `PILI_MOTION rate` 记录命令时刻、完成时刻和目标速率；`motion` 行追加千分倍速、锚点采样时刻和锚点位置，`anchors` 行追加千分倍速。保存探针日志后运行：
+
+```powershell
+python tool/experiments/android/analyze_playback_rate.py <probe.log> --output <summary.json>
+```
+
+分析检查静止、倒退、按实际速率归一化的逐帧位移，以及切速后采样到新速率的延迟。允许的位移速度误差为6%，包含显示组件最多5%的相位校准与微秒取整；SurfaceFlinger 实际呈现连续性继续使用前述采集流程。
