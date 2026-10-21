@@ -894,6 +894,71 @@ void main() {
     expect(session.currentPlan?.contentKey, 'second');
   });
 
+  test('同页切来源及地址查询完成后从最新位置续播', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final plan = _plan('movie');
+    await owner.load(plan, start: PlaybackStartPolicy.play);
+    runtime.position = const Duration(milliseconds: 123456);
+    await owner.load(plan.withSource(_plan('cdn').source));
+    expect(runtime.loadedPlans.last.startPosition, runtime.position);
+
+    final resolving = Completer<PlaybackPlan?>();
+    final query = owner.query((_) => resolving.future);
+    runtime.position = const Duration(milliseconds: 125678);
+    resolving.complete(plan);
+    await query;
+    expect(runtime.loadedPlans.last.startPosition, runtime.position);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('重载失败清零后连续重试保留续播位置，seek 后使用新的当前位置', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final plan = _plan('movie');
+    await owner.load(plan, start: PlaybackStartPolicy.play);
+    runtime.position = const Duration(milliseconds: 123456);
+    runtime.onLoad = (plan, context, index) async {
+      runtime.position = Duration.zero;
+      return _failedLoad(context);
+    };
+    await owner.retry();
+    await owner.retry();
+    expect(
+      runtime.loadedPlans.last.startPosition,
+      const Duration(milliseconds: 123456),
+    );
+    runtime.onLoad = null;
+    await owner.retry();
+    runtime.position = const Duration(seconds: 10);
+    await owner.retry();
+    expect(runtime.loadedPlans.last.startPosition, const Duration(seconds: 10));
+    owner.close();
+    await runtime.released;
+  });
+
+  test('新内容首次加载失败后可重试，使用失败内容的来源与起播位置', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('old'));
+    runtime.position = const Duration(seconds: 99);
+    runtime.onLoad = (plan, context, index) async {
+      runtime.position = Duration.zero;
+      return _failedLoad(context);
+    };
+    await owner.load(_plan('new'));
+    runtime.onLoad = null;
+    expect((await owner.retry()).outcome, LoadOutcome.ready);
+    expect(runtime.loadedPlans.last.contentKey, 'new');
+    expect(runtime.loadedPlans.last.startPosition, isNull);
+    owner.close();
+    await runtime.released;
+  });
+
   test('自动恢复从当前播放位置继续，保留当前配置和来源候选', () async {
     final runtime = _FakeRuntime();
     final session = PlaybackSession(runtime: runtime);
@@ -1122,6 +1187,16 @@ PlaybackPlan _plan(
   ),
   configuration: PlaybackConfiguration(audioOnly: audioOnly),
 );
+
+PlaybackRuntimeLoadResult _failedLoad(PlaybackExecutionContext context) =>
+    PlaybackRuntimeLoadResult(
+      loaded: false,
+      output: PlaybackOutputPreparation(
+        strategy: PlaybackOutputStrategy.failed,
+        evidence: 'source-failed',
+        outputEpoch: context.loadId,
+      ),
+    );
 
 PlaybackRuntimeLoadResult _audioLoaded(PlaybackExecutionContext context) =>
     PlaybackRuntimeLoadResult(

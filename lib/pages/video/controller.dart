@@ -865,7 +865,10 @@ class VideoDetailController extends GetxController
     final snapshot = plPlayerController.currentPlaybackSnapshot;
     final plan = plPlayerController.currentPlaybackPlan;
     if (plan?.contentKey == _playbackPlan?.contentKey) {
-      final position = snapshot.actual.position ?? playedTime;
+      final position =
+          plPlayerController.videoPlayerController?.state.position ??
+          playedTime ??
+          snapshot.actual.position;
       if (position != null) {
         _playbackPlan = PlaybackPlan(
           contentKey: plan!.contentKey,

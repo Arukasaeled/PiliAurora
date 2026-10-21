@@ -68,6 +68,9 @@ class PlaybackSession implements PlaybackMediaClock {
   StreamSubscription<PlaybackRuntimeEvent>? _runtimeSubscription;
   PlaybackOwner? _activeOwner;
   PlaybackPlan? _currentPlan;
+  PlaybackPlan? _lastLoadPlan;
+  PlaybackOwner? _lastLoadOwner;
+  bool _runtimePositionAvailable = false;
   PlaybackConfiguration _desiredConfiguration = PlaybackConfiguration();
   PlaybackConfiguration _appliedConfiguration = PlaybackConfiguration();
   PlaybackActual _actual = const PlaybackActual();
@@ -611,6 +614,10 @@ class PlaybackSession implements PlaybackMediaClock {
     PlaybackOperationContext operation,
   ) async {
     var plan = initialPlan;
+    if (identical(_lastLoadOwner, request.owner) &&
+        _lastLoadPlan?.contentKey == plan.contentKey) {
+      plan = _planForReload(plan);
+    }
     while (true) {
       if (!_isRequestCurrent(request) || !operation.isCurrent()) {
         throw const _PlaybackSuperseded();
@@ -636,6 +643,10 @@ class PlaybackSession implements PlaybackMediaClock {
       );
       _stage = PlaybackStage.opening;
       _publish();
+      // stop/open 会清零原生位置；失败与取消后的下一次重试沿用这份续播点。
+      _lastLoadPlan = plan;
+      _lastLoadOwner = request.owner;
+      _runtimePositionAvailable = false;
       final result = await _runtime.load(plan, context);
       request.finalPlan = plan;
       if (!context.isCurrent()) throw const _PlaybackSuperseded();
@@ -678,6 +689,7 @@ class PlaybackSession implements PlaybackMediaClock {
         );
       }
       if (!context.isCurrent()) throw const _PlaybackSuperseded();
+      _runtimePositionAvailable = true;
       return result;
     }
   }
@@ -1312,10 +1324,15 @@ class PlaybackSession implements PlaybackMediaClock {
 
   PlaybackPlan _planForReload(PlaybackPlan plan) {
     // 状态快照按状态变化发布，续播位置在真正提交重载时向运行时采样。
+    final sameMedia = _lastLoadPlan?.contentKey == plan.contentKey;
     final position = plan.timeline.kind == PlaybackTimelineKind.live
         ? null
-        : (_currentPlan?.contentKey == plan.contentKey
+        : (sameMedia && _runtimePositionAvailable
                   ? _runtime.position ?? _actual.position
+                  : null) ??
+              (sameMedia
+                  ? _lastLoadPlan?.reloadPosition ??
+                        _lastLoadPlan?.startPosition
                   : null) ??
               plan.reloadPosition ??
               plan.startPosition;
@@ -1477,7 +1494,9 @@ class PlaybackSession implements PlaybackMediaClock {
   Future<LoadResult> _retry(PlaybackOwner owner) {
     final rejection = _rejectLoad(owner);
     if (rejection != null) return Future.value(rejection);
-    final plan = _currentPlan;
+    final plan = identical(_lastLoadOwner, owner)
+        ? _lastLoadPlan ?? _currentPlan
+        : _currentPlan;
     if (plan == null) return Future.value(const LoadResult.noMedia());
     _recoveryIncident = null;
     final retryPlan = _planForReload(plan);
