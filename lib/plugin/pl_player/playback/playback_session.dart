@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' show Timeline;
 
 import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
@@ -11,11 +12,13 @@ class PlaybackSession implements PlaybackMediaClock {
   PlaybackSession({
     required PlaybackRuntimePort runtime,
     Duration Function()? monotonicNow,
+    int Function()? mediaClockNowUs,
     this.loadBudget = const Duration(seconds: 30),
     this.commandBudget = const Duration(seconds: 5),
     this.shutdownBudget = const Duration(seconds: 10),
   }) : _runtime = runtime,
        _now = monotonicNow ?? _defaultClock,
+       _mediaClockNowUs = mediaClockNowUs ?? (() => Timeline.now),
        _operations = PlaybackOperationScheduler(
          now: monotonicNow ?? _defaultClock,
        ) {
@@ -47,6 +50,7 @@ class PlaybackSession implements PlaybackMediaClock {
 
   final PlaybackRuntimePort _runtime;
   final Duration Function() _now;
+  final int Function() _mediaClockNowUs;
   final PlaybackOperationScheduler _operations;
   final Duration loadBudget;
   final Duration commandBudget;
@@ -91,6 +95,34 @@ class PlaybackSession implements PlaybackMediaClock {
 
   @override
   Stream<PlaybackMediaAnchor?> get mediaAnchors => _mediaAnchors.stream;
+
+  bool get _mediaClockMayAdvance =>
+      _phase == PlaybackPhase.ready &&
+      _actual.playing != false &&
+      _actual.buffering != true &&
+      _actual.seeking != true;
+
+  void _freezeMediaAnchor({bool refreshObservedAt = false}) {
+    final anchor = _mediaAnchor;
+    if (anchor == null ||
+        !anchor.ready ||
+        (!anchor.advancing && !refreshObservedAt)) {
+      return;
+    }
+    // 状态通知先冻结时钟，属性采样随后校准；时间仍使用媒体锚点的时钟域。
+    final now = _mediaClockNowUs();
+    final frozen = PlaybackMediaAnchor(
+      positionUs: anchor.positionAt(now)!,
+      observedAtUs: now,
+      effectiveRate: anchor.effectiveRate,
+      advancing: false,
+      ready: anchor.ready,
+      continuity: anchor.continuity,
+      validForUs: anchor.validForUs,
+    );
+    _mediaAnchor = frozen;
+    _mediaAnchors.add(frozen);
+  }
 
   void _invalidateMediaAnchor() {
     final waiting = _seekWaitCancelled;
@@ -1484,6 +1516,7 @@ class PlaybackSession implements PlaybackMediaClock {
             seekSequence != _seekSequence) {
           return;
         }
+        if (anchor.advancing && !_mediaClockMayAdvance) return;
         final previous = _mediaAnchor;
         if (previous != null &&
             (anchor.continuity < previous.continuity ||
@@ -1494,7 +1527,20 @@ class PlaybackSession implements PlaybackMediaClock {
         _mediaAnchor = anchor;
         _mediaAnchors.add(anchor);
       case PlaybackRuntimeStateChanged(:final actual):
+        final clockStateChanged =
+            _actual.playing != actual.playing ||
+            _actual.buffering != actual.buffering ||
+            _actual.seeking != actual.seeking;
         _actual = actual;
+        if (clockStateChanged) {
+          // 恢复时仍保持冻结，取得本次状态之后的新样本再开始外推。
+          _freezeMediaAnchor(refreshObservedAt: true);
+          if (_mediaClockMayAdvance) {
+            if (_runtime case final PlaybackMediaClockSampler sampler) {
+              sampler.sampleMediaClock();
+            }
+          }
+        }
         _observeHealth(_now());
         _publish();
         _resumeDeferredRecovery();
@@ -1922,6 +1968,7 @@ class PlaybackSession implements PlaybackMediaClock {
 
   void _publish() {
     if (_disposed) return;
+    if (!_mediaClockMayAdvance) _freezeMediaAnchor();
     _snapshot = PlaybackSnapshot(
       snapshotVersion: ++_snapshotVersion,
       phase: _phase,
