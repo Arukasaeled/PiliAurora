@@ -127,6 +127,10 @@ fvm flutter run --profile --no-pub -d <设备ID> -t tool/probes/android/playback
 
 仅在首帧等待成功且 `scheduler.nativePeriodUs` 有有效视频周期时，将结果作为视频播放测量。FrameTiming 批量回报造成边界偏差；超预算计数与 Scene 呈现帧数应分别解释。首次安装时可先构建并安装 profile 包，再复制素材、启动探针。
 
+追加 `--dart-define=JANK_RASTER_AFFINITY_ABA=true` 可在同一视频、60 FPS 弹幕下依次测量原始 Raster CPU 集合、应用可用集合、恢复原始集合。探针复用生产 `AndroidRasterScheduling`，每段记录 `startedUs/endedUs` 和实际 CPU 集合，结束及卸载时恢复。该模式需要 Android 上唯一、可扩展亲和性的 Raster 线程。它改变独立 profile 进程的线程调度，按实际设备结果评价耗时和呈现。
+
+同时采集 SurfaceFlinger 和 Perfetto，按单调时钟截取三段测量窗口。Perfetto 配置使用 `write_into_file: true`、`file_write_period_ms: 1000`，并检查 `traced_buf_bytes_overwritten`；环形缓冲覆盖与文件传输完整是不同的检查项。将 FrameTiming、更新频率和最终呈现间隔分别比较，24 FPS 视频与 60 FPS 弹幕混合产生的图层帧数不代表弹幕更新数。
+
 ## Windows 尺寸通道回归探针
 
 `windows_source_size_channel_probe.py` 使用 Flutter 的标准编码器和生产通道处理代码，验证 int32、int64 尺寸均能传入播放器。先完成 Windows 构建以生成 Flutter C++ 头文件，再运行：

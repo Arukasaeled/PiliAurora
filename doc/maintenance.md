@@ -48,6 +48,8 @@ Android `media.output.preloaded` 记录预挂载策略、证据和解码前 sele
 
 设备侧可运行[Android 帧时间采集](../tool/probes/README.md#android-帧时间采集)，明确指定设备和包名。采集结果与应用诊断分别保留时钟域，结合相同复现窗口检查；SurfaceFlinger 图层、Android gfxinfo、Flutter UI 和 Scene 使用各自统计口径。
 
+Android 视频输出建立后，`AndroidRasterScheduling` 将唯一 Raster 线程的 CPU 亲和性扩展到应用主线程可用的集合，让系统选择运行核心；输出释放或初始化失败时恢复。`raster.scheduling.applied` 记录原始、应用和实际 CPU 集合，`unavailable` 与 `restore.failed` 记录应用及恢复失败。多 Raster 线程或已有集合无需扩展时沿用当前策略。排查低帧率视频卡顿时还需检查 Raster 唤醒到实际运行的延迟，这段等待可能发生在 Flutter Raster 计时开始之前。对照入口见[播放慢帧探针](../tool/probes/README.md#android-播放慢帧对照)。
+
 ### 直播
 
 `lib/pages/live_room/` → `lib/http/live.dart` 与 `lib/services/live_stream/` → 直播包解码 → 消息和弹幕 UI。连接、包解码、历史与未读消息、渲染和退出清理需要分别检查；消息时序见[直播消息流程](runtime-flows.md#直播消息与弹幕)。

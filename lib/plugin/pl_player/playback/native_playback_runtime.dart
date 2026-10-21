@@ -14,6 +14,7 @@ import 'package:pili_aurora/plugin/pl_player/playback/native_load_readiness.dart
 import 'package:pili_aurora/plugin/pl_player/playback/playback_runtime_slot.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/video_frame_timings.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/android_raster_scheduling.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_media_source.dart';
@@ -72,6 +73,7 @@ class NativePlaybackRuntime
 
   Player? _player;
   VideoController? _videoController;
+  AndroidRasterScheduling? _rasterScheduling;
   final _videoControllerListenable = ValueNotifier<VideoController?>(null);
   PlayerDiagnostics? _diagnostics;
   NativeHookRegistration? _hookRegistration;
@@ -846,6 +848,20 @@ class NativePlaybackRuntime
         configuration: videoConfiguration,
       );
       _videoController = video;
+      if (Platform.isAndroid) {
+        try {
+          _rasterScheduling = await AndroidRasterScheduling.open();
+          _rasterScheduling?.useAppCpus(true);
+          if (_rasterScheduling case final scheduling?) {
+            _diagnostics?.event(
+              'raster.scheduling.applied',
+              details: scheduling.diagnostics,
+            );
+          }
+        } catch (_) {
+          _diagnostics?.event('raster.scheduling.unavailable');
+        }
+      }
       if (!context.isCurrent() ||
           context.deadline <= context.monotonicNow() ||
           _shutdownRequested) {
@@ -1978,6 +1994,8 @@ class NativePlaybackRuntime
       await _mediaClockSampling.close();
       await _videoController?.releaseOutput();
       recordStage('output-released');
+      // Player 释放会归还运行时槽；下一 owner 取得槽前先恢复本次亲和性。
+      _restoreRasterScheduling();
       try {
         await player.dispose();
         recordStage('player-disposed');
@@ -2002,6 +2020,22 @@ class NativePlaybackRuntime
       return PlaybackShutdownResult.cleanupIncomplete(
         _failure(PlaybackFailureCategory.disposal, 'shutdown', error),
       );
+    } finally {
+      _restoreRasterScheduling();
+    }
+  }
+
+  void _restoreRasterScheduling() {
+    final scheduling = _rasterScheduling;
+    _rasterScheduling = null;
+    try {
+      scheduling?.restore();
+    } catch (_) {
+      Diagnostics.instance.playerLog(
+        DiagnosticLogLevel.warning,
+        'player',
+        'raster.scheduling.restore.failed',
+      );
     }
   }
 
@@ -2017,6 +2051,7 @@ class NativePlaybackRuntime
       await _mediaClockSampling.idle;
       await _hookRegistration?.dispose();
       await _videoController?.releaseOutput();
+      _restoreRasterScheduling();
       if (!player.disposed) await player.dispose();
       await player.released;
       _player = null;
@@ -2024,6 +2059,8 @@ class NativePlaybackRuntime
       if (!_released.isCompleted && _shutdownRequested) _released.complete();
     } catch (_) {
       // An unconfirmed native release keeps the process-wide slot occupied.
+    } finally {
+      _restoreRasterScheduling();
     }
   }
 

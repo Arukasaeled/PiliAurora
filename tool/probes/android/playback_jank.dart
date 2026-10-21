@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/android_raster_scheduling.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
 
 /// 本地媒体与弹幕的帧时间对照，不初始化账号、网络服务或应用诊断日志。
@@ -47,8 +48,12 @@ class _Probe extends StatefulWidget {
 }
 
 class _ProbeState extends State<_Probe> {
-  static const rates = [90, 120, 60, 0];
+  static const affinityComparison = bool.fromEnvironment(
+    'JANK_RASTER_AFFINITY_ABA',
+  );
+  static const rates = affinityComparison ? [60, 60, 60] : [90, 120, 60, 0];
   int stage = 0;
+  AndroidRasterScheduling? affinity;
   DanmakuController<void>? controller;
   Timer? timer;
   final timings = <FrameTiming>[];
@@ -60,7 +65,12 @@ class _ProbeState extends State<_Probe> {
     unawaited(
       widget.video.waitUntilFirstFrameRendered
           .timeout(const Duration(seconds: 20))
-          .then((_) {
+          .then((_) async {
+            if (!mounted) return;
+            if (affinityComparison) {
+              affinity = await AndroidRasterScheduling.open();
+              if (affinity == null) throw StateError('没有可对照的 Raster 亲和性');
+            }
             if (mounted) measure();
           }),
     );
@@ -69,6 +79,7 @@ class _ProbeState extends State<_Probe> {
   void onTimings(List<FrameTiming> value) => timings.addAll(value);
 
   void measure() {
+    affinity?.useAppCpus(stage == 1);
     timer = Timer(const Duration(seconds: 4), () {
       if (!mounted) return;
       if (stage == 0) {
@@ -77,6 +88,14 @@ class _ProbeState extends State<_Probe> {
         }
       }
       final started = Timeline.now;
+      debugPrint(
+        'PILI_JANK start ${jsonEncode({
+          'stage': stage,
+          'target': rates[stage],
+          'startedUs': started,
+          if (affinity != null) 'affinity': affinity!.diagnostics,
+        })}',
+      );
       final updates = controller!.schedulerDiagnostics['updates'] as int;
       timings.clear();
       timer = Timer(const Duration(seconds: 8), () {
@@ -91,7 +110,10 @@ class _ProbeState extends State<_Probe> {
         final hz = View.of(context).display.refreshRate;
         debugPrint(
           'PILI_JANK ${jsonEncode({
+            'stage': stage,
             'target': rates[stage],
+            'startedUs': started,
+            'endedUs': Timeline.now,
             'seconds': seconds,
             'updatesPerSecond': ((controller!.schedulerDiagnostics['updates'] as int) - updates) / seconds,
             'frames': raster.length,
@@ -101,12 +123,14 @@ class _ProbeState extends State<_Probe> {
             'p95RasterUs': raster.isEmpty ? null : raster[((raster.length - 1) * .95).round()],
             'maxRasterUs': raster.isEmpty ? null : raster.last,
             'scheduler': controller!.schedulerDiagnostics,
+            if (affinity != null) 'affinity': affinity!.diagnostics,
           })}',
         );
         if (stage < rates.length - 1) {
           setState(() => stage++);
           measure();
         } else {
+          affinity?.restore();
           SchedulerBinding.instance.removeTimingsCallback(onTimings);
           debugPrint('PILI_JANK done');
         }
@@ -143,6 +167,7 @@ class _ProbeState extends State<_Probe> {
   @override
   void dispose() {
     timer?.cancel();
+    affinity?.restore();
     SchedulerBinding.instance.removeTimingsCallback(onTimings);
     unawaited(widget.video.player.dispose());
     widget.frames.dispose();
