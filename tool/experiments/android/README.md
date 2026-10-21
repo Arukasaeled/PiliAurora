@@ -1,5 +1,7 @@
 # Android EGL 输出时序实验
 
+本目录保留早期 preload 对照、运动夹具和通用帧关联工具。当前完整应用的帧计划引擎及 Profile／dev Release 构建入口见[帧计划构建](../../engine/frame_plan/README.md)；该入口复用这里的运动模板，按内容提交在引擎 Raster 中完成。下文的 preload 与 Scene 门控用于隔离实验对照。
+
 `egl_output_pacing_probe.cpp` 对 Android 33+、arm64、Skia/OpenGL 的最终 Flutter Raster 输出进行隔离对照。探针读取 NDK FrameTimeline，在 `eglSwapBuffers` 前设置呈现时间，并用 `EGL_ANDROID_get_frame_timestamps` 查询同一 EGL 帧 ID 的实际呈现、GPU 完成和 latch 时间。NDK 来自项目本机工具链，应用未引入新依赖。
 
 实验以设备 120Hz、隔离 `.profile` 包为输入。所有模式都将旧 NDK callback 转接到新 FrameTimeline callback，传给现有引擎的 frame start 保持旧时钟语义；这使对照包含同样的转接开销。探针从隔离包 `cache/output-mode.txt` 读取模式：

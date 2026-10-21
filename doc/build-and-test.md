@@ -39,6 +39,8 @@ pwsh -File tool/build.ps1 -Platform android -Mode debug
 
 Android 默认生成包含所有 ABI 的通用 APK。可使用 `-Abi arm64-v8a`、`-Abi armeabi-v7a` 或 `-Abi x86_64` 只打包指定架构；省略参数时保留通用 APK 行为。
 
+Android 帧计划测试包使用[隔离引擎构建入口](../tool/engine/frame_plan/README.md)。`tool/build-android-test.ps1` 使用 FVM 预编译引擎；需要帧计划的 dev 包时，先编译同一运行模式的自定义引擎，再用 `build_apk.py --mode dev-release` 装配，沿用本机 Release 签名。两种 dev 构建均输出到 `build/android-test/`；帧计划产物另有身份 JSON，记录模式、包名、APK、引擎和补丁摘要。隔离 SDK、引擎检出及二进制留在本地，源码补丁与重建步骤随仓库维护。
+
 ## 发布构建与附件
 
 本地发布验证分别执行：

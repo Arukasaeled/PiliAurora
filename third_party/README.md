@@ -56,6 +56,8 @@ Windows x64 的 cnativeapi 使用 [预编译入口](nativeapi/README.md)，内�
 
 Flutter SDK 与 `material_ui` 补丁由 `lib/scripts/patch.ps1` 管理，构建脚本按实际依赖解析路径应用补丁，详见[工具入口](../tool/README.md#平台构建)。
 
+Android 帧计划引擎补丁单独维护在 [`tool/engine/frame_plan/`](../tool/engine/frame_plan/README.md)，固定 Flutter 框架与引擎提交，并应用到隔离检出。常规 FVM 构建流程保持原有入口；自编引擎的源码材料、构建命令与 APK 身份校验见该目录说明。
+
 ## 历史记录
 
 - [首次迁移验收](VALIDATION.md)：2026-10-07 的来源迁移与验证。

@@ -38,6 +38,8 @@ Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`
 
 Android 点播的滚动弹幕与视频共用 Flutter 输出 Surface。存在新鲜的原生视频请求采样时，持续接收 vsync，弹幕位置与准备工作仍按所选档位更新；持续合成期间沿用自身更新节奏，避免视频锁相重新移动位移槽位。诊断的 `requestEveryVsync` 区分连续帧请求与弹幕更新频率。视频采样清空或超过 1.5 秒后恢复按需请求；固定弹幕驻留、暂停、隐藏和空图层沿用原有启停规则。此策略增加输出提交次数，CPU/GPU 成本随目标设备和负载实测。
 
+[Android 帧计划测试包](../tool/engine/frame_plan/README.md) 使用隔离引擎在 Raster 按内容提交，并启用 ticker 的 `preserveVideoPhase`。帧号在帧末读取，再与同帧 FrameTiming 核对呈现提前量；固定 SDK 在 BeginFrame 返回后才发布 FrameData，回调中读到的编号属于上一帧。
+
 点播连续帧按媒体有效速率外推，小幅锚点校准在帧目标时钟下以最多 5% 的速度差收敛，减少原生视频位置采样和通知延迟造成的停顿、跳动。超过 50ms 的显示空档或明显时钟偏移重新贴合媒体锚点；暂停、连续域切换和锚点有效期限沿用原有边界。
 
 媒体时钟的整组 libmpv 属性读取在 worker isolate 执行，采样时刻保留读取位置时的单调时间。通知积压时合并为最新一次，返回后核对 Player、文件、seek 和连续域；播放器释放前等待读取退出。排查 UI 回调迟到时，需同时测量同步属性读取的阻塞时间。
