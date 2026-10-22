@@ -6,6 +6,7 @@ param(
     [string]$Mode = "debug",
     [ValidateSet("armeabi-v7a", "arm64-v8a", "x86_64")]
     [string]$Abi,
+    [string]$WindowsEngineLibrary,
     [switch]$SkipPatch,
     [switch]$SkipPubGet
 )
@@ -16,6 +17,16 @@ Set-Location $Workspace
 
 if ($Abi -and $Platform -ne "android") {
     throw "-Abi 仅适用于 Android 构建。"
+}
+
+$windowsEnginePath = $null
+if ($WindowsEngineLibrary) {
+    if ($Platform -ne 'windows' -or $Mode -eq 'debug') {
+        throw '-WindowsEngineLibrary 适用于 Windows Profile/Release 构建。'
+    }
+    . (Join-Path $PSScriptRoot 'engine/windows_frame_pacing/engine_identity.ps1')
+    $windowsEnginePath = (Resolve-Path -LiteralPath $WindowsEngineLibrary).Path
+    $null = Get-WindowsFramePacingEngineIdentity -LibraryPath $windowsEnginePath -Mode $Mode -RequireNativeTests
 }
 
 $dart = Get-Command dart -ErrorAction SilentlyContinue
@@ -141,3 +152,23 @@ if ($Abi) {
 }
 $buildArguments += "--no-pub"
 Invoke-Fvm -Arguments $buildArguments
+
+if ($Platform -eq 'windows') {
+    $modeDirectory = @{ debug = 'Debug'; profile = 'Profile'; release = 'Release' }[$Mode]
+    $runnerDirectory = Join-Path $Workspace "build/windows/x64/runner/$modeDirectory"
+    $outputIdentityPath = Join-Path $runnerDirectory 'engine-identity.json'
+    if ($windowsEnginePath) {
+        $identity = Get-WindowsFramePacingEngineIdentity -LibraryPath $windowsEnginePath -Mode $Mode -RequireNativeTests
+        $destination = Join-Path $runnerDirectory 'flutter_windows.dll'
+        Copy-Item -LiteralPath $windowsEnginePath -Destination $destination
+        if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $identity.sha256) {
+            throw '输出目录的自编引擎摘要不匹配。'
+        }
+        Copy-Item -LiteralPath (Join-Path (Split-Path $windowsEnginePath -Parent) 'engine-identity.json') `
+            -Destination $outputIdentityPath
+        Write-Host "已装配固定 Windows 引擎：$($identity.sha256)"
+    }
+    elseif (Test-Path -LiteralPath $outputIdentityPath) {
+        Remove-Item -LiteralPath $outputIdentityPath
+    }
+}

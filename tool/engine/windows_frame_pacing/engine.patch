@@ -1,0 +1,534 @@
+diff --git a/engine/src/build/toolchain/win/setup_toolchain.py b/engine/src/build/toolchain/win/setup_toolchain.py
+index 521c24398ef..e65c38674a0 100644
+--- a/engine/src/build/toolchain/win/setup_toolchain.py
++++ b/engine/src/build/toolchain/win/setup_toolchain.py
+@@ -22,7 +22,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+ import gn_helpers
+ 
+ SCRIPT_DIR = os.path.dirname(__file__)
+-SDK_VERSION = '10.0.22621.0'
++SDK_VERSION = os.environ.get('WINDOWSSDKVERSION', '10.0.22621.0').rstrip('\\/')
+ 
+ 
+ def _ExtractImportantEnvironment(output_of_set):
+diff --git a/engine/src/flutter/shell/platform/windows/egl/manager.cc b/engine/src/flutter/shell/platform/windows/egl/manager.cc
+index 64fb765bf54..3d95953cfff 100644
+--- a/engine/src/flutter/shell/platform/windows/egl/manager.cc
++++ b/engine/src/flutter/shell/platform/windows/egl/manager.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "flutter/shell/platform/windows/egl/manager.h"
+ 
++#include <string_view>
+ #include <vector>
+ 
+ #include "flutter/fml/logging.h"
+@@ -287,20 +288,47 @@ std::unique_ptr<WindowSurface> Manager::CreateWindowSurface(HWND hwnd,
+     return nullptr;
+   }
+ 
++  Microsoft::WRL::ComPtr<ID3D11Device> device;
++  if (GetDevice(device.GetAddressOf())) {
++    Microsoft::WRL::ComPtr<IDXGIDevice1> dxgi_device;
++    if (SUCCEEDED(device.As(&dxgi_device))) {
++      // Limit queued copy-model frames so DWM cannot accumulate old phases.
++      const auto result = dxgi_device->SetMaximumFrameLatency(1);
++      if (FAILED(result)) {
++        FML_LOG(WARNING) << "Failed to limit DXGI frame latency: " << result;
++      }
++    }
++  }
++
+   // Disable ANGLE's automatic surface resizing and provide an explicit size.
+   // The surface will need to be destroyed and re-created if the HWND is
+   // resized.
+-  const EGLint surface_attributes[] = {EGL_FIXED_SIZE_ANGLE,
+-                                       EGL_TRUE,
+-                                       EGL_WIDTH,
+-                                       static_cast<EGLint>(width),
+-                                       EGL_HEIGHT,
+-                                       static_cast<EGLint>(height),
+-                                       EGL_NONE};
+-
+-  auto const surface = ::eglCreateWindowSurface(
++  std::vector<EGLint> surface_attributes = {
++      EGL_FIXED_SIZE_ANGLE,       EGL_TRUE,   EGL_WIDTH,
++      static_cast<EGLint>(width), EGL_HEIGHT, static_cast<EGLint>(height)};
++  const char* extensions = ::eglQueryString(display_, EGL_EXTENSIONS);
++  const bool direct_composition =
++      extensions &&
++      std::string_view(extensions).find("EGL_ANGLE_direct_composition") !=
++          std::string_view::npos;
++  if (direct_composition) {
++    surface_attributes.insert(surface_attributes.end(),
++                              {EGL_DIRECT_COMPOSITION_ANGLE, EGL_TRUE});
++  }
++  surface_attributes.push_back(EGL_NONE);
++
++  auto surface = ::eglCreateWindowSurface(
+       display_, config_, static_cast<EGLNativeWindowType>(hwnd),
+-      surface_attributes);
++      surface_attributes.data());
++  if (surface == EGL_NO_SURFACE && direct_composition) {
++    LogEGLError(
++        "DirectComposition surface creation failed; using window surface.");
++    surface_attributes.resize(surface_attributes.size() - 3);
++    surface_attributes.push_back(EGL_NONE);
++    surface = ::eglCreateWindowSurface(display_, config_,
++                                       static_cast<EGLNativeWindowType>(hwnd),
++                                       surface_attributes.data());
++  }
+   if (surface == EGL_NO_SURFACE) {
+     LogEGLError("Surface creation failed.");
+     return nullptr;
+diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc
+index d9f797ca257..80feb9d570f 100644
+--- a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc
++++ b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc
+@@ -718,7 +718,38 @@ void FlutterWindowsEngine::OnVsync(intptr_t baton) {
+   std::chrono::nanoseconds current_time =
+       std::chrono::nanoseconds(embedder_api_.GetCurrentTime());
+   std::chrono::nanoseconds frame_interval = FrameInterval();
+-  auto next = SnapToNextTick(current_time, start_time_, frame_interval);
++  auto phase = start_time_;
++  const auto timing = frame_interval_override_.has_value()
++                          ? std::nullopt
++                          : windows_proc_table_->GetDwmFrameTiming();
++  if (timing.has_value()) {
++    auto ticks_to_ns = [&](int64_t ticks) {
++      return std::chrono::duration_cast<std::chrono::nanoseconds>(
++          std::chrono::duration<double>(static_cast<double>(ticks) /
++                                        timing->frequency));
++    };
++    current_time = std::chrono::nanoseconds(embedder_api_.GetCurrentTime());
++    // DWM phase and engine time are calibrated in this call, without relying
++    // on the process startup phase or a rounded nominal refresh rate.
++    phase = current_time - ticks_to_ns(timing->counter - timing->vblank);
++    frame_interval = ticks_to_ns(timing->period);
++  }
++  auto next = SnapToNextTick(current_time, phase, frame_interval);
++  if (timing.has_value()) {
++    // Begin work in the current vblank interval, leaving the next one for
++    // the paced Surface present instead of waiting an extra interval first.
++    if (next > current_time) {
++      next -= frame_interval;
++    }
++    if (last_dwm_vsync_.has_value() &&
++        next - last_dwm_vsync_.value() < frame_interval / 2) {
++      next = SnapToNextTick(last_dwm_vsync_.value() + frame_interval / 2, phase,
++                            frame_interval);
++    }
++    last_dwm_vsync_ = next;
++  } else {
++    last_dwm_vsync_.reset();
++  }
+   embedder_api_.OnVsync(engine_, baton, next.count(),
+                         (next + frame_interval).count());
+ }
+diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h
+index 720a65a7dd8..2ec00e4f273 100644
+--- a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h
++++ b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h
+@@ -501,6 +501,9 @@ class FlutterWindowsEngine {
+   // The start time used to align frames.
+   std::chrono::nanoseconds start_time_ = std::chrono::nanoseconds::zero();
+ 
++  // Last reserved DWM frame start; a slot can only be delivered once.
++  std::optional<std::chrono::nanoseconds> last_dwm_vsync_;
++
+   // An override of the frame interval used by EngineModifier for testing.
+   std::optional<std::chrono::nanoseconds> frame_interval_override_ =
+       std::nullopt;
+diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc b/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc
+index 23e127cbc3d..efe6cb2ce2c 100644
+--- a/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc
++++ b/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc
+@@ -321,6 +321,100 @@ TEST_F(FlutterWindowsEngineTest, ConfiguresFrameVsync) {
+   EXPECT_TRUE(on_vsync_called);
+ }
+ 
++TEST_F(FlutterWindowsEngineTest, AlignsVsyncWithDwmInsteadOfEngineStartup) {
++  auto windows = std::make_shared<NiceMock<MockWindowsProcTable>>();
++  EXPECT_CALL(*windows, GetDwmFrameTiming)
++      .Times(2)
++      .WillRepeatedly(Return(
++          WindowsProcTable::DwmFrameTiming{1000000, 60000, 1000250, 10000000}));
++  for (auto start_time : {0, 3500000}) {
++    FlutterWindowsEngineBuilder builder{GetContext()};
++    builder.SetWindowsProcTable(windows);
++    auto engine = builder.Build();
++    EngineModifier modifier(engine.get());
++    modifier.SetStartTime(start_time);
++    modifier.embedder_api().GetCurrentTime = MOCK_ENGINE_PROC(
++        GetCurrentTime, ([]() -> uint64_t { return 1000000000; }));
++    modifier.embedder_api().OnVsync = MOCK_ENGINE_PROC(
++        OnVsync, ([](FLUTTER_API_SYMBOL(FlutterEngine), intptr_t baton,
++                     uint64_t start, uint64_t target) {
++          EXPECT_EQ(baton, 1);
++          EXPECT_EQ(start, 999975000u);
++          EXPECT_EQ(target, 1005975000u);
++          return kSuccess;
++        }));
++    engine->OnVsync(1);
++  }
++}
++
++TEST_F(FlutterWindowsEngineTest, ReservesDwmVsyncSlotsOnce) {
++  auto windows = std::make_shared<NiceMock<MockWindowsProcTable>>();
++  FlutterWindowsEngineBuilder builder{GetContext()};
++  builder.SetWindowsProcTable(windows);
++  auto engine = builder.Build();
++  EngineModifier modifier(engine.get());
++  modifier.embedder_api().GetCurrentTime = MOCK_ENGINE_PROC(
++      GetCurrentTime, ([calls = uint64_t{0}]() mutable -> uint64_t {
++        return 1000000000u + (calls++ / 2) * 100;
++      }));
++  modifier.embedder_api().OnVsync = MOCK_ENGINE_PROC(
++      OnVsync, ([](FLUTTER_API_SYMBOL(FlutterEngine), intptr_t baton,
++                   uint64_t start, uint64_t target) {
++        EXPECT_EQ(start, 1000000000u + (baton - 1) * 6000100u);
++        EXPECT_EQ(target, start + 6000000u);
++        return kSuccess;
++      }));
++  EXPECT_CALL(*windows, GetDwmFrameTiming)
++      .Times(2)
++      .WillRepeatedly(Return(
++          WindowsProcTable::DwmFrameTiming{1000000, 60000, 1000000, 10000000}));
++  engine->OnVsync(1);
++  engine->OnVsync(2);
++}
++
++TEST_F(FlutterWindowsEngineTest, UpdatesDwmVsyncPeriodAfterRefreshRateChange) {
++  auto windows = std::make_shared<NiceMock<MockWindowsProcTable>>();
++  FlutterWindowsEngineBuilder builder{GetContext()};
++  builder.SetWindowsProcTable(windows);
++  auto engine = builder.Build();
++  EngineModifier modifier(engine.get());
++  modifier.embedder_api().GetCurrentTime = MOCK_ENGINE_PROC(
++      GetCurrentTime, ([]() -> uint64_t { return 1000000000; }));
++  modifier.embedder_api().OnVsync = MOCK_ENGINE_PROC(
++      OnVsync, ([](FLUTTER_API_SYMBOL(FlutterEngine), intptr_t baton,
++                   uint64_t start, uint64_t target) {
++        EXPECT_EQ(target - start, baton == 1 ? 6000000u : 10000000u);
++        return kSuccess;
++      }));
++  EXPECT_CALL(*windows, GetDwmFrameTiming)
++      .WillOnce(Return(
++          WindowsProcTable::DwmFrameTiming{1000000, 60000, 1000250, 10000000}))
++      .WillOnce(Return(WindowsProcTable::DwmFrameTiming{1000000, 100000,
++                                                        1000250, 10000000}));
++  engine->OnVsync(1);
++  engine->OnVsync(2);
++}
++
++TEST_F(FlutterWindowsEngineTest, UsesVsyncFallbackWhenDwmUnavailable) {
++  auto windows = std::make_shared<NiceMock<MockWindowsProcTable>>();
++  FlutterWindowsEngineBuilder builder{GetContext()};
++  builder.SetWindowsProcTable(windows);
++  auto engine = builder.Build();
++  EngineModifier modifier(engine.get());
++  modifier.SetStartTime(0);
++  modifier.embedder_api().GetCurrentTime =
++      MOCK_ENGINE_PROC(GetCurrentTime, ([]() -> uint64_t { return 1; }));
++  modifier.embedder_api().OnVsync =
++      MOCK_ENGINE_PROC(OnVsync, ([](FLUTTER_API_SYMBOL(FlutterEngine), intptr_t,
++                                    uint64_t start, uint64_t target) {
++                         EXPECT_GT(start, 0u);
++                         EXPECT_EQ(target, start * 2);
++                         return kSuccess;
++                       }));
++  EXPECT_CALL(*windows, GetDwmFrameTiming).WillOnce(Return(std::nullopt));
++  engine->OnVsync(1);
++}
++
+ TEST_F(FlutterWindowsEngineTest, RunSkiaWithoutANGLEUsesSoftware) {
+   FlutterWindowsEngineBuilder builder{GetContext()};
+   builder.SetImpellerSwitch(DisabledImpeller);
+diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_view.cc b/engine/src/flutter/shell/platform/windows/flutter_windows_view.cc
+index cc0505d6232..f3ba4778b28 100644
+--- a/engine/src/flutter/shell/platform/windows/flutter_windows_view.cc
++++ b/engine/src/flutter/shell/platform/windows/flutter_windows_view.cc
+@@ -928,10 +928,9 @@ bool FlutterWindowsView::Focus() {
+ }
+ 
+ bool FlutterWindowsView::NeedsVsync() const {
+-  // If the Desktop Window Manager composition is enabled,
+-  // the system itself synchronizes with vsync.
+-  // See: https://learn.microsoft.com/windows/win32/dwm/composition-ovw
+-  return !windows_proc_table_->DwmIsCompositionEnabled();
++  // DWM composition does not pace asynchronous copy-model Presents. Keep
++  // swap pacing enabled so consecutive frames are not replaced before display.
++  return true;
+ }
+ 
+ bool FlutterWindowsView::IsSizedToContent() const {
+diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_view_unittests.cc b/engine/src/flutter/shell/platform/windows/flutter_windows_view_unittests.cc
+index b66b42052af..50d571f537f 100644
+--- a/engine/src/flutter/shell/platform/windows/flutter_windows_view_unittests.cc
++++ b/engine/src/flutter/shell/platform/windows/flutter_windows_view_unittests.cc
+@@ -1546,9 +1546,9 @@ TEST(FlutterWindowsViewTest, TooltipNodeData) {
+   EXPECT_EQ(uia_tooltip, "tooltip");
+ }
+ 
+-// Don't block until the v-blank if it is disabled by the window.
++// Keep v-blank pacing enabled when DWM composition is active.
+ // The surface is updated on the platform thread at startup.
+-TEST(FlutterWindowsViewTest, DisablesVSyncAtStartup) {
++TEST(FlutterWindowsViewTest, KeepsVSyncWithCompositionAtStartup) {
+   auto windows_proc_table = std::make_shared<MockWindowsProcTable>();
+   auto engine = std::make_unique<MockFlutterWindowsEngine>(windows_proc_table);
+   auto egl_manager = std::make_unique<egl::MockManager>();
+@@ -1559,8 +1559,7 @@ TEST(FlutterWindowsViewTest, DisablesVSyncAtStartup) {
+   EXPECT_CALL(*engine.get(), running).WillRepeatedly(Return(false));
+   EXPECT_CALL(*engine.get(), PostRasterThreadTask).Times(0);
+ 
+-  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled)
+-      .WillOnce(Return(true));
++  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled).Times(0);
+ 
+   EXPECT_CALL(*egl_manager.get(), render_context)
+       .WillOnce(Return(&render_context));
+@@ -1570,7 +1569,7 @@ TEST(FlutterWindowsViewTest, DisablesVSyncAtStartup) {
+   EXPECT_CALL(*egl_manager.get(), CreateWindowSurface)
+       .WillOnce(Return(std::move(surface)));
+   EXPECT_CALL(*surface_ptr, MakeCurrent).WillOnce(Return(true));
+-  EXPECT_CALL(*surface_ptr, SetVSyncEnabled(false)).WillOnce(Return(true));
++  EXPECT_CALL(*surface_ptr, SetVSyncEnabled(true)).WillOnce(Return(true));
+   EXPECT_CALL(render_context, ClearCurrent).WillOnce(Return(true));
+ 
+   EXPECT_CALL(*surface_ptr, Destroy).Times(1);
+@@ -1595,8 +1594,7 @@ TEST(FlutterWindowsViewTest, EnablesVSyncAtStartup) {
+ 
+   EXPECT_CALL(*engine.get(), running).WillRepeatedly(Return(false));
+   EXPECT_CALL(*engine.get(), PostRasterThreadTask).Times(0);
+-  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled)
+-      .WillOnce(Return(false));
++  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled).Times(0);
+ 
+   EXPECT_CALL(*egl_manager.get(), render_context)
+       .WillOnce(Return(&render_context));
+@@ -1619,9 +1617,9 @@ TEST(FlutterWindowsViewTest, EnablesVSyncAtStartup) {
+                          /*is_sized_to_content=*/false, BoxConstraints());
+ }
+ 
+-// Don't block until the v-blank if it is disabled by the window.
++// Keep v-blank pacing enabled when DWM composition is active.
+ // The surface is updated on the raster thread if the engine is running.
+-TEST(FlutterWindowsViewTest, DisablesVSyncAfterStartup) {
++TEST(FlutterWindowsViewTest, KeepsVSyncWithCompositionAfterStartup) {
+   auto windows_proc_table = std::make_shared<MockWindowsProcTable>();
+   auto engine = std::make_unique<MockFlutterWindowsEngine>(windows_proc_table);
+   auto egl_manager = std::make_unique<egl::MockManager>();
+@@ -1630,8 +1628,7 @@ TEST(FlutterWindowsViewTest, DisablesVSyncAfterStartup) {
+   auto surface_ptr = surface.get();
+ 
+   EXPECT_CALL(*engine.get(), running).WillRepeatedly(Return(true));
+-  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled)
+-      .WillOnce(Return(true));
++  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled).Times(0);
+ 
+   EXPECT_CALL(*egl_manager.get(), render_context)
+       .WillOnce(Return(&render_context));
+@@ -1646,7 +1643,7 @@ TEST(FlutterWindowsViewTest, DisablesVSyncAfterStartup) {
+         return true;
+       });
+   EXPECT_CALL(*surface_ptr, MakeCurrent).WillOnce(Return(true));
+-  EXPECT_CALL(*surface_ptr, SetVSyncEnabled(false)).WillOnce(Return(true));
++  EXPECT_CALL(*surface_ptr, SetVSyncEnabled(true)).WillOnce(Return(true));
+   EXPECT_CALL(render_context, ClearCurrent).WillOnce(Return(true));
+   EXPECT_CALL(*engine.get(), PostRasterThreadTask)
+       .WillOnce([](fml::closure callback) {
+@@ -1675,8 +1672,7 @@ TEST(FlutterWindowsViewTest, EnablesVSyncAfterStartup) {
+ 
+   EXPECT_CALL(*engine.get(), running).WillRepeatedly(Return(true));
+ 
+-  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled)
+-      .WillOnce(Return(false));
++  EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled).Times(0);
+ 
+   EXPECT_CALL(*egl_manager.get(), render_context)
+       .WillOnce(Return(&render_context));
+@@ -1744,8 +1740,7 @@ TEST(FlutterWindowsViewTest, UpdatesVSyncOnDwmUpdates) {
+   {
+     EXPECT_CALL(*egl_manager, CreateWindowSurface)
+         .WillOnce(Return(std::move(surface)));
+-    EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled)
+-        .WillOnce(Return(true));
++    EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled).Times(0);
+     EXPECT_CALL(*surface_ptr, SetVSyncEnabled).WillOnce(Return(true));
+ 
+     EngineModifier engine_modifier{engine.get()};
+@@ -1758,18 +1753,16 @@ TEST(FlutterWindowsViewTest, UpdatesVSyncOnDwmUpdates) {
+ 
+   // Disabling DWM composition should enable vsync blocking on the surface.
+   {
+-    EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled)
+-        .WillOnce(Return(false));
++    EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled).Times(0);
+     EXPECT_CALL(*surface_ptr, SetVSyncEnabled(true)).WillOnce(Return(true));
+ 
+     engine->OnDwmCompositionChanged();
+   }
+ 
+-  // Enabling DWM composition should disable vsync blocking on the surface.
++  // Enabling DWM composition must preserve surface vsync pacing.
+   {
+-    EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled)
+-        .WillOnce(Return(true));
+-    EXPECT_CALL(*surface_ptr, SetVSyncEnabled(false)).WillOnce(Return(true));
++    EXPECT_CALL(*windows_proc_table.get(), DwmIsCompositionEnabled).Times(0);
++    EXPECT_CALL(*surface_ptr, SetVSyncEnabled(true)).WillOnce(Return(true));
+ 
+     engine->OnDwmCompositionChanged();
+   }
+diff --git a/engine/src/flutter/shell/platform/windows/task_runner_unittests.cc b/engine/src/flutter/shell/platform/windows/task_runner_unittests.cc
+index d0b049d2bf4..0f94b18d23b 100644
+--- a/engine/src/flutter/shell/platform/windows/task_runner_unittests.cc
++++ b/engine/src/flutter/shell/platform/windows/task_runner_unittests.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <atomic>
+ #include <chrono>
++#include <future>
+ 
+ #include "flutter/fml/macros.h"
+ #include "flutter/shell/platform/windows/task_runner_window.h"
+@@ -116,6 +117,43 @@ TEST(TaskRunnerTest, TimerThreadDoesNotCancelEarlierScheduledTasks) {
+   timer_thread.Stop();
+ }
+ 
++TEST(TaskRunnerTest, TimerThreadRearmsParkedDeadline) {
++  std::promise<void> fired;
++  std::atomic_bool signaled = false;
++  TimerThread timer_thread([&]() {
++    if (!signaled.exchange(true)) {
++      fired.set_value();
++    }
++  });
++  timer_thread.Start();
++  // Let the worker enter its parked wait before giving it an earlier deadline.
++  std::this_thread::sleep_for(std::chrono::milliseconds(50));
++  timer_thread.ScheduleAt(std::chrono::high_resolution_clock::now() +
++                          std::chrono::milliseconds(20));
++  EXPECT_EQ(fired.get_future().wait_for(std::chrono::milliseconds(250)),
++            std::future_status::ready);
++  timer_thread.Stop();
++}
++
++TEST(TaskRunnerTest, TimerThreadMovesPendingDeadlineEarlier) {
++  std::promise<void> fired;
++  std::atomic_bool signaled = false;
++  TimerThread timer_thread([&]() {
++    if (!signaled.exchange(true)) {
++      fired.set_value();
++    }
++  });
++  timer_thread.ScheduleAt(std::chrono::high_resolution_clock::now() +
++                          std::chrono::seconds(10));
++  timer_thread.Start();
++  std::this_thread::sleep_for(std::chrono::milliseconds(50));
++  timer_thread.ScheduleAt(std::chrono::high_resolution_clock::now() +
++                          std::chrono::milliseconds(20));
++  EXPECT_EQ(fired.get_future().wait_for(std::chrono::milliseconds(250)),
++            std::future_status::ready);
++  timer_thread.Stop();
++}
++
+ class TestTaskRunnerWindow : public TaskRunnerWindow {
+  public:
+   TestTaskRunnerWindow() : TaskRunnerWindow() {}
+diff --git a/engine/src/flutter/shell/platform/windows/task_runner_window.cc b/engine/src/flutter/shell/platform/windows/task_runner_window.cc
+index 08b69a6d20f..9157be69e08 100644
+--- a/engine/src/flutter/shell/platform/windows/task_runner_window.cc
++++ b/engine/src/flutter/shell/platform/windows/task_runner_window.cc
+@@ -59,10 +59,15 @@ void TimerThread::ScheduleAt(
+ void TimerThread::TimerThreadMain() {
+   std::unique_lock<std::mutex> lock(mutex_);
+   while (callback_ != nullptr) {
+-    cv_.wait_until(lock, next_fire_time_, [this]() {
+-      return std::chrono::high_resolution_clock::now() >= next_fire_time_ ||
+-             callback_ == nullptr;
++    const auto deadline = next_fire_time_;
++    cv_.wait_until(lock, deadline, [this, deadline]() {
++      return next_fire_time_ != deadline || callback_ == nullptr;
+     });
++    // Recompute the wait after an earlier deadline replaces the captured one.
++    if (callback_ &&
++        std::chrono::high_resolution_clock::now() < next_fire_time_) {
++      continue;
++    }
+     auto scheduled_count = schedule_counter_;
+     if (callback_) {
+       lock.unlock();
+diff --git a/engine/src/flutter/shell/platform/windows/testing/mock_windows_proc_table.h b/engine/src/flutter/shell/platform/windows/testing/mock_windows_proc_table.h
+index 96fc4595bb3..2406d7eeb84 100644
+--- a/engine/src/flutter/shell/platform/windows/testing/mock_windows_proc_table.h
++++ b/engine/src/flutter/shell/platform/windows/testing/mock_windows_proc_table.h
+@@ -42,6 +42,11 @@ class MockWindowsProcTable : public WindowsProcTable {
+ 
+   MOCK_METHOD(bool, DwmIsCompositionEnabled, (), (const, override));
+ 
++  MOCK_METHOD(std::optional<DwmFrameTiming>,
++              GetDwmFrameTiming,
++              (),
++              (const, override));
++
+   MOCK_METHOD(HRESULT, DwmFlush, (), (const, override));
+ 
+   MOCK_METHOD(HCURSOR,
+diff --git a/engine/src/flutter/shell/platform/windows/windows_proc_table.cc b/engine/src/flutter/shell/platform/windows/windows_proc_table.cc
+index 9c8b8d4396e..0a719bafd9e 100644
+--- a/engine/src/flutter/shell/platform/windows/windows_proc_table.cc
++++ b/engine/src/flutter/shell/platform/windows/windows_proc_table.cc
+@@ -90,6 +90,23 @@ HRESULT WindowsProcTable::DwmFlush() const {
+   return ::DwmFlush();
+ }
+ 
++std::optional<WindowsProcTable::DwmFrameTiming>
++WindowsProcTable::GetDwmFrameTiming() const {
++  DWM_TIMING_INFO timing = {};
++  timing.cbSize = sizeof(timing);
++  LARGE_INTEGER counter = {};
++  LARGE_INTEGER frequency = {};
++  if (FAILED(::DwmGetCompositionTimingInfo(nullptr, &timing)) ||
++      !::QueryPerformanceCounter(&counter) ||
++      !::QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0 ||
++      timing.qpcVBlank == 0 || timing.qpcRefreshPeriod == 0) {
++    return std::nullopt;
++  }
++  return DwmFrameTiming{static_cast<int64_t>(timing.qpcVBlank),
++                        static_cast<int64_t>(timing.qpcRefreshPeriod),
++                        counter.QuadPart, frequency.QuadPart};
++}
++
+ HCURSOR WindowsProcTable::LoadCursor(HINSTANCE instance,
+                                      LPCWSTR cursor_name) const {
+   return ::LoadCursorW(instance, cursor_name);
+diff --git a/engine/src/flutter/shell/platform/windows/windows_proc_table.h b/engine/src/flutter/shell/platform/windows/windows_proc_table.h
+index e89195a0164..4154f970113 100644
+--- a/engine/src/flutter/shell/platform/windows/windows_proc_table.h
++++ b/engine/src/flutter/shell/platform/windows/windows_proc_table.h
+@@ -6,6 +6,7 @@
+ #define FLUTTER_SHELL_PLATFORM_WINDOWS_WINDOWS_PROC_TABLE_H_
+ 
+ #include <dwmapi.h>
++#include <cstdint>
+ #include <optional>
+ 
+ #include "flutter/fml/macros.h"
+@@ -71,6 +72,15 @@ class WindowsProcTable {
+   // https://learn.microsoft.com/windows/win32/api/dwmapi/nf-dwmapi-dwmiscompositionenabled
+   virtual bool DwmIsCompositionEnabled() const;
+ 
++  struct DwmFrameTiming {
++    int64_t vblank;
++    int64_t period;
++    int64_t counter;
++    int64_t frequency;
++  };
++
++  virtual std::optional<DwmFrameTiming> GetDwmFrameTiming() const;
++
+   // Issues a flush call that blocks the caller until all of the outstanding
+   // surface updates have been made.
+   //
