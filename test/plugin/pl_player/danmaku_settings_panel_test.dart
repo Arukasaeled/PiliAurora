@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:hive_ce/hive.dart';
@@ -65,11 +67,16 @@ void main() {
       expect(fps, findsNothing);
       await tester.tap(find.text('运动'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(fps);
-      await tester.pumpAndSettle();
-      await tester.tap(fps);
-      await tester.pumpAndSettle();
-      expect(Pref.danmakuFrameRate, 60);
+      if (Platform.isWindows) {
+        expect(fps, findsNothing);
+        expect(find.text('弹幕帧率（实验性）'), findsNothing);
+      } else {
+        await tester.ensureVisible(fps);
+        await tester.pumpAndSettle();
+        await tester.tap(fps);
+        await tester.pumpAndSettle();
+        expect(Pref.danmakuFrameRate, 60);
+      }
       await tester.tap(find.text('屏蔽'));
       await tester.pumpAndSettle();
       final threshold = find.descendant(
@@ -105,11 +112,19 @@ void main() {
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(FilterChip, '滚动'), findsOneWidget);
-    await tester.tap(find.text('性能'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ChoiceChip, '30 FPS'));
-    await tester.pumpAndSettle();
-    expect(Pref.danmakuFrameRate, 30);
+    if (Platform.isWindows) {
+      expect(find.text('性能'), findsNothing);
+      expect(tester.widget<TabBar>(find.byType(TabBar)).tabs, hasLength(2));
+      await tester.tap(find.text('运动'));
+      await tester.pumpAndSettle();
+      expect(find.text('弹幕帧率（实验性）'), findsNothing);
+    } else {
+      await tester.tap(find.text('性能'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, '30 FPS'));
+      await tester.pumpAndSettle();
+      expect(Pref.danmakuFrameRate, 30);
+    }
     expect(find.text('合并弹幕'), findsNothing);
     expect(find.text('智能云屏蔽'), findsNothing);
     expect(find.byType(AlertDialog), findsNothing);

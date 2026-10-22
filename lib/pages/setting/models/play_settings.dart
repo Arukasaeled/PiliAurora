@@ -496,7 +496,7 @@ NormalModel get danmakuFrameRateSetting => NormalModel(
 );
 
 List<SettingsModel> get danmakuExtraSettings => [
-  danmakuFrameRateSetting,
+  if (!Platform.isWindows) danmakuFrameRateSetting,
   NormalModel(
     title: '弹幕轨道间距',
     subtitle: '1–3 倍，默认 1.6；数值越小，同屏轨道越多',

@@ -7,6 +7,7 @@ import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/utils/extension/num_ext.dart';
 import 'package:pili_aurora/utils/feed_back.dart';
 import 'package:pili_aurora/utils/page_utils.dart';
+import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:pili_aurora/utils/theme_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
@@ -421,7 +422,7 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
         ];
 
         List<Widget> motion() => [
-          if (!isLive) ...[
+          if (!isLive && !PlatformUtils.isDesktop) ...[
             frameRate(),
             const SizedBox(height: 12),
           ],
@@ -562,7 +563,7 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
           child: Theme(
             data: theme,
             child: DefaultTabController(
-              length: 3,
+              length: isLive && PlatformUtils.isDesktop ? 2 : 3,
               child: Material(
                 clipBehavior: Clip.antiAlias,
                 color: colors.surface,
@@ -594,7 +595,8 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                                   tabs: [
                                     const Tab(text: '外观'),
                                     const Tab(text: '运动'),
-                                    Tab(text: isLive ? '性能' : '屏蔽'),
+                                    if (!isLive || !PlatformUtils.isDesktop)
+                                      Tab(text: isLive ? '性能' : '屏蔽'),
                                   ],
                                 ),
                               ),
@@ -620,10 +622,11 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                           children: [
                             page('appearance', appearance()),
                             page('motion', motion()),
-                            page(
-                              'filtering',
-                              isLive ? [frameRate()] : filtering(),
-                            ),
+                            if (!isLive || !PlatformUtils.isDesktop)
+                              page(
+                                'filtering',
+                                isLive ? [frameRate()] : filtering(),
+                              ),
                           ],
                         ),
                       ),

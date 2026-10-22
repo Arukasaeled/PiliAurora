@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -76,7 +77,7 @@ void main() {
       for (final fps in [30, 60, 90, 120, 0]) {
         await GStorage.setting.put(SettingBoxKey.danmakuFrameRate, fps);
         await tester.pump();
-        expect(rate(), fps);
+        expect(rate(), Platform.isWindows ? 0 : fps);
         expect(player.danmakuDisplay, same(controller));
       }
       if (isLive) {
