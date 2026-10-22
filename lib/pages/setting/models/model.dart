@@ -145,12 +145,14 @@ class PopupModel<T extends EnumWithLabel> extends SettingsModel {
   Widget get widget => PopupListTile<T>(
     safeArea: false,
     leading: leading,
-    title: Text(title),
+    title: title,
+    contentPadding: contentPadding,
+    titleStyle: titleStyle,
     value: () {
       final v = value();
       return (v, v.label);
     },
-    itemBuilder: (_) => enumItemBuilder(items),
+    options: items.map((item) => (item, item.label)).toList(),
     onSelected: onSelected,
   );
 }

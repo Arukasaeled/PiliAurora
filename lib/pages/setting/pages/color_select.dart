@@ -115,13 +115,11 @@ class _ColorSelectPageState extends State<ColorSelectPage> {
             () => PopupListTile<FlexSchemeVariant>(
               enabled: !ctr.dynamicColor.value,
               leading: const Icon(Icons.palette_outlined),
-              title: const Text('调色板风格'),
+              title: '调色板风格',
               value: () =>
                   (_dynamicSchemeVariant, _dynamicSchemeVariant.variantName),
-              itemBuilder: (_) => FlexSchemeVariant.values
-                  .map(
-                    (e) => PopupMenuItem(value: e, child: Text(e.variantName)),
-                  )
+              options: FlexSchemeVariant.values
+                  .map((e) => (e, e.variantName))
                   .toList(),
               onSelected: (value, setState) {
                 _dynamicSchemeVariant = value;

@@ -16,6 +16,8 @@ class AppSelectField<T> extends StatefulWidget {
     this.maxMenuHeight = AppMenuTheme.selectMenuMaxHeight,
     this.tooltip,
     this.selectedWidget,
+    this.controller,
+    this.consumeOutsideTap = false,
   });
 
   final T? value;
@@ -29,6 +31,8 @@ class AppSelectField<T> extends StatefulWidget {
   final double maxMenuHeight;
   final String? tooltip;
   final Widget? selectedWidget;
+  final MenuController? controller;
+  final bool consumeOutsideTap;
 
   @override
   State<AppSelectField<T>> createState() => _AppSelectFieldState<T>();
@@ -59,7 +63,8 @@ class _AppSelectFieldState<T> extends State<AppSelectField<T>> {
     final autofocusIndex = selectedIndex < 0 ? 0 : selectedIndex;
 
     return MenuAnchor(
-      controller: _menuController,
+      controller: widget.controller ?? _menuController,
+      consumeOutsideTap: widget.consumeOutsideTap,
       childFocusNode: _fieldFocusNode,
       style: AppMenuTheme.selectMenuStyle(
         colors,
