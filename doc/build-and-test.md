@@ -52,6 +52,8 @@ Android 通用 APK 位于 `build/app/outputs/flutter-apk/app-release.apk`，Wind
 
 ## 静态检查与测试
 
+完成验证后，在提交说明中记录实际执行的命令及结果，便于复查。
+
 ```powershell
 fvm flutter analyze --no-pub lib test tool
 fvm flutter test
