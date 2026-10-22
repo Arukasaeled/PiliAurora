@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:pili_aurora/plugin/pl_player/utils/android_video_output.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -39,9 +38,10 @@ void main() {
       expect(player.options, isEmpty);
       return null;
     });
-    await setAndroidVideoOutputSize(
+    await setAndroidSurfaceSize(
       player: player,
-      size: (width: 960, height: 540),
+      width: 960,
+      height: 540,
     );
     expect(calls.map((call) => call.method), [
       'VideoOutputManager.BeginOutputOperation',
@@ -63,16 +63,18 @@ void main() {
 
   test('disposed and unloaded players do not touch native resources', () async {
     player.disposed = true;
-    await setAndroidVideoOutputSize(
+    await setAndroidSurfaceSize(
       player: player,
-      size: (width: 960, height: 540),
+      width: 960,
+      height: 540,
     );
     expect(calls, isEmpty);
     player.disposed = false;
     player.current.clear();
-    await setAndroidVideoOutputSize(
+    await setAndroidSurfaceSize(
       player: player,
-      size: (width: 960, height: 540),
+      width: 960,
+      height: 540,
     );
     expect(calls, isEmpty);
     expect(player.options, isEmpty);
@@ -90,9 +92,10 @@ void main() {
       }
       return null;
     });
-    final resize = setAndroidVideoOutputSize(
+    final resize = setAndroidSurfaceSize(
       player: player,
-      size: (width: 960, height: 540),
+      width: 960,
+      height: 540,
     );
     await entered.future;
     player.disposed = true;
@@ -111,18 +114,20 @@ void main() {
         }
         return null;
       });
-      await setAndroidVideoOutputSize(
+      await setAndroidSurfaceSize(
         player: player,
-        size: (width: 960, height: 540),
+        width: 960,
+        height: 540,
       );
       expect(player.options, isEmpty);
     },
   );
 
   test('stale surface generations do not enter the native channel', () async {
-    final applied = await setAndroidVideoOutputSize(
+    final applied = await setAndroidSurfaceSize(
       player: player,
-      size: (width: 960, height: 540),
+      width: 960,
+      height: 540,
       isCurrent: () => false,
     );
     expect(applied, isFalse);
@@ -138,9 +143,10 @@ void main() {
       }
       return null;
     });
-    final applied = await setAndroidVideoOutputSize(
+    final applied = await setAndroidSurfaceSize(
       player: player,
-      size: (width: 960, height: 540),
+      width: 960,
+      height: 540,
       isCurrent: () => current,
     );
     expect(applied, isFalse);
@@ -168,9 +174,10 @@ void main() {
         }
         return null;
       });
-      final viewport = setAndroidVideoOutputSize(
+      final viewport = setAndroidSurfaceSize(
         player: player,
-        size: (width: 960, height: 540),
+        width: 960,
+        height: 540,
       );
       await entered.future;
       final source = setAndroidSurfaceSize(
@@ -224,9 +231,10 @@ void main() {
         }
         return null;
       });
-      final viewport = setAndroidVideoOutputSize(
+      final viewport = setAndroidSurfaceSize(
         player: player,
-        size: (width: 960, height: 540),
+        width: 960,
+        height: 540,
         isCurrent: () => current,
       );
       await entered.future;
@@ -263,9 +271,10 @@ void main() {
         }
         return null;
       });
-      final viewport = setAndroidVideoOutputSize(
+      final viewport = setAndroidSurfaceSize(
         player: player,
-        size: (width: 960, height: 540),
+        width: 960,
+        height: 540,
       );
       await entered.future;
       final source = setAndroidSurfaceSize(
@@ -290,9 +299,10 @@ void main() {
       return Future<Object?>.error(PlatformException(code: 'resize-failed'));
     });
     await expectLater(
-      setAndroidVideoOutputSize(
+      setAndroidSurfaceSize(
         player: player,
-        size: (width: 960, height: 540),
+        width: 960,
+        height: 540,
       ),
       throwsA(isA<PlatformException>()),
     );

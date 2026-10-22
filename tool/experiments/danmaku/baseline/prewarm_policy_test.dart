@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pili_aurora/pages/danmaku/prewarm_policy.dart';
+
+import 'prewarm_policy.dart';
 
 void main() {
   bool allowed(

@@ -9,7 +9,7 @@ import 'frame_sync_fixture.dart';
 void main() {
   final binding = _FrameDataBinding();
 
-  testWidgets('BeginFrame 返回后发布的帧号与本帧目标关联', (tester) async {
+  testWidgets('帧计划核对帧末身份，忽略无关与重复 timing，停止后清除计划', (tester) async {
     tester.view.display.refreshRate = 120;
     addTearDown(tester.view.display.resetRefreshRate);
     final fixture = FrameSyncFixture(tester, 120);
@@ -18,17 +18,18 @@ void main() {
     binding.frameDispatcher.number = 40;
     // 固定 SDK 在 onBeginFrame 返回后、drawFrame 之前更新 FrameData。
     binding.addPersistentFrameCallback((_) {
-      binding.frameDispatcher.number = 41;
+      binding.frameDispatcher.number++;
     });
     final ticker = _IdentityTicker(fixture, frames)..start();
+    addTearDown(ticker.dispose);
     await tester.pump();
     final target = binding.currentSystemFrameTimeStamp.inMicroseconds;
-    ui.FrameTiming timing(int number) => ui.FrameTiming(
-      vsyncStart: target - 33332,
-      buildStart: target - 33200,
-      buildFinish: target - 33000,
-      rasterStart: target - 32000,
-      rasterFinish: target - 31000,
+    ui.FrameTiming timing(int number, {int lead = 33332}) => ui.FrameTiming(
+      vsyncStart: target - lead,
+      buildStart: target - lead + 100,
+      buildFinish: target - lead + 200,
+      rasterStart: target - lead + 300,
+      rasterFinish: target - lead + 400,
       rasterFinishWallTime: target,
       frameNumber: number,
     );
@@ -37,7 +38,15 @@ void main() {
     expect(ticker.diagnostics['presentationLeadUs'], isNull);
     tester.platformDispatcher.onReportTimings!([timing(41)]);
     expect(ticker.diagnostics['presentationLeadUs'], 33332);
-    ticker.dispose();
+    tester.platformDispatcher.onReportTimings!([timing(999, lead: 8333)]);
+    expect(ticker.diagnostics['presentationLeadUs'], 33332);
+    tester.platformDispatcher.onReportTimings!([timing(41, lead: 8333)]);
+    expect(ticker.diagnostics['presentationLeadUs'], 33332);
+    // 下一帧尚未上报 timing，停止必须丢弃其待匹配计划。
+    await tester.pump(const Duration(milliseconds: 50));
+    ticker.stop();
+    tester.platformDispatcher.onReportTimings!([timing(42)]);
+    expect(ticker.diagnostics['presentationLeadUs'], isNull);
     await tester.pump();
   });
 }

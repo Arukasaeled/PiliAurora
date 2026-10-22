@@ -42,15 +42,10 @@ $ciTests = @(
     "test/pages/setting/settings_navigation_test.dart",
     "test/pages/danmaku",
     "test/pages/video/playback_source_test.dart",
-    "test/plugin/pl_player/video_output/video_output_resizer_test.dart",
-    "test/plugin/pl_player/android/android_video_output_test.dart",
-    "test/plugin/pl_player/video_output/video_output_size_test.dart",
-    "test/plugin/pl_player/android/android_decode_recovery_test.dart",
-    "test/plugin/pl_player/android/android_decode_lifecycle_test.dart",
+    "test/plugin/pl_player/video_output",
+    "test/plugin/pl_player/android",
     "test/plugin/pl_player/hardware_video_configuration_test.dart",
-    "test/plugin/pl_player/android/android_fixed_surface_size_test.dart",
     "test/plugin/pl_player/playback",
-    "test/plugin/pl_player/super_resolution_menu_tile_test.dart",
     "test/pages/setting/decoder_test_dialog_test.dart"
 )
 

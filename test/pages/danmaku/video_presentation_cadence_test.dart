@@ -1,5 +1,3 @@
-import 'dart:ui' show FrameTiming;
-
 import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -102,42 +100,6 @@ void main() {
     await tester.pump();
     await tester.binding.delayed(const Duration(seconds: 2));
     expect(tester.binding.hasScheduledFrame, isFalse);
-  });
-
-  testWidgets('帧计划按同帧 timing 还原提前量，停止后清除旧计划', (tester) async {
-    tester.view.display.refreshRate = 120;
-    addTearDown(tester.view.display.resetRefreshRate);
-    final fixture = FrameSyncFixture(tester, 120);
-    final frames = ValueNotifier<List<int>>([fixture.now]);
-    addTearDown(frames.dispose);
-    final ticker = _VideoTicker(
-      (_) {},
-      fixture,
-      frames,
-      preserveVideoPhase: true,
-    )..start();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-    final target = tester.binding.currentSystemFrameTimeStamp.inMicroseconds;
-    final number = tester.platformDispatcher.frameData.frameNumber;
-    FrameTiming timing(int frame, int lead) => FrameTiming(
-      vsyncStart: target - lead,
-      buildStart: target - lead + 100,
-      buildFinish: target - lead + 200,
-      rasterStart: target - lead + 300,
-      rasterFinish: target - lead + 400,
-      rasterFinishWallTime: target,
-      frameNumber: frame,
-    );
-    tester.platformDispatcher.onReportTimings!([timing(number, 33332)]);
-    expect(ticker.diagnostics['presentationLeadUs'], 33332);
-    tester.platformDispatcher.onReportTimings!([timing(number + 999, 8333)]);
-    expect(ticker.diagnostics['presentationLeadUs'], 33332);
-    ticker.stop();
-    tester.platformDispatcher.onReportTimings!([timing(number, 8333)]);
-    expect(ticker.diagnostics['presentationLeadUs'], isNull);
-    ticker.dispose();
-    await tester.pump();
   });
 }
 

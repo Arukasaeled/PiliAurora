@@ -4,9 +4,11 @@ import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:canvas_danmaku/special_danmaku_painter.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
-import 'package:pili_aurora/pages/danmaku/prewarm_policy.dart';
+
 import 'package:pili_aurora/pages/danmaku/raster_cache.dart';
 import 'package:pili_aurora/pages/danmaku/render_guard.dart';
+
+import 'prewarm_policy.dart';
 
 class _PreparedEntry {
   _PreparedEntry(this.trajectory, this.track, this.scrolling);
