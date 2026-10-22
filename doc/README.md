@@ -3,6 +3,7 @@
 ## 使用说明
 
 - [项目介绍与下载](../README.md)：支持平台、主要功能和安装包入口。
+- [English README](../README.en.md)：英文项目介绍、下载和构建入口；详细指南仍以中文提供。
 - [Windows 播放窗口](windows-playback-windows.md)：弹出视频与直播、排列窗口、调节音量和切换声音来源。
 - [弹幕合并与帧率](danmaku-merge.md)：设置入口、匹配规则、字号放大和轨道间距。
 - [评论与表情包](comments-and-emotes.md)：评论长按菜单、拉黑用户、表情包管理和内容预览。

@@ -131,6 +131,14 @@ sequenceDiagram
 
 实现见 [`playback_session.dart`](../lib/plugin/pl_player/playback/playback_session.dart)、[`native_playback_runtime.dart`](../lib/plugin/pl_player/playback/native_playback_runtime.dart) 和 [`playback_source.dart`](../lib/pages/video/playback_source.dart)。
 
+### 媒体时钟与跳转确认
+
+点播弹幕使用独立的只读媒体时钟。原生位置、播放状态等通知触发后台属性采样，运行时确认采样仍属于当前媒体后发布锚点。显示端按锚点的单调时间和实际速率求值；暂停、缓冲或播放状态变化时冻结或重新建立锚点，倍速切换保留运动连续性。采样合并及在途结果失效由 `NativeMediaClockSampling` 管理，原生句柄销毁前等待读取完成。
+
+seek 命令携带 `seekSequence`，经运行时传给 media_kit 的 `observationId`。提交后暂停发布普通媒体锚点，等待与当前 Player、加载绑定和跳转序号匹配的原生完成通知，再更新连续性并恢复采样。下一次 seek 的就绪等待在会话命令执行器之外进行，使暂停、切源和关闭仍可推进；新请求或所有者失效会取消旧等待。
+
+实现见 [`media_clock.dart`](../lib/plugin/pl_player/playback/media_clock.dart)、[`native_media_clock_sampling.dart`](../lib/plugin/pl_player/playback/native_media_clock_sampling.dart) 和 media_kit 的 [`seek_observation.dart`](../third_party/media_kit/lib/src/player/native/player/seek_observation.dart)。对应回归位于 `test/plugin/pl_player/playback/` 的 `media_clock_test.dart`、`native_media_clock_test.dart`、`native_media_clock_sampling_test.dart`、`native_seek_observation_test.dart` 和 `playback_session_test.dart`。
+
 ### 网络错误恢复
 
 ```mermaid
