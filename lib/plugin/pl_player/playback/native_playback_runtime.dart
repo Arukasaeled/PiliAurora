@@ -64,7 +64,6 @@ class NativePlaybackRuntime
     useRequestTimings: Platform.isAndroid,
   );
   PlaybackFrameSource get frameSource => _frameTimings;
-  ValueListenable<List<int>> get videoFrameTimings => _frameTimings.frames;
   ValueListenable<bool> get videoFramePresented => _frameTimings.presented;
   final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier(false);
   final StreamController<PlaybackRuntimeEvent> _events =

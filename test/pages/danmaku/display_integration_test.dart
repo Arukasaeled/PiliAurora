@@ -1,3 +1,5 @@
+import 'package:pili_aurora/plugin/pl_player/playback/frame_timing.dart';
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -248,6 +250,8 @@ class Player implements PlPlayerController {
   final enableShowLiveDanmaku = true.obs;
   @override
   final danmakuOpacity = 1.0.obs;
+  @override
+  final PlaybackFrameSource frameSource = const EmptyPlaybackFrameSource();
   @override
   final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier<bool>(false);
   @override

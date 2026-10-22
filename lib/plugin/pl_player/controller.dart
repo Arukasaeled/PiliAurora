@@ -216,8 +216,6 @@ class PlPlayerController
   PlaybackOwner? get activePlaybackOwner =>
       _activeOwner?.isActive == true ? _activeOwner : null;
   PlaybackFrameSource get frameSource => _runtime.frameSource;
-  ValueListenable<List<int>> get videoFrameTimings =>
-      _runtime.videoFrameTimings;
   ValueListenable<bool> get videoFramePresented => _runtime.videoFramePresented;
   ValueListenable<bool> get videoDisplaySyncActive =>
       _runtime.videoDisplaySyncActive;

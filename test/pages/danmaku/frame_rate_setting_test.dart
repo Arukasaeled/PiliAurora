@@ -1,3 +1,5 @@
+import 'package:pili_aurora/plugin/pl_player/playback/frame_timing.dart';
+
 import 'dart:typed_data';
 import 'dart:async';
 import 'dart:io';
@@ -66,14 +68,14 @@ void main() {
           ? tester.widget<LiveDanmakuLayer>(liveLayer).frameRate
           : tester.widget<DanmakuWindowScreen>(timeline).frameRate;
       Object? syncState() => isLive
-          ? tester.widget<LiveDanmakuLayer>(liveLayer).videoDisplaySyncActive
-          : tester.widget<DanmakuWindowScreen>(timeline).videoDisplaySyncActive;
+          ? tester.widget<LiveDanmakuLayer>(liveLayer).frameSource
+          : tester.widget<DanmakuWindowScreen>(timeline).frameSource;
       final controller = player.danmakuDisplay;
       expect(rate(), 0);
-      expect(syncState(), same(player.videoDisplaySyncActive));
+      expect(syncState(), same(player.frameSource));
       await GStorage.setting.put(SettingBoxKey.videoSync, 'audio');
       await tester.pump();
-      expect(syncState(), same(player.videoDisplaySyncActive));
+      expect(syncState(), same(player.frameSource));
       for (final fps in [30, 60, 90, 120, 0]) {
         await GStorage.setting.put(SettingBoxKey.danmakuFrameRate, fps);
         await tester.pump();
@@ -97,6 +99,8 @@ class _Player implements PlPlayerController {
   _Player({required this.isLive});
   @override
   final bool isLive;
+  @override
+  final PlaybackFrameSource frameSource = const EmptyPlaybackFrameSource();
   @override
   final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier<bool>(true);
   @override

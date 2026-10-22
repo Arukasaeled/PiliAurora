@@ -3,9 +3,9 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-import 'package:flutter/scheduler.dart' show SchedulerBinding;
+import 'package:pili_aurora/pages/danmaku/frame_scheduler.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/frame_timing.dart';
 import 'package:pili_aurora/common/widgets/image/cached_image.dart';
 import 'package:pili_aurora/pages/danmaku/interaction.dart';
 import 'package:pili_aurora/pages/danmaku/live_queue.dart';
@@ -22,7 +22,7 @@ class LiveDanmakuLayer<T> extends StatefulWidget {
     required this.option,
     required this.size,
     this.frameRate = 0,
-    this.videoDisplaySyncActive,
+    this.frameSource = const EmptyPlaybackFrameSource(),
     this.createdInteraction,
     this.monotonicUs,
     this.frameTimeUs,
@@ -36,7 +36,7 @@ class LiveDanmakuLayer<T> extends StatefulWidget {
 
   /// 与单调时钟同域的帧目标时间；测试可分别控制目标与实际交付。
   final int Function()? frameTimeUs;
-  final ValueListenable<bool>? videoDisplaySyncActive;
+  final PlaybackFrameSource frameSource;
   final void Function(DanmakuInteractionHandle<T> Function(), VoidCallback)?
   createdInteraction;
   @override
@@ -48,31 +48,21 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
   int _motionUs = 0;
   int _presentationUs = 0;
   final _contents = <Object, DanmakuContentItem<T>>{};
-  late final FrameRateTicker _ticker;
+  late final DanmakuFrameScheduler _scheduler;
   late final LiveDanmakuQueue<T> _queue;
   StreamSubscription<LiveDanmakuMessage<T>>? _subscription;
   Timer? _deadline;
   late final VoidCallback _unregisterDiagnostics;
-  bool _enabled = true, _queued = false, _disposed = false;
+  bool _enabled = true, _disposed = false;
   bool _refreshing = false;
-  int? _wakeFrame;
-  bool _updatedThisFrame = false;
   late int _lastUs;
   int get _now => widget.monotonicUs?.call() ?? liveDanmakuNowUs();
-  int get _frameTimeUs =>
-      widget.frameTimeUs?.call() ??
-      SchedulerBinding.instance.currentSystemFrameTimeStamp.inMicroseconds;
   bool get _visible => widget.visible && _enabled && !widget.size.isEmpty;
   @override
   void initState() {
     super.initState();
     _lastUs = _now;
-    _ticker = FrameRateTicker(
-      (_) => _refresh(),
-      frameRate: widget.frameRate,
-      videoDisplaySyncActive: widget.videoDisplaySyncActive,
-      screenRefreshRate: () => View.of(context).display.refreshRate,
-    );
+    _scheduler = DanmakuFrameScheduler(onFrame: _refresh);
     _queue = LiveDanmakuQueue<T>(
       loadImage: _loadImage,
       nowUs: () => _now,
@@ -110,7 +100,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         'resourceTasks': _queue.runningTasks,
         'resourceReservedBytes': _queue.reservedBytes,
         'candidateWorkingSetBytes': _queue.workingSetBytes,
-        'scheduler': _ticker.diagnostics,
+        'scheduler': _scheduler.diagnostics,
       },
     );
   }
@@ -186,7 +176,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
       unawaited(_subscription?.cancel());
       _subscription = null;
       _clear();
-      _ticker.stop();
+      _configureScheduler(continuous: false);
       _deadline?.cancel();
     }
   }
@@ -210,8 +200,6 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
         oldWidget.size != widget.size) {
       _queue.clear();
     }
-    _ticker.frameRate = widget.frameRate;
-    _ticker.videoDisplaySyncActive = widget.videoDisplaySyncActive;
     _renderer?.requestConfiguration(
       option: widget.option,
       size: widget.size,
@@ -226,27 +214,27 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
     if (!_refreshing) _wake();
   }
 
-  void _wake() {
-    // 运动期间由 ticker 合并消息与配置，避免额外帧抢先推进滚动。
-    if (_ticker.isActive || _queued || _disposed || !_visible) return;
-    _queued = true;
-    _wakeFrame = SchedulerBinding.instance.scheduleFrameCallback((_) {
-      _wakeFrame = null;
-      _queued = false;
-      if (!_disposed) _refresh();
-    });
+  void _configureScheduler({required bool continuous}) {
+    _scheduler.configure(
+      view: View.of(context),
+      source: widget.frameSource,
+      targetFrameRate: widget.frameRate,
+      enabled: _visible,
+      continuous: continuous,
+    );
   }
 
-  void _refresh() {
+  void _wake() {
+    if (_disposed || !_visible) return;
+    _configureScheduler(continuous: _scheduler.isContinuous);
+    _scheduler.requestFrame();
+  }
+
+  void _refresh(DanmakuFrame frame) {
     final renderer = _renderer;
     if (renderer == null || !_visible || _disposed) return;
-    if (_updatedThisFrame) return;
-    _updatedThisFrame = true;
-    SchedulerBinding.instance.addPostFrameCallback(
-      (_) => _updatedThisFrame = false,
-    );
     _refreshing = true;
-    final now = _now;
+    final now = widget.monotonicUs?.call() ?? frame.nowUs;
     if (widget.running) {
       _motionUs += now - _lastUs;
     }
@@ -255,7 +243,10 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
     // 暂停可能发生在上一帧预测位置之前，保留已显示位置直至时间追上。
     _presentationUs = math.max(
       renderer.presentationTimeUs,
-      _motionUs + (widget.running ? _frameTimeUs - now : 0),
+      _motionUs +
+          (widget.running
+              ? (widget.frameTimeUs?.call() ?? frame.targetUs) - now
+              : 0),
     );
     renderer
       ..prepareConfiguration()
@@ -289,8 +280,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
     final dynamic =
         renderer.hasPendingConfiguration ||
         (widget.running && (renderer.needsContinuousFrames || _queue.hasReady));
-    if (dynamic && !_ticker.isActive) _ticker.start();
-    if (!dynamic && _ticker.isActive) _ticker.stop();
+    _configureScheduler(continuous: dynamic);
     _deadline?.cancel();
     int? due = _queue.nextDeadlineUs;
     final expiry = renderer.nextChangeUs;
@@ -322,10 +312,7 @@ class _LiveDanmakuLayerState<T> extends State<LiveDanmakuLayer<T>> {
     unawaited(_subscription?.cancel());
     _deadline?.cancel();
     _queue.dispose();
-    if (_wakeFrame case final frame?) {
-      SchedulerBinding.instance.cancelFrameCallbackWithId(frame);
-    }
-    _ticker.dispose();
+    _scheduler.dispose();
     _renderer?.removeListener(_rendererChanged);
     _renderer?.dispose();
     for (final content in _contents.values) {

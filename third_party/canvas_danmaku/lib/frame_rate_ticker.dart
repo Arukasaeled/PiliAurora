@@ -19,6 +19,8 @@ class FrameRateTicker extends Ticker {
     ValueListenable<bool>? videoDisplaySyncActive,
     double Function()? screenRefreshRate,
     int? wakeLeadMicros,
+    void Function()? beforeFrame,
+    void Function()? beforeTimings,
     // 共用视频输出 Surface 时稳定提交节奏，位置更新仍按 frameRate 推进。
     bool continuousVideoVsync = false,
     // 按内容合成时，视频与弹幕仍需共用更新相位。
@@ -29,6 +31,8 @@ class FrameRateTicker extends Ticker {
         _videoDisplaySyncActive = videoDisplaySyncActive,
         _screenRefreshRate = screenRefreshRate,
         _wakeLeadMicros = wakeLeadMicros,
+        _beforeFrame = beforeFrame,
+        _beforeTimings = beforeTimings,
         _continuousVideoVsync = continuousVideoVsync,
         _preserveVideoPhase = preserveVideoPhase;
 
@@ -59,8 +63,10 @@ class FrameRateTicker extends Ticker {
   ValueListenable<bool>? _videoDisplaySyncActive;
   final double Function()? _screenRefreshRate;
   final int? _wakeLeadMicros;
-  final bool _continuousVideoVsync;
-  final bool _preserveVideoPhase;
+  bool _continuousVideoVsync;
+  bool _preserveVideoPhase;
+  final void Function()? _beforeFrame;
+  final void Function()? _beforeTimings;
   final _frameTargets = <int, int>{};
   int _frameTargetEpoch = 0;
   int? _presentationLeadUs;
@@ -144,6 +150,32 @@ class FrameRateTicker extends Ticker {
     _videoFrameTimings = value;
     _clearPhase();
     if (_observing) value?.addListener(_onVideoFrames);
+  }
+
+  /// 输出或视图失效时一并撤销帧匹配和旧槽位；新样本不改变已有截止。
+  void invalidatePhase() {
+    _clearPhase();
+    _frameTargetEpoch++;
+    _frameTargets.clear();
+    _presentationLeadUs = null;
+    _previousUpdateFrameUs = null;
+    _nextFrameTime = null;
+    _resetSlots();
+    _timer?.cancel();
+    _timer = null;
+    if (isActive && !muted && scheduled) {
+      unscheduleTick();
+      scheduleTick();
+    }
+  }
+
+  void configureVideoPhase(
+      {required bool continuousVideoVsync, required bool preserveVideoPhase}) {
+    if (_continuousVideoVsync == continuousVideoVsync &&
+        _preserveVideoPhase == preserveVideoPhase) return;
+    _continuousVideoVsync = continuousVideoVsync;
+    _preserveVideoPhase = preserveVideoPhase;
+    invalidatePhase();
   }
 
   void _clearPhase() {
@@ -263,6 +295,7 @@ class FrameRateTicker extends Ticker {
   }
 
   void _onTimings(List<FrameTiming> frames) {
+    _beforeTimings?.call();
     if (_preserveVideoPhase) {
       for (final frame in frames) {
         final target = _frameTargets.remove(frame.frameNumber);
@@ -528,6 +561,8 @@ class FrameRateTicker extends Ticker {
   }
 
   void _tickFrame(Duration timestamp) {
+    _callbackId = null;
+    _beforeFrame?.call();
     _frameCallbacks++;
     _frameStartedAt = clockMicroseconds;
     _lastFrame = timestamp;
@@ -546,7 +581,6 @@ class FrameRateTicker extends Ticker {
       });
     }
     _trackSlots();
-    _callbackId = null;
     final next = _nextFrameTime;
     final due = _slotPeriod != null
         ? _scheduledUpdateSlot == null || _slot >= _scheduledUpdateSlot!

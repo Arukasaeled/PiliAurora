@@ -19,7 +19,6 @@ import 'package:pili_aurora/pages/danmaku/window_screen.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:pili_aurora/utils/danmaku_utils.dart';
-import 'package:pili_aurora/utils/platform_utils.dart';
 import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_key.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
@@ -224,10 +223,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
               ? player.danmakuOpacity.value
               : 0,
           frameRate: frameRate,
-          videoDisplaySyncActive: player.videoDisplaySyncActive,
-          videoFrameTimings: PlatformUtils.isMobile
-              ? player.videoFrameTimings
-              : null,
+          frameSource: player.frameSource,
         ),
       ),
     );

@@ -101,6 +101,8 @@ void main() {
       expect(frozen.observedAtUs, now);
       expect(frozen.positionAt(9000000), frozen.positionUs);
       expect(renderer.presentationTimeUs, stoppedAt);
+      await tester.pump();
+      expect(renderer.presentationTimeUs, stoppedAt);
       expect(tester.hasRunningAnimations, isFalse);
       // 状态切换前的 worker 结果迟到时，暂停不能被旧采样撤销。
       emitAnchor(anchor);

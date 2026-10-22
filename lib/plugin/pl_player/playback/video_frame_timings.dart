@@ -13,7 +13,6 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
   @override
   ValueListenable<PlaybackFrameState> get frameState => _state;
   final presented = ValueNotifier(false);
-  final frames = ValueNotifier<List<int>>(const []);
   final _gate = VideoFrameEventGate();
   bool _enabled = false;
   int _batches = 0, _samples = 0, _consumedBatches = 0, _consumedSamples = 0;
@@ -24,7 +23,6 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
     _enabled = false;
     _lastConsumed = null;
     _lastScheduled = null;
-    frames.value = const [];
     presented.value = false;
     _state.value = PlaybackFrameState(
       output: output,
@@ -39,7 +37,6 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
     _gate.bind(null);
     _enabled = false;
     _lastScheduled = null;
-    frames.value = const [];
     _state.value = PlaybackFrameState(
       epoch: _state.value.epoch + 1,
       samplesValidAfterUs: nowUs,
@@ -56,7 +53,6 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
   void invalidate(int nowUs) {
     final old = _state.value;
     _lastScheduled = null;
-    frames.value = const [];
     _state.value = PlaybackFrameState(
       output: old.output,
       samplingGeneration: old.samplingGeneration,
@@ -84,7 +80,6 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
     final old = _state.value;
     if (event is VideoFrameSamplingState) {
       _lastScheduled = null;
-      frames.value = const [];
       _state.value = PlaybackFrameState(
         output: event.output,
         samplingGeneration: event.samplingGeneration,
@@ -122,7 +117,6 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
     _batches++;
     _samples += values.length;
     _lastScheduled = values.last;
-    frames.value = List.unmodifiable(values);
     _publish(
       old,
       samples: VideoFrameBatch(
@@ -178,7 +172,6 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
 
   void dispose() {
     _state.dispose();
-    frames.dispose();
     presented.dispose();
   }
 }
