@@ -141,6 +141,58 @@ void main() {
     expect(timings.frameState.value.videoSamples!.sequence, 1);
   });
 
+  test('采样开关等待当前回执，旧状态、批次和旧回执不能打开新窗口', () {
+    final timings = create()..accept(batch(1, 10, [1000]));
+    final close = timings.beginSamplingChange(false, 2000);
+    final open = timings.beginSamplingChange(true, 3000);
+    timings
+      ..accept(state(2, VideoFrameSamplingAdmission.active, 4000))
+      ..accept(batch(2, 11, [5000]))
+      ..completeSamplingChange(
+        close,
+        state(3, VideoFrameSamplingAdmission.blocked, 4500),
+      );
+    expect(timings.frameState.value.videoSamples, isNull);
+    expect(
+      timings.frameState.value.admission,
+      VideoFrameSamplingAdmission.blocked,
+    );
+    timings
+      ..completeSamplingChange(
+        open,
+        state(4, VideoFrameSamplingAdmission.priming, 6000),
+      )
+      ..accept(state(5, VideoFrameSamplingAdmission.active, 7000))
+      ..accept(batch(5, 12, [8000]));
+    expect(timings.frameState.value.videoSamples!.sequence, 12);
+    timings
+      ..completeSamplingChange(
+        close,
+        state(100, VideoFrameSamplingAdmission.blocked),
+      )
+      ..accept(batch(2, 13, [9000]));
+    expect(timings.frameState.value.videoSamples!.sequence, 12);
+  });
+
+  test('当前活动状态早于开关回执交付时，在回执确认后恢复', () {
+    final timings = create();
+    final revision = timings.beginSamplingChange(true, 3000);
+    timings
+      ..accept(state(5, VideoFrameSamplingAdmission.active, 7000))
+      ..accept(batch(5, 10, [8000]));
+    expect(timings.frameState.value.videoSamples, isNull);
+    timings.completeSamplingChange(
+      revision,
+      state(4, VideoFrameSamplingAdmission.priming, 6000),
+    );
+    expect(
+      timings.frameState.value.admission,
+      VideoFrameSamplingAdmission.active,
+    );
+    timings.accept(batch(5, 11, [9000]));
+    expect(timings.frameState.value.videoSamples!.sequence, 11);
+  });
+
   test('Windows 相位观察值采用消费阶段，关闭期间保留消费证据', () {
     final timings = create(android: false)..accept(batch(1, 1, [1000]));
     expect(timings.frameState.value.videoSamples, isNull);

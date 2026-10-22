@@ -14,11 +14,15 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
   ValueListenable<PlaybackFrameState> get frameState => _state;
   final presented = ValueNotifier(false);
   final _gate = VideoFrameEventGate();
-  bool _enabled = false;
+  bool _enabled = false, _awaitingReceipt = false;
+  int _changeRevision = 0;
+  VideoFrameSamplingState? _deferredState;
   int _batches = 0, _samples = 0, _consumedBatches = 0, _consumedSamples = 0;
   int? _lastScheduled, _lastConsumed;
 
   void beginLoad(OutputOperationToken output, int nowUs) {
+    _changeRevision++;
+    _awaitingReceipt = false;
     _gate.bind(output);
     _enabled = false;
     _lastConsumed = null;
@@ -34,6 +38,8 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
   }
 
   void withdraw(int nowUs) {
+    _changeRevision++;
+    _awaitingReceipt = false;
     _gate.bind(null);
     _enabled = false;
     _lastScheduled = null;
@@ -42,6 +48,26 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
       samplesValidAfterUs: nowUs,
       frameTimelineSupported: _state.value.frameTimelineSupported,
     );
+  }
+
+  int beginSamplingChange(bool enabled, int nowUs) {
+    setEnabled(enabled, nowUs);
+    _awaitingReceipt = true;
+    _deferredState = null;
+    return ++_changeRevision;
+  }
+
+  void completeSamplingChange(int revision, VideoFrameSamplingState? receipt) {
+    if (revision != _changeRevision ||
+        receipt == null ||
+        receipt.output != _state.value.output) {
+      return;
+    }
+    _awaitingReceipt = false;
+    accept(receipt);
+    final deferred = _deferredState;
+    _deferredState = null;
+    if (deferred != null) accept(deferred);
   }
 
   void setEnabled(bool enabled, int nowUs) {
@@ -76,6 +102,15 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
   }
 
   void accept(VideoFrameEvent event) {
+    if (_awaitingReceipt) {
+      if (event is VideoFrameSamplingState &&
+          event.output == _state.value.output &&
+          event.samplingGeneration >
+              (_deferredState?.samplingGeneration ?? -1)) {
+        _deferredState = event;
+      }
+      return;
+    }
     if (!_gate.accept(event)) return;
     final old = _state.value;
     if (event is VideoFrameSamplingState) {
@@ -171,6 +206,7 @@ class PlaybackVideoFrameTimings implements PlaybackFrameSource {
   };
 
   void dispose() {
+    _changeRevision++;
     _state.dispose();
     presented.dispose();
   }

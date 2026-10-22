@@ -45,7 +45,8 @@ class VideoOutputManager {
       VideoFrameSamplingCallback frame_sampling_callback);
 
   void SetFrameSampling(int64_t handle, OutputOperationToken token,
-                        bool enabled, std::function<void(bool)> on_complete);
+                        bool enabled, std::function<void(std::optional<VideoFrameSamplingEvent>)>
+        on_complete);
 
   void BeginOutputForLoad(int64_t handle, OutputOperationToken token,
                           std::function<void(bool)> on_complete);

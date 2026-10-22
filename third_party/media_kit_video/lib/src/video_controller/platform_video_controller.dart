@@ -50,10 +50,10 @@ abstract class PlatformVideoController {
   Stream<VideoFrameEvent> get frameEvents => _frameEvents.stream;
   bool frameTimelineSupported = false;
 
-  Future<void> setVideoFrameSampling(
+  Future<VideoFrameSamplingState?> setVideoFrameSampling(
     OutputOperationToken token,
     bool enabled,
-  ) async {}
+  ) async => null;
 
   @protected
   void bindFrameOutput(OutputOperationToken? output) =>

@@ -29,6 +29,12 @@ void main() {
       return switch (call.method) {
         'VideoOutputManager.Create' => {'id': 7},
         'VideoOutputManager.CreateSurface' => {'wid': 123},
+        'VideoOutputManager.SetFrameSampling' => {
+          'token': token.toPlatformArguments(),
+          'samplingGeneration': 100,
+          'admission': 'blocked',
+          'validAfterUs': 5000,
+        },
         'VideoOutputManager.BeginOutputOperation' ||
         'VideoOutputManager.InvalidateOutputGeneration' => true,
         _ => null,
@@ -115,6 +121,10 @@ void main() {
       10,
       12,
     ]);
+    final receipt = await controller.setVideoFrameSampling(token, false);
+    expect(receipt!.output, token);
+    expect(receipt.samplingGeneration, 100);
+    expect(receipt.admission, VideoFrameSamplingAdmission.blocked);
     await controller.invalidateOutputGeneration(token);
     await emit({
       'samplingGeneration': 4,

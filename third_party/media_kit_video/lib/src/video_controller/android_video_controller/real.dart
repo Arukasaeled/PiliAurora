@@ -943,15 +943,22 @@ class AndroidVideoController extends PlatformVideoController {
   }
 
   @override
-  Future<void> setVideoFrameSampling(
+  Future<VideoFrameSamplingState?> setVideoFrameSampling(
     OutputOperationToken token,
     bool enabled,
   ) async {
-    await _channel.invokeMethod<void>('VideoOutputManager.SetFrameSampling', {
-      'handle': player.handle.toString(),
-      ...token.toPlatformArguments(),
-      'enabled': enabled,
-    });
+    final args = await _channel.invokeMapMethod<Object?, Object?>(
+      'VideoOutputManager.SetFrameSampling',
+      {
+        'handle': player.handle.toString(),
+        ...token.toPlatformArguments(),
+        'enabled': enabled,
+      },
+    );
+    return args == null
+        ? null
+        : VideoFrameEvent.fromPlatformArguments(args)
+              as VideoFrameSamplingState;
   }
 
   @override

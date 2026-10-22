@@ -93,10 +93,10 @@ public class VideoOutputManager {
         }
     }
 
-    public void setFrameSampling(long handle, OutputOperationToken token, boolean enabled) {
+    public HashMap<String, Object> setFrameSampling(long handle, OutputOperationToken token, boolean enabled) {
         synchronized (lock) {
             final VideoOutput output = videoOutputs.get(handle);
-            if (output != null) output.setFrameSampling(token, enabled);
+            return output == null ? null : output.setFrameSampling(token, enabled);
         }
     }
 

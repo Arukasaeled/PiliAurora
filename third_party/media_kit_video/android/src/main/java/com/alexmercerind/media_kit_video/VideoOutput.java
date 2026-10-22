@@ -98,11 +98,15 @@ public class VideoOutput {
         mainHandler.post(() -> channelReference.invokeMethod("VideoOutput.FrameSampling", data));
     }
 
-    public void setFrameSampling(OutputOperationToken token, boolean enabled) {
+    public HashMap<String, Object> setFrameSampling(OutputOperationToken token, boolean enabled) {
         synchronized (lock) {
-            if (!isCurrentToken(token)) return;
+            if (!isCurrentToken(token)) return null;
             samplingEnabled = enabled;
             transitionSampling(enabled && samplingResourceReady ? "priming" : "blocked");
+            final HashMap<String, Object> receipt = samplingData();
+            receipt.put("admission", samplingAdmission);
+            receipt.put("validAfterUs", samplingValidAfterNs / 1000);
+            return receipt;
         }
     }
 

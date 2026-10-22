@@ -98,7 +98,8 @@ class VideoOutput {
   void ResetRenderer(std::function<void(bool)> on_ready);
 
   void SetFrameSampling(OutputOperationToken token, bool enabled,
-                        std::function<void(bool)> on_complete);
+                        std::function<void(std::optional<VideoFrameSamplingEvent>)>
+        on_complete);
 
   void BeginOutputForLoad(OutputOperationToken token,
                           std::function<void(bool)> on_complete);

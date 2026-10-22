@@ -415,10 +415,11 @@ void VideoOutput::TransitionSampling(const std::string& admission) {
 }
 
 void VideoOutput::SetFrameSampling(OutputOperationToken token, bool enabled,
-                                   std::function<void(bool)> on_complete) {
+                                   std::function<void(std::optional<VideoFrameSamplingEvent>)>
+        on_complete) {
   thread_pool_ref_->Post([this, token, enabled, on_complete]() {
     if (!IsCurrentToken(token)) {
-      on_complete(false);
+      on_complete(std::nullopt);
       return;
     }
     sampling_enabled_ = enabled;
@@ -426,7 +427,8 @@ void VideoOutput::SetFrameSampling(OutputOperationToken token, bool enabled,
                                !renderer_reset_pending_
                            ? "priming"
                            : "blocked");
-    on_complete(true);
+    on_complete(VideoFrameSamplingEvent{token, sampling_generation_,
+                                       sampling_admission_, sampling_valid_after_us_, 0});
   });
 }
 
@@ -443,6 +445,7 @@ void VideoOutput::BeginOutputForLoad(OutputOperationToken token,
         if (render_context_ != nullptr) {
           mpv_render_context_update(render_context_);
         }
+        sampling_enabled_ = false;
         sampling_sequence_ = 0;
         high_water_token_ = token;
         active_token_ = token;
@@ -462,6 +465,7 @@ void VideoOutput::BeginOutputForLoad(OutputOperationToken token,
       if (render_context_ != nullptr) {
         mpv_render_context_update(render_context_);
       }
+      sampling_enabled_ = false;
       sampling_sequence_ = 0;
       high_water_token_ = token;
       active_token_ = token;

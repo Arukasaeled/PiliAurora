@@ -122,9 +122,8 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                 }
                 case "VideoOutputManager.SetFrameSampling": {
                     final String handle = call.argument("handle");
-                    videoOutputManager.setFrameSampling(Long.parseLong(handle), outputToken(call),
-                            Boolean.TRUE.equals(call.argument("enabled")));
-                    result.success(null);
+                    result.success(videoOutputManager.setFrameSampling(Long.parseLong(handle), outputToken(call),
+                            Boolean.TRUE.equals(call.argument("enabled"))));
                     break;
                 }
                 case "VideoOutputManager.ConfirmSurfaceConfigured": {

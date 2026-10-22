@@ -37,11 +37,12 @@ void VideoOutputManager::Create(
 
 void VideoOutputManager::SetFrameSampling(
     int64_t handle, OutputOperationToken token, bool enabled,
-    std::function<void(bool)> on_complete) {
+    std::function<void(std::optional<VideoFrameSamplingEvent>)>
+        on_complete) {
   control_thread_pool_->Post([this, handle, token, enabled, on_complete]() {
     const auto output = video_outputs_.find(handle);
     if (output == video_outputs_.end()) {
-      on_complete(false);
+      on_complete(std::nullopt);
       return;
     }
     output->second->SetFrameSampling(token, enabled, on_complete);

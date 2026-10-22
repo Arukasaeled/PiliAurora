@@ -187,6 +187,7 @@ class NativePlaybackRuntime
     }
     _mediaClockSeekSequence = context.seekSequence;
     _mediaClockSeekPending = true;
+    _samplingSeekConfirmed = false;
     _syncVideoFrameSampling();
     _seekSubmissionBlocked = true;
     _seekObservationTimeout = Timer(const Duration(seconds: 5), () {
@@ -480,6 +481,7 @@ class NativePlaybackRuntime
         configRevision: _configRevision,
       );
       _samplingEnabled = false;
+      _samplingSeekConfirmed = true;
       _frameTimings.beginLoad(token, Timeline.now);
       await output.beginOutputForLoad(token);
       if (!context.isCurrent()) {
@@ -984,6 +986,8 @@ class NativePlaybackRuntime
           : Future.value(null),
       (anchor) {
         if (!isCurrent()) return;
+        _samplingSeekConfirmed = true;
+        _syncVideoFrameSampling();
         _emit(
           PlaybackRuntimeMediaAnchor(
             runtimeId: runtimeId,
@@ -1020,6 +1024,7 @@ class NativePlaybackRuntime
   }
 
   bool _samplingEnabled = false;
+  bool _samplingSeekConfirmed = true;
 
   void _setDisplaySyncActive(bool active) {
     videoDisplaySyncActive.value = active;
@@ -1035,24 +1040,33 @@ class NativePlaybackRuntime
         !_buffering &&
         !_seeking &&
         !_mediaClockSeekPending &&
+        _samplingSeekConfirmed &&
         _player?.state.completed == false &&
         token != null &&
         _activeBinding?.retiring == false &&
         token == _frameTimings.frameState.value.output;
     if (_samplingEnabled == enabled) return;
     _samplingEnabled = enabled;
-    _frameTimings.setEnabled(enabled, Timeline.now);
+    final revision = _frameTimings.beginSamplingChange(enabled, Timeline.now);
     if (output != null && token != null) {
       unawaited(
-        output.setVideoFrameSampling(token, enabled).catchError((Object error) {
-          if (_frameTimings.frameState.value.output == token) {
-            _frameTimings.invalidate(Timeline.now);
-          }
-          _diagnostics?.event(
-            'video.sampling.failed',
-            details: {'error': '$error'},
-          );
-        }),
+        output
+            .setVideoFrameSampling(token, enabled)
+            .then((receipt) {
+              if (!_shutdownRequested) {
+                _frameTimings.completeSamplingChange(revision, receipt);
+              }
+            })
+            .catchError((Object error) {
+              if (!_shutdownRequested &&
+                  _frameTimings.frameState.value.output == token) {
+                _frameTimings.invalidate(Timeline.now);
+              }
+              _diagnostics?.event(
+                'video.sampling.failed',
+                details: {'error': '$error'},
+              );
+            }),
       );
     }
   }

@@ -49,6 +49,15 @@ flutter::EncodableMap EncodeOutputOperationToken(
   };
 }
 
+flutter::EncodableMap EncodeSamplingState(const VideoFrameSamplingEvent& state) {
+  return flutter::EncodableMap{
+    {flutter::EncodableValue("token"), flutter::EncodableValue(EncodeOutputOperationToken(state.token))},
+    {flutter::EncodableValue("samplingGeneration"), flutter::EncodableValue(state.generation)},
+    {flutter::EncodableValue("admission"), flutter::EncodableValue(state.admission)},
+    {flutter::EncodableValue("validAfterUs"), flutter::EncodableValue(state.timestamp_us)},
+  };
+}
+
 }  // namespace
 
 void MediaKitVideoPlugin::RegisterWithRegistrar(
@@ -267,10 +276,10 @@ void MediaKitVideoPlugin::HandleMethodCall(
             std::move(result));
     video_output_manager_->SetFrameSampling(
         handle, token, enabled,
-        [post = platform_dispatcher_->post(), completion](bool accepted) {
-          post([completion, accepted]() {
-            if (accepted)
-              completion->Success();
+        [post = platform_dispatcher_->post(), completion](std::optional<VideoFrameSamplingEvent> state) {
+          post([completion, state]() {
+            if (state.has_value())
+              completion->Success(flutter::EncodableValue(EncodeSamplingState(*state)));
             else
               completion->Error("sampling-rejected",
                                 "Output generation is unavailable");
