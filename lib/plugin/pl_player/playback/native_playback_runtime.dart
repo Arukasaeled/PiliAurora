@@ -8,10 +8,13 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:pili_aurora/http/browser_ua.dart';
 import 'package:pili_aurora/http/constants.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock_sampling.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock_worker.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_load_readiness.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_runtime_slot.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/shader_updates.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/video_frame_timings.dart';
+import 'package:pili_aurora/plugin/pl_player/utils/android_raster_scheduling.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/hardware_video_configuration.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_audio_recovery.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/native_media_source.dart';
@@ -24,7 +27,11 @@ import 'package:pili_aurora/services/windows_video_output_limit.dart';
 ///
 /// Session 将所有业务命令送入此对象；这里串行化真正触碰 Player 的操作，
 /// 并以原生 entry ID、hook 和输出令牌建立每份媒体的生命周期边界。
-class NativePlaybackRuntime implements PlaybackRuntimePort {
+class NativePlaybackRuntime
+    implements
+        PlaybackRuntimePort,
+        PlaybackSeekSubmissionGate,
+        PlaybackMediaClockSampler {
   NativePlaybackRuntime({
     required this.configuration,
     required this.diagnosticsExtra,
@@ -66,6 +73,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
 
   Player? _player;
   VideoController? _videoController;
+  AndroidRasterScheduling? _rasterScheduling;
   final _videoControllerListenable = ValueNotifier<VideoController?>(null);
   PlayerDiagnostics? _diagnostics;
   NativeHookRegistration? _hookRegistration;
@@ -94,6 +102,27 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   bool _nativeLifecycleUnknown = false;
   bool _nativeOpenNeedsRetirement = false;
   bool _seeking = false;
+  int _mediaClockSeekSequence = 0;
+  int _mediaClockContinuity = 0;
+  bool _mediaClockSeekPending = false;
+  final _mediaClockSampling = NativeMediaClockSampling();
+  bool _seekSubmissionBlocked = false;
+  final _seekSubmissionChanges = StreamController<void>.broadcast(sync: true);
+  Timer? _seekObservationTimeout;
+
+  @override
+  bool get seekSubmissionBlocked => _seekSubmissionBlocked;
+  @override
+  Stream<void> get seekSubmissionChanges => _seekSubmissionChanges.stream;
+
+  void _releaseSeekObservation() {
+    _seekObservationTimeout?.cancel();
+    _seekObservationTimeout = null;
+    if (!_seekSubmissionBlocked) return;
+    _seekSubmissionBlocked = false;
+    _seekSubmissionChanges.add(null);
+  }
+
   bool _buffering = false;
   bool _playing = false;
   bool? _hasVideo;
@@ -151,7 +180,30 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     if (player == null) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
-    await player.seek(target);
+    if (_mediaClockSeekPending) {
+      return const PlaybackRuntimeCommandResult(applied: false);
+    }
+    _mediaClockSeekSequence = context.seekSequence;
+    _mediaClockSeekPending = true;
+    _seekSubmissionBlocked = true;
+    _seekObservationTimeout = Timer(const Duration(seconds: 5), () {
+      _seekObservationTimeout = null;
+      _diagnostics?.event(
+        'media.seek.observation.timeout',
+        details: {
+          'loadId': context.loadId,
+          'seekSequence': context.seekSequence,
+        },
+      );
+    });
+    try {
+      await player.seek(target, observationId: context.seekSequence);
+    } catch (_) {
+      _mediaClockSeekPending = false;
+      _releaseSeekObservation();
+      sampleMediaClock();
+      rethrow;
+    }
     if (!context.isCurrent()) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
@@ -169,6 +221,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
     await player.setRate(value);
+    sampleMediaClock();
     if (!context.isCurrent()) {
       return const PlaybackRuntimeCommandResult(applied: false);
     }
@@ -348,6 +401,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
   @override
   Future<PlaybackShutdownResult> shutdown() {
     _shutdownRequested = true;
+    _releaseSeekObservation();
     return _shutdownFuture ??= _serialize(_shutdown);
   }
 
@@ -525,6 +579,10 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       }
       if (result.loaded &&
           result.output.strategy != PlaybackOutputStrategy.unknown) {
+        _mediaClockSeekSequence = context.seekSequence;
+        _mediaClockContinuity++;
+        _mediaClockSeekPending = false;
+        _releaseSeekObservation();
         _activePlan = plan;
         final binding = pending.binding;
         if (binding != null) _activeBinding = binding;
@@ -790,6 +848,20 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         configuration: videoConfiguration,
       );
       _videoController = video;
+      if (Platform.isAndroid) {
+        try {
+          _rasterScheduling = await AndroidRasterScheduling.open();
+          _rasterScheduling?.useAppCpus(true);
+          if (_rasterScheduling case final scheduling?) {
+            _diagnostics?.event(
+              'raster.scheduling.applied',
+              details: scheduling.diagnostics,
+            );
+          }
+        } catch (_) {
+          _diagnostics?.event('raster.scheduling.unavailable');
+        }
+      }
       if (!context.isCurrent() ||
           context.deadline <= context.monotonicNow() ||
           _shutdownRequested) {
@@ -864,14 +936,71 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     }
   }
 
+  @override
+  void sampleMediaClock() {
+    _mediaClockSampling.invalidate();
+    final player = _player;
+    final binding = _activeBinding;
+    if (player == null ||
+        binding == null ||
+        binding.entryId == null ||
+        binding.retiring ||
+        _shutdownRequested ||
+        _nativeLifecycleUnknown ||
+        _pendingLoad != null ||
+        _mediaClockSeekPending) {
+      return;
+    }
+    final continuity = _mediaClockContinuity;
+    final seekSequence = _mediaClockSeekSequence;
+    final handleAddress = player.handle;
+    final libraryPath = player.nativeLibraryPath;
+    bool isCurrent() =>
+        !_shutdownRequested &&
+        identical(_player, player) &&
+        identical(_activeBinding, binding) &&
+        !binding.retiring &&
+        !_nativeLifecycleUnknown &&
+        _pendingLoad == null &&
+        !_mediaClockSeekPending &&
+        _mediaClockContinuity == continuity &&
+        _mediaClockSeekSequence == seekSequence;
+
+    _mediaClockSampling.request(
+      () => isCurrent()
+          ? sampleNativeMediaClockOnWorker(
+              handleAddress: handleAddress,
+              libraryPath: libraryPath,
+              playlistEntryId: binding.entryId!,
+              continuity: continuity,
+            )
+          : Future.value(null),
+      (anchor) {
+        if (!isCurrent()) return;
+        _emit(
+          PlaybackRuntimeMediaAnchor(
+            runtimeId: runtimeId,
+            loadId: binding.loadId,
+            seekSequence: seekSequence,
+            anchor: anchor,
+          ),
+        );
+      },
+    );
+  }
+
   void _subscribePlayerState(Player player) {
     _subscriptions.addAll([
+      player.stream.position.listen((_) => sampleMediaClock()),
+      player.stream.completed.listen((_) => sampleMediaClock()),
       player.stream.playing.listen((value) {
         _playing = value;
+        sampleMediaClock();
         _emitActual(_activeBinding?.loadId);
       }),
       player.stream.buffering.listen((value) {
         _buffering = value;
+        sampleMediaClock();
         _emitActual(_activeBinding?.loadId);
       }),
       player.stream.duration.listen((_) => _emitActual(_activeBinding?.loadId)),
@@ -1020,6 +1149,19 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
 
   void _handleNativeEvent(NativePlayerEvent event) {
     switch (event) {
+      case NativeSeekCompleted(:final playlistEntryId, :final observationId):
+        final binding = _activeBinding;
+        if (!_mediaClockSeekPending ||
+            binding == null ||
+            binding.retiring ||
+            binding.entryId != playlistEntryId ||
+            observationId != _mediaClockSeekSequence) {
+          return;
+        }
+        _mediaClockSeekPending = false;
+        _mediaClockContinuity++;
+        _releaseSeekObservation();
+        sampleMediaClock();
       case NativeStartFile(:final playlistEntryId):
         final pending = _pendingLoad;
         if (pending == null || playlistEntryId == null) {
@@ -1849,8 +1991,11 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       await _hookRegistration?.dispose();
       _hookRegistration = null;
       recordStage('subscriptions-released');
+      await _mediaClockSampling.close();
       await _videoController?.releaseOutput();
       recordStage('output-released');
+      // Player 释放会归还运行时槽；下一 owner 取得槽前先恢复本次亲和性。
+      _restoreRasterScheduling();
       try {
         await player.dispose();
         recordStage('player-disposed');
@@ -1875,6 +2020,22 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       return PlaybackShutdownResult.cleanupIncomplete(
         _failure(PlaybackFailureCategory.disposal, 'shutdown', error),
       );
+    } finally {
+      _restoreRasterScheduling();
+    }
+  }
+
+  void _restoreRasterScheduling() {
+    final scheduling = _rasterScheduling;
+    _rasterScheduling = null;
+    try {
+      scheduling?.restore();
+    } catch (_) {
+      Diagnostics.instance.playerLog(
+        DiagnosticLogLevel.warning,
+        'player',
+        'raster.scheduling.restore.failed',
+      );
     }
   }
 
@@ -1886,8 +2047,11 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
         await subscription.cancel();
       }
       _subscriptions.clear();
+      _mediaClockSampling.invalidate();
+      await _mediaClockSampling.idle;
       await _hookRegistration?.dispose();
       await _videoController?.releaseOutput();
+      _restoreRasterScheduling();
       if (!player.disposed) await player.dispose();
       await player.released;
       _player = null;
@@ -1895,6 +2059,8 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
       if (!_released.isCompleted && _shutdownRequested) _released.complete();
     } catch (_) {
       // An unconfirmed native release keeps the process-wide slot occupied.
+    } finally {
+      _restoreRasterScheduling();
     }
   }
 
@@ -1907,6 +2073,7 @@ class NativePlaybackRuntime implements PlaybackRuntimePort {
     if (!_events.isClosed) unawaited(_events.close());
     _frameTimings.clearPhase();
     videoDisplaySyncActive.value = false;
+    unawaited(_seekSubmissionChanges.close());
     _frameTimings.dispose();
     videoDisplaySyncActive.dispose();
     _videoControllerListenable.dispose();

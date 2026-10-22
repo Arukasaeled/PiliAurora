@@ -23,11 +23,23 @@
 
 `plugin/pl_player/playback/video_frame_timings_test.dart` 覆盖刷新请求与消费批次交错、独立的消费证据和新加载首帧状态；`plugin/pl_player/android/preloaded_surface_test.dart` 使用实际 Android 输出控制器与模拟平台通道，检查临时 Surface 的解码前挂载、FILE_LOADED 几何确认及同尺寸输出复用。
 
+`plugin/pl_player/playback/native_media_clock_sampling_test.dart` 覆盖异步媒体时钟采样的通知合并、在途结果失效、冻结锚点时刻、读取失败恢复，以及释放前等待原生读取完成；属性一致性由 `native_media_clock_test.dart` 覆盖。
+
+`plugin/pl_player/playback/playback_session_test.dart` 将真实会话连接到点播显示组件，检查暂停／缓冲通知立即冻结媒体位置并停止运动帧，迟到采样保持冻结，恢复取得新样本后连续推进。
+
+`plugin/pl_player/android/raster_scheduling_test.dart` 检查 Raster CPU 亲和性的重复取得、恢复及其它策略／线程接管；实际调度和呈现间隔使用 `tool/probes/android/playback_jank.dart` 的亲和性对照模式验证。
+
 `plugin/pl_player/playback/native_load_readiness_test.dart` 覆盖输出就绪前 EOF、等待几何时断流、迟到输出与直播几何等待预算。`preloaded_surface_test.dart` 还覆盖 preloaded 时 selected=false、FILE_LOADED 选轨确认和 VO/wid 解绑到原生释放回执的顺序；`tool/run-native-probes.ps1` 的释放探针运行生产 Java 释放方法，检查无固定延迟、幂等回执及 JNI 删除失败。
 
-CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dart` 供相位测试和帧率矩阵共用请求时间换算；Android 模型把目标帧时钟领先和视频驱动 Dart 帧绑定在一起，隔离模型用于检查 ticker 自行唤醒。`frame_rate_diagnostics_test.dart` 检查实际更新、请求和定时器累计计数、单调时间及停止后的释放；相位测试同时检查稳定锁相状态。
+CI 显式选择弹幕生产链路与帧计划的核心回归，完整弹幕测试按需运行 `fvm flutter test --no-pub test/pages/danmaku/`。`frame_sync_fixture.dart` 供相位测试和帧率矩阵共用请求时间换算，两种模型都采用引擎的目标帧时钟；Android 模型由视频额外驱动 Dart 帧，隔离模型用于检查 ticker 自行唤醒。`frame_rate_diagnostics_test.dart` 检查实际更新、请求和定时器累计计数、单调时间及停止后的释放；相位测试同时检查稳定锁相状态。
 
-同一组件的场景集中在对应文件，诊断记录存储及突发写入位于 `services/diagnostics/record_store_test.dart`。页面测试与服务测试分开组织；`pages/danmaku/windows_screen_test.dart` 覆盖 screen 的时钟、预热和 widget 重建行为。
+`pages/danmaku/frame_plan_identity_test.dart` 模拟 BeginFrame 返回后递增 FrameData 的顺序，集中检查帧末编号与呈现目标的关联、无关和重复 timing 的隔离，以及停止后待匹配计划的清理。
+
+同一组件的场景集中在对应文件，诊断记录存储及突发写入位于 `services/diagnostics/record_store_test.dart`。页面测试与服务测试分开组织；`pages/danmaku/window_screen_test.dart` 覆盖生产点播的媒体锚点、暂停准备及期限唤醒，`live_layer_test.dart` 覆盖共用窗口上的直播运动、暂停、到期和隐藏释放。`window_renderer_test.dart` 对照实验基线检查 DPR、普通与高级弹幕透明度和重叠像素，并覆盖表情共享图片及资源预算；`window_interaction_test.dart` 检查局部来源失效后的选择、句柄和活动资源保留。旧 Windows 实现及其专属回归位于 `tool/experiments/danmaku/baseline/`。
+
+`pages/danmaku/file_store_test.dart` 检查有序产物复用、原文件更换、取消和释放清理；`controller_test.dart` 检查暂停失败后的显式重试、最新范围收敛和规则重算；`cache_test.dart` 检查字节淘汰与覆盖状态。`window_coordinator_test.dart` 和 `echo_source_test.dart` 检查局部失效、旧就绪事件隔离及来源等待期间的本地回显；进程预留与取消后占用归还由 `services/danmaku/work_quota_test.dart` 覆盖。
+
+`controller_test.dart` 另以 1.75 万条合法弹幕经过生产 gRPC 解码、共享租约、过滤合并和缓存提交，检查高密度分段可以完整加载；`grpc/decode_policy_test.dart` 核对已知字段与未知字段的存储估算，同时保留单条超限、字段数超限及有界 gzip 解压回归。
 
 消息测试按业务状态、分享和协议分为 `messaging_test.dart`、`sharing_test.dart`、`protocol_test.dart`。运行入口与实际服务验证范围见[消息模块](../lib/services/messaging/README.md#验证)。
 
@@ -37,13 +49,23 @@ CI 按整个 `pages/danmaku/` 目录运行弹幕回归。`frame_sync_fixture.dar
 
 `pages/danmaku/frame_deadline_replay_test.dart` 使用诊断中提取的1.2秒数值时序，包含实际回调目标时间、交付时间和原生请求批次，回归亚毫秒偏差引发的连续更新延期。扩大矩阵见 `tool/experiments/danmaku/frame_cadence_device_matrix_test.dart`：用同一时序还原槽位抖动，覆盖Android目标时钟领先、119.88/120.0000076/120.12Hz读数、跟随屏幕及30/60/90/120FPS、29.97/59.94FPS视频、250ms批次与1秒积压压力；同时检查频率、最长更新间隔、屏幕上限合帧与停止后的释放。
 
-`pages/danmaku/frame_late_delivery_test.dart` 模拟定时唤醒或回调交付迟到10/20/31.6ms，检查只丢失不可避免的更新槽位，恢复后不再额外多丢一帧；该场景不混入上述矩阵的严格槽距上限。
+`pages/danmaku/frame_late_delivery_test.dart` 分开模拟引擎请求截止与 Dart 回调交付，覆盖 1/8/8.333/8.5/10ms 的周期性交付延迟，检查 120Hz 屏幕上的 60FPS 仍保持两槽间距；另模拟 Timer 迟到 10/20/31.6ms，检查错过的更新合并及随后恢复。后者按实际迟到预算检查间隔。
 
 `pages/danmaku/frame_rate_ticker_test.dart` 检查所属视图刷新率、屏幕降频、刷新率不可用、暂停与静音时的帧请求释放，以及 30/60/90/120 FPS 档位。测试使用模拟时钟，不测量设备屏幕或 GPU 合成。
 
-`plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。`super_resolution_selection_test.dart` 检查不可用的显式选择保留档位和设置。`super_resolution_menu_tile_test.dart` 覆盖侧边超分入口的禁用状态、原因展示、点击提示和可用档位选择。
+`window_screen_test.dart` 在真实点播显示组件上检查 120/165Hz 下 30/60/90FPS 的实际呈现次数和最长、最短更新间隔，混入密集/稀疏锚点、突发来源通知及父组件重建。`live_layer_test.dart` 检查新消息和重建期间的实际滚动位移、限帧间隔、累计运动时间及暂停恢复。两者另交替注入 1/6ms 回调交付延迟，检查跟随屏幕时的逐帧时间和位移均匀；测试独立控制帧目标时间与单调时间。
 
-`pages/video/playback_lifecycle_test.dart` 覆盖点播查询与媒体标识绑定、旧响应取消、暂停期间重载意图保留和字幕迟到结果隔离。`pages/live_room/controller_test.dart` 覆盖消息连接 single-flight、token/history 代次隔离、暂停/恢复以及关闭后的迟到回调；`services/audio_session_test.dart` 覆盖音频 duck 重复开始、结束先于音量命令完成及用户新音量保护；`services/audio_handler_lifecycle_test.dart` 覆盖多页面媒体归属与最后一项释放 keepalive。播放器会话、候选恢复和命令序列回归集中在 `plugin/pl_player/playback/`；其中 `playback_session_test.dart` 检查成功查询在加载完成后仍允许当前媒体的业务回写，并在新加载或 owner 失效后拒绝旧结果。`tool/run-ci-tests.ps1` 将这些页面测试与整个 playback 目录纳入本地 CI 入口。
+一般弹幕场景以滚动、顶部固定、底部固定弹幕混合为基准，覆盖固定弹幕进入、驻留和到期时的滚动连续性。`window_screen_test.dart` 按 24/30/60FPS 推进视频位置，并交替注入锚点通知延迟，在混合场景中检查连续帧的媒体时间和滚动几何位移，以及两轮固定弹幕到期。
+
+同一文件回放倍速升降和重复长按加速／恢复的媒体锚点，保留旧速率下的位置采样差，检查切速前后的逐帧位移与窗口代次。还覆盖停止通知先于新速率到达、短暂冻结／恢复、帧目标早于或晚于回调、显示空档，以及交接中的真实 seek；校准结束后仍须精确贴合原生时间。
+
+设备上的连续性分析关联同一弹幕更新帧的实际呈现时间，保留逐帧相对波动，补充跨 1/2/3 帧的差分和 ±1/±2/±3（3/5/7 帧）完整窗口汇总，检查间隔误差、速度误差 RMS、呈现延迟极差及窗口总位移速度。组件回归中的帧目标时间用于验证运动与调度；设备探针补充 Raster 和 SurfaceFlinger 的同帧对应。
+
+`video_presentation_cadence_test.dart` 检查 Android 点播采用的持续视频 vsync 策略：24/30/60 FPS 视频驱动下连续请求屏幕帧，弹幕仍以 60 FPS 的固定槽距推进；视频采样清空、过期、静音及停止后释放连续请求。原有按需调度和相位模型继续覆盖未启用此策略的调用路径。
+
+`plugin/pl_player/playback/super_resolution_policy_test.dart` 检查源视频与当前屏幕物理分辨率的长短边比较，以及尺寸未知时延后加载超分的判定。`super_resolution_selection_test.dart` 检查不可用的显式选择保留档位和设置。超分入口由播放器底栏和视频更多设置面板提供。
+
+`pages/video/playback_lifecycle_test.dart` 覆盖点播查询与媒体标识绑定、旧响应取消、暂停期间重载意图保留和字幕迟到结果隔离。`pages/live_room/controller_test.dart` 覆盖消息连接 single-flight、token/history 代次隔离、暂停/恢复以及关闭后的迟到回调；`services/audio_session_test.dart` 覆盖音频 duck 重复开始、结束先于音量命令完成及用户新音量保护；`services/audio_handler_lifecycle_test.dart` 覆盖多页面媒体归属与最后一项释放 keepalive。播放器会话、候选恢复和命令序列回归集中在 `plugin/pl_player/playback/`；其中 `playback_session_test.dart` 检查成功查询在加载完成后仍允许当前媒体的业务回写，并在新加载或 owner 失效后拒绝旧结果。`tool/run-ci-tests.ps1` 显式选择页面生命周期、播放会话与原生输出的关键回归，完整目录测试按需运行。deadline 验收通过虚拟时钟检查截止边界，不依赖机器执行耗时。
 
 ```powershell
 fvm flutter test test/plugin/pl_player/android/

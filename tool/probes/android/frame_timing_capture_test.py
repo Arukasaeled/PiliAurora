@@ -38,6 +38,26 @@ class FrameTimingCaptureTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             choose_layer("other.private.layer", "io.example.app", "other.private.layer")
 
+    def test_requested_layer_state_selects_blast_buffer_layer(self):
+        buffer = "abc SurfaceView[io.example.app/Main](BLAST)#42"
+        listing = (
+            "RequestedLayerState{Background for abc SurfaceView[io.example.app/Main]#43 parentId=41 z=-1}\n"
+            f"RequestedLayerState{{{buffer} parentId=41}}\n"
+            "RequestedLayerState{abc SurfaceView[io.example.app/Main]#41 parentId=40 relativeParentId=39 z=-2}"
+        )
+        self.assertEqual(choose_layer(listing, "io.example.app", None), buffer)
+        self.assertEqual(choose_layer(listing, "io.example.app", buffer), buffer)
+        self.assertEqual(
+            choose_layer(listing, "io.example.app", f"RequestedLayerState{{{buffer} parentId=41}}"),
+            buffer,
+        )
+
+    def test_multiple_blast_layers_still_require_selection(self):
+        first = "SurfaceView[io.example.app/First](BLAST)#1"
+        second = "SurfaceView[io.example.app/Second](BLAST)#2"
+        with self.assertRaises(ValueError):
+            choose_layer(first + "\n" + second, "io.example.app", None)
+
     @patch("frame_timing_capture.subprocess.run")
     def test_device_shell_quotes_layer_and_does_not_emit_raw_error(self, run):
         layer = "SurfaceView[io.example.app/Main]#1;$(private)"

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:collection';
+import 'dart:developer' show Timeline;
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -11,6 +13,23 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 export 'package:pili_aurora/services/live_stream/live_packet.dart'
     show PackageHeader, PackageHeaderRes;
+
+/// 保留协议 Map 形状，同时携带传输入口的本机单调收到时间。
+class LiveMessageBody extends MapBase<String, dynamic> {
+  LiveMessageBody(this._body, this.receivedAtUs);
+  final Map<String, dynamic> _body;
+  final int receivedAtUs;
+  @override
+  dynamic operator [](Object? key) => _body[key];
+  @override
+  void operator []=(String key, dynamic value) => _body[key] = value;
+  @override
+  Iterable<String> get keys => _body.keys;
+  @override
+  void clear() => _body.clear();
+  @override
+  dynamic remove(Object? key) => _body.remove(key);
+}
 
 abstract class Message {
   String toJsonStr();
@@ -155,7 +174,8 @@ class LiveMessageStream {
       //   ..d('$logTag ===> TCP连接建立')
       //   ..d('$logTag ===> 发送认证包');
       _socketSubscription = channel.stream
-          .asyncMap(onData)
+          .map((data) => (data, Timeline.now))
+          .asyncMap((event) => onData(event.$1, receivedAtUs: event.$2))
           .listen(
             (_) {},
             onDone: close,
@@ -205,7 +225,8 @@ class LiveMessageStream {
   }
 
   @pragma('vm:notify-debugger-on-exception')
-  Future<void> onData(dynamic data) async {
+  Future<void> onData(dynamic data, {int? receivedAtUs}) async {
+    final received = receivedAtUs ?? Timeline.now;
     if (!_active || data is! List<int>) return;
     try {
       final packets = await _decoder.decode(
@@ -221,7 +242,12 @@ class LiveMessageStream {
           for (final listener in listeners) {
             if (!_active) break;
             try {
-              listener(packet.body);
+              final body = packet.body;
+              listener(
+                body is Map<String, dynamic>
+                    ? LiveMessageBody(body, received)
+                    : body,
+              );
             } catch (_) {
               // 某个业务监听器失败不阻断剩余消息。
             }

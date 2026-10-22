@@ -22,23 +22,45 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 
 视频详情或播放器 → 弹幕 API 与解析 → 弹幕状态和渲染。Windows 高密度场景请记录编码、分辨率、输出尺寸、弹幕密度、硬件解码状态、构建模式和复现时长。
 
-Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，播放器快照的 `danmakuScheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 是提交给引擎的帧请求数，含被合并的请求。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Windows 在 `danmaku.renderer.*` 快照的 `scheduler` 中提供相同字段。计数读取沿用现有诊断周期。
+弹幕加载为空时，先对照 `grpcDecode` 与来源快照中的 `elements/rawSegments/pendingSegments`。响应已收到但出现 `DanmakuWorkTooLarge` 时，分别核对解压、protobuf 预检和合并阶段的预算。已知元素字段槽位包含在元素基数内，未知字段另行计费；解码 worker 退出后保留存活的缓冲区与解析结果，合并沿用同一租约，已预留的输入计费一次。当前进程处理配额为 64 MiB，解压响应上限为 8 MiB，单条编码上限为 64 KiB；相关回归见 `test/grpc/decode_policy_test.dart` 与 `test/pages/danmaku/controller_test.dart`。
+
+Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，`danmaku.layer.*` 快照的 `scheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 是提交给引擎的帧请求数，含被合并的请求。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Android 与 Windows 使用同一图层快照。图层还记录活动图片、缓存、窗口、配置准备和工作集预算；直播包含候选、资源任务和在途预留。计数读取沿用现有诊断周期。
+
+`danmaku.processWorkQuota` 独立记录进程处理任务、预留字节和等待描述，来源页面卸载后继续保留。`obsoleteRunningTasks/obsoleteReservedBytes` 表示预约绑定的取消 token 已失效、任务仍未实际结束的占用。来源快照另有 `rawEstimatedBytes`、`processedEstimatedBytes/processedByteLimit`；显示工作集包含仍持有的表情源图及直播图片任务预留。这些字段按代码中的存储计费规则统计，RSS 与 GPU 使用现有进程和平台采样读取。
 
 播放器快照的 `appLifecycle` 记录采样时的应用生命周期。性能记录的 `route` 跟踪当前页面，弹窗和菜单沿用下方页面；旧版记录会将未命名弹窗写为 `/`，因此该值不能单独证明用户已返回首页。系统后台策略由播放会话持有，覆盖加载、切换页面和后台媒体租约存续期间。
 
 Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`consumedFrameBatches/consumedFrameSamples` 单独统计带当前输出 token 的纹理消费。弹幕相位使用请求时间，消费时间用于首帧与健康证据；两路时间不可混入同一个相位学习器。Windows 沿用输出消费批次作为调度来源。播放器 `runtime.initialize.*` 日志按资源槽等待、Player 创建和输出创建分别记录累计与分段耗时，可用于区分地址请求和本地初始化的等待。
 
+点播图层的 `mediaAnchor` 记录位置、采样单调时刻、倍速、推进状态、连续域和有效期限；`presentationTimeUs` 是实际呈现的媒体时间，`sampledAtUs` 是读取诊断的单调时刻。结合 `visible/opacity/tickerEnabled` 区分隐藏与时钟冻结。播放器额外记录规范 `session` 的 phase、stage、runtime/request/load 身份、播放意图和 inhibitor。性能记录的各部分及各来源使用独立的有界脱敏预算，慢帧详情不会耗尽后续图层的预算。
+
 统计弹幕实际频率时，按 Player、媒体代次和 `targetFrameRate` 分组，对相邻且目标不变、active、非 muted 的采样作累计计数差分；排除暂停、缓冲与目标切换边界。`targetFrameRate=0` 表示跟随屏幕，不能与 60/90 FPS 阶段混算。`locked/independent` 切换本身不足以证明实际更新频率异常。
+
+连续滚动由 ticker 统一推进，位移按引擎帧目标时间计算，回调实际交付时刻用于锚点有效期、消息年龄和暂停边界。点播锚点校准、来源就绪、直播消息和组件重建合并到后续限帧更新，避免通知频率改变实际滚动节奏；直播重建保留两次更新之间的累计运动时间。首次显示、暂停和媒体连续域切换仍按各自状态及时处理。直播图层以 `presentationTimeUs` 记录投影到帧目标的已呈现时间，`motionUs` 记录截至实际采样时刻的累计运动时间，两者可以相差当前帧的预测余量。
+
+Android 点播的滚动弹幕与视频共用 Flutter 输出 Surface。存在新鲜的原生视频请求采样时，持续接收 vsync，弹幕位置与准备工作仍按所选档位更新；持续合成期间沿用自身更新节奏，避免视频锁相重新移动位移槽位。诊断的 `requestEveryVsync` 区分连续帧请求与弹幕更新频率。视频采样清空或超过 1.5 秒后恢复按需请求；固定弹幕驻留、暂停、隐藏和空图层沿用原有启停规则。此策略增加输出提交次数，CPU/GPU 成本随目标设备和负载实测。
+
+[Android 帧计划测试包](../tool/engine/frame_plan/README.md) 使用隔离引擎在 Raster 按内容提交，并启用 ticker 的 `preserveVideoPhase`。帧号在帧末读取，再与同帧 FrameTiming 核对呈现提前量；固定 SDK 在 BeginFrame 返回后才发布 FrameData，回调中读到的编号属于上一帧。
+
+点播连续帧按媒体有效速率外推，锚点校准在帧目标时钟下以最多 5% 的速度差收敛。倍速和暂停／恢复交接保留已呈现相位：冻结时保持屏幕位置，恢复时将帧目标原点平移实际暂停时长，后续连续帧完成校准。交接期间的帧间隔小于锚点有效期时继续校准；普通播放超过 50ms 的显示空档或明显时钟偏移重新贴合媒体锚点。真实 seek、媒体连续域切换和锚点有效期限沿用原有边界。
+
+媒体时钟的整组 libmpv 属性读取在 worker isolate 执行，采样时刻保留读取位置时的单调时间。通知积压时合并为最新一次，返回后核对 Player、文件、seek 和连续域；播放器释放前等待读取退出。排查 UI 回调迟到时，需同时测量同步属性读取的阻塞时间。
+
+播放会话收到暂停、缓冲或 seeking 状态时立即发布冻结锚点，终态也停止外推；推进样本受当前运行状态约束。恢复时保留冻结位置并主动重新采样，使用状态切换后的新锚点继续运动，迟到结果按采样时刻和媒体身份过滤。冻结时间使用与原生媒体锚点一致的 `Timeline.now` 时钟域。
+
+视觉连续性使用同一帧的 UI 更新、Raster 提交和 SurfaceFlinger 实际呈现时间建立对应，同时保留逐帧间隔、呈现延迟和媒体位移／实际间隔。按跨 1/2/3 帧的时间跨度与间隔序列差分检查周期性变化，并汇总以每帧为中心的 ±1/±2/±3 窗口（3/5/7 帧）：记录相对目标间隔误差与相对媒体速率误差的 RMS、呈现延迟极差及窗口总位移速度，汇总样本数、分位数和峰值。窗口内 RMS 保留长短帧相抵时的波动，首尾和缺帧边界采用完整窗口；暂停、切档和媒体代次分段计算。分析工具见[按需实验](../tool/experiments/README.md)。平均 FPS、长间隔计数和帧目标时钟下的位移速度分别保留为调度指标。
 
 弹幕调度快照另提供 `frameCallbacks`（收到的 Dart 帧回调）和 `deadlineSkips`（早于更新截止时间而略过的回调）。结合 `updates/frameRequests` 差分，区分引擎未交付回调与回调到达后未更新。`updateGapBuckets` 记录连续更新的系统帧时间间隔，桶互斥，上限分别为 10/20/30/40/60/100ms，最后一桶大于100ms；按相邻快照差分读取窗口分布。`maxUpdateGapUs` 为累计最大间隔，`longUpdateGaps` 统计超过目标档位正常屏幕槽位量化的间隔，例如120Hz上的60FPS超过约16.67ms、90FPS正常的1/2槽交替不计为长间隔。暂停、静音和切档中断连续统计；所有计数继续累计。这些是弹幕更新时序，最终呈现还需对照 SurfaceFlinger 或 Perfetto。
 
-帧调度矩阵覆盖约 5.7ms 以内的回调/批次迟到；20–31ms 的 Timer 迟到会按迟到量丢失更新槽，由 `test/pages/danmaku/frame_late_delivery_test.dart` 单独回归，不能用矩阵的 16.7ms 上限判断该场景。
+帧调度矩阵覆盖约 5.7ms 以内的回调/批次迟到。`test/pages/danmaku/frame_late_delivery_test.dart` 另覆盖回调交付跨过帧目标后，按剩余时间请求仍可到达的下一更新槽位；20–31ms 的 Timer 迟到会按迟到量合并错过的更新。唤醒预算持续扣除交付延迟，超过目标时刻后也沿用同一时间基准。
 
 Android `media.output.preloaded` 记录预挂载策略、证据和解码前 selected 值；mpv 在 on_preloaded 之后选轨，该阶段允许唯一候选尚未 selected，FILE_LOADED 继续核对实际选轨。`runtime.shutdown.*` 分段记录文件卸载、订阅清理、输出释放与 Player 释放；`player.disposed` 是诊断停止事件，不代表原生释放完成。Surface 释放先同步解除 VO/wid，再等待 JNI 删除回执。
 
 直播 FILE_LOADED 后缺少有效视频几何时，最多等待 5 秒，且不超过请求剩余预算；输出就绪前的 EOF/error 立即使加载失败。正常点播沿用请求预算，纯音频沿用无视频输出路径。`media.startup.failed` 记录几何等待失败，页面显示既有失败及刷新入口。加载动画的首帧可见性和驱动行为仍需设备验证。
 
 设备侧可运行[Android 帧时间采集](../tool/probes/README.md#android-帧时间采集)，明确指定设备和包名。采集结果与应用诊断分别保留时钟域，结合相同复现窗口检查；SurfaceFlinger 图层、Android gfxinfo、Flutter UI 和 Scene 使用各自统计口径。
+
+Android 视频输出建立后，`AndroidRasterScheduling` 将唯一 Raster 线程的 CPU 亲和性扩展到应用主线程可用的集合，让系统选择运行核心；输出释放或初始化失败时恢复。`raster.scheduling.applied` 记录原始、应用和实际 CPU 集合，`unavailable` 与 `restore.failed` 记录应用及恢复失败。多 Raster 线程或已有集合无需扩展时沿用当前策略。排查低帧率视频卡顿时还需检查 Raster 唤醒到实际运行的延迟，这段等待可能发生在 Flutter Raster 计时开始之前。对照入口见[播放慢帧探针](../tool/probes/README.md#android-播放慢帧对照)。
 
 ### 直播
 

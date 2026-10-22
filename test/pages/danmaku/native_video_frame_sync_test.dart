@@ -1,5 +1,6 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'dart:ui';
@@ -421,7 +422,18 @@ class _ClockTicker extends FrameRateTicker {
        );
   final int Function() now;
   @override
-  int get clockMicroseconds => now();
+  // pump 的时间作为 BeginFrame 目标；实际交付与原生请求使用前一屏时钟。
+  int get clockMicroseconds =>
+      now() -
+      (1000000 /
+              SchedulerBinding
+                  .instance
+                  .platformDispatcher
+                  .views
+                  .first
+                  .display
+                  .refreshRate)
+          .round();
 }
 
 class _DisplaySyncState extends ValueNotifier<bool> {

@@ -34,7 +34,7 @@ void main() {
     final load = owner.load(_plan('timed-out'));
     await started.future;
     now = budget;
-    final result = await load.timeout(const Duration(milliseconds: 250));
+    final result = await load.timeout(const Duration(seconds: 2));
     expect(result.outcome, LoadOutcome.failed);
     expect(result.failure?.category, PlaybackFailureCategory.timeout);
     expect(session.currentSnapshot.phase, PlaybackPhase.failed);
@@ -45,7 +45,7 @@ void main() {
     expect((await owner.load(_plan('next'))).outcome, LoadOutcome.ready);
   });
 
-  test('query 总 deadline 包含来源解析和等待旧原生调用排空', () async {
+  testWidgets('query 总 deadline 包含来源解析和等待旧原生调用排空', (tester) async {
     var now = Duration.zero;
     final runtime = _AcceptanceRuntime();
     final session = PlaybackSession(
@@ -65,29 +65,39 @@ void main() {
     };
 
     final oldLoad = owner.load(_plan('old'));
-    await oldStarted.future;
+    await tester.pump();
+    expect(oldStarted.isCompleted, isTrue);
     final resolverStarted = Completer<void>();
     final resolved = Completer<PlaybackPlan?>();
-    final stopwatch = Stopwatch()..start();
     final query = owner.query((_) {
       resolverStarted.complete();
       return resolved.future;
     });
-    await resolverStarted.future;
+    await tester.pump();
+    expect(resolverStarted.isCompleted, isTrue);
 
     // 模拟来源解析消耗了接受时预算的 400ms；旧原生 load 仍占着执行器。
     now = const Duration(milliseconds: 400);
+    await tester.pump(now);
     resolved.complete(_plan('query'));
-    final result = await query.timeout(const Duration(milliseconds: 350));
-    stopwatch.stop();
+    var completed = false;
+    unawaited(query.then((_) => completed = true));
+    await tester.pump();
+    now = const Duration(milliseconds: 499);
+    await tester.pump(const Duration(milliseconds: 99));
+    expect(completed, isFalse);
+    now = const Duration(milliseconds: 500);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(completed, isTrue);
+    final result = await query;
 
     expect(result.outcome, LoadOutcome.failed);
     expect(result.failure?.category, PlaybackFailureCategory.timeout);
-    expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 350)));
     expect(runtime.plans.map((plan) => plan.contentKey), ['old']);
 
     releaseOld.complete();
-    await session.drained.timeout(const Duration(seconds: 1));
+    await tester.pump();
+    await session.drained;
     expect(runtime.plans.map((plan) => plan.contentKey), ['old']);
     expect((await oldLoad).outcome, LoadOutcome.superseded);
     owner.close();

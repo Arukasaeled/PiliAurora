@@ -520,21 +520,21 @@ List<SettingsModel> get danmakuExtraSettings => [
 List<SettingsModel> get danmakuMergeSettings => [
   const SwitchModel(
     title: '合并弹幕',
-    subtitle: '合并20秒内相同或相似的弹幕；重新打开播放页面后生效',
+    subtitle: '合并20秒内相同或相似的弹幕；立即生效',
     leading: Icon(Icons.merge),
     setKey: SettingBoxKey.mergeDanmaku,
     defaultVal: false,
   ),
   const SwitchModel(
     title: '合并弹幕字号放大',
-    subtitle: '按重复数量放大，最高两倍；重新打开播放页面后生效',
+    subtitle: '按重复数量放大，最高两倍；立即生效',
     leading: Icon(Icons.format_size),
     setKey: SettingBoxKey.mergeDanmakuScale,
     defaultVal: true,
   ),
   NormalModel(
     title: '合并弹幕放大阈值',
-    getSubtitle: () => '重复数量超过${Pref.mergeDanmakuThreshold}条时放大；重新打开播放页面后生效',
+    getSubtitle: () => '重复数量超过${Pref.mergeDanmakuThreshold}条时放大；立即生效',
     leading: const Icon(Icons.filter_7_outlined),
     onTap: (context, setState) =>
         _showMergeScaleDialog(context, setState, threshold: true),
@@ -542,7 +542,7 @@ List<SettingsModel> get danmakuMergeSettings => [
   NormalModel(
     title: '合并弹幕放大速度',
     getSubtitle: () =>
-        '对数底数 ${Pref.mergeDanmakuLogBase.toStringAsFixed(1)}，越小放大越快；重新打开播放页面后生效',
+        '对数底数 ${Pref.mergeDanmakuLogBase.toStringAsFixed(1)}，越小放大越快；立即生效',
     leading: const Icon(Icons.speed),
     onTap: (context, setState) =>
         _showMergeScaleDialog(context, setState, threshold: false),

@@ -3,12 +3,16 @@ import 'package:pili_aurora/grpc/grpc_req.dart';
 import 'package:pili_aurora/grpc/url.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:fixnum/fixnum.dart';
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
 
 abstract final class DmGrpc {
   static Future<LoadingState<DmSegMobileReply>> dmSegMobile({
     required int cid,
     required int segmentIndex,
     int type = 1,
+    DanmakuWorkToken? workToken,
+    Future<void> Function(DmSegMobileReply, DanmakuWorkLease)? consume,
   }) {
     return GrpcReq.request(
       GrpcUrl.dmSegMobile,
@@ -19,6 +23,10 @@ abstract final class DmGrpc {
       ),
       DmSegMobileReply.fromBuffer,
       isolate: true,
+      danmakuWork: true,
+      inspectDecoded: inspectDanmakuProtobuf,
+      workToken: workToken,
+      consume: consume,
     );
   }
 

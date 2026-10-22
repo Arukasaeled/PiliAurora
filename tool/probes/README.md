@@ -95,7 +95,7 @@ pwsh -NoProfile -File tool/run-native-probes.ps1
 uv run --locked python tool/probes/android/frame_timing_capture.py --adb <adb路径> --serial <设备序列号> --package io.github.wallpap.piliaurora.debug --seconds 10
 ```
 
-省略 `--layer` 时选择包名对应的唯一 SurfaceView；存在多个候选时需显式指定完整图层名。Release 包名为 `io.github.wallpap.piliaurora`，应与被测构建一致。采集命令为 `dumpsys SurfaceFlinger --list`、`--latency <layer>` 及 `dumpsys gfxinfo <package> framestats`；不安装 APK、不重置统计、不清理日志、不修改设备配置。
+省略 `--layer` 时优先选择包名对应的唯一 SurfaceView BLAST 缓冲图层，其余情况选择唯一 SurfaceView；多个缓冲图层需显式指定。Android 16 的 `RequestedLayerState{...}` 列表先提取实际 `name#id`，`--layer` 接受该名称或列表中的原始行。Release 包名为 `io.github.wallpap.piliaurora`，应与被测构建一致。采集命令为 `dumpsys SurfaceFlinger --list`、`--latency <layer>` 及 `dumpsys gfxinfo <package> framestats`；不安装 APK、不重置统计、不清理日志、不修改设备配置。
 
 输出默认位于 `build/android-frame-timing/<UTC时间>.json`，可传 `--output` 指定不存在的文件。工具排除初始缓冲区中的已完成帧、重复行、零值和未完成 fence，保存数值行与图层摘要，不保存设备序列号、原始图层名或 dumpsys 文本。SurfaceFlinger 三列依次为期望呈现、实际呈现和帧就绪的纳秒时间，定义见 [AOSP FrameTracker](https://android.googlesource.com/platform/frameworks/native/+/878911f7df21c700ddbe9e9c9d28cd0a1776946f/services/surfaceflinger/FrameTracker.cpp#240)。gfxinfo 按输出表头提取 `Flags`、`IntendedVsync`、`Vsync`、`FrameCompleted`。
 
@@ -126,6 +126,10 @@ fvm flutter run --profile --no-pub -d <设备ID> -t tool/probes/android/playback
 ```
 
 仅在首帧等待成功且 `scheduler.nativePeriodUs` 有有效视频周期时，将结果作为视频播放测量。FrameTiming 批量回报造成边界偏差；超预算计数与 Scene 呈现帧数应分别解释。首次安装时可先构建并安装 profile 包，再复制素材、启动探针。
+
+追加 `--dart-define=JANK_RASTER_AFFINITY_ABA=true` 可在同一视频、60 FPS 弹幕下依次测量原始 Raster CPU 集合、应用可用集合、恢复原始集合。探针复用生产 `AndroidRasterScheduling`，每段记录 `startedUs/endedUs` 和实际 CPU 集合，结束及卸载时恢复。该模式需要 Android 上唯一、可扩展亲和性的 Raster 线程。它改变独立 profile 进程的线程调度，按实际设备结果评价耗时和呈现。
+
+同时采集 SurfaceFlinger 和 Perfetto，按单调时钟截取三段测量窗口。Perfetto 配置使用 `write_into_file: true`、`file_write_period_ms: 1000`，并检查 `traced_buf_bytes_overwritten`；环形缓冲覆盖与文件传输完整是不同的检查项。将 FrameTiming、更新频率和最终呈现间隔分别比较，24 FPS 视频与 60 FPS 弹幕混合产生的图层帧数不代表弹幕更新数。
 
 ## Windows 尺寸通道回归探针
 

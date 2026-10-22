@@ -20,6 +20,7 @@ import 'package:media_kit/src/player/native/core/initializer.dart';
 import 'package:media_kit/src/player/native/core/native_library.dart';
 import 'package:media_kit/src/player/native/core/native_destroy.dart';
 import 'package:media_kit/src/player/native/player/seek_command.dart';
+import 'package:media_kit/src/player/native/player/seek_observation.dart';
 import 'package:media_kit/src/player/native/player/native_event.dart';
 import 'package:media_kit/src/player/native/player/native_hook.dart';
 
@@ -722,7 +723,11 @@ class NativePlayer extends PlatformPlayer {
 
   /// Seeks the currently playing [Media] in the [Player] by specified [Duration].
   @override
-  Future<void> seek(Duration duration, {bool synchronized = true}) {
+  Future<void> seek(
+    Duration duration, {
+    bool synchronized = true,
+    int? observationId,
+  }) {
     final media = current.firstOrNull;
     Future<void> function() async {
       throwIfDisposed();
@@ -735,6 +740,7 @@ class NativePlayer extends PlatformPlayer {
           externalAudio: state.track.audio.uri,
           mediaExtras: media.extras,
         ),
+        seekObservationId: observationId,
       );
       if (!identical(media, current.firstOrNull)) return;
 
@@ -1079,6 +1085,9 @@ class NativePlayer extends PlatformPlayer {
     assert(ctx != nullptr);
     return ctx.address;
   }
+
+  /// Library used by this handle, including a caller-supplied libmpv path.
+  String get nativeLibraryPath => NativeLibrary.path;
 
   /// Sets property for the internal libmpv instance of this [Player].
   /// Please use this method only if you know what you are doing, existing methods in [Player] implementation are suited for the most use cases.
@@ -1733,7 +1742,29 @@ class NativePlayer extends PlatformPlayer {
 
   void _copyNativeLifecycleEvent(Pointer<generated.mpv_event> event) {
     final eventId = event.ref.event_id;
-    if (eventId == generated.mpv_event_id.MPV_EVENT_START_FILE) {
+    if (eventId == generated.mpv_event_id.MPV_EVENT_COMMAND_REPLY) {
+      _seekObservation?.acknowledge(event.ref.reply_userdata, event.ref.error);
+      if (_seekObservation?.requestId == event.ref.reply_userdata &&
+          event.ref.error < 0) {
+        _seekObservation = null;
+      }
+    } else if (eventId == generated.mpv_event_id.MPV_EVENT_SEEK) {
+      _seekObservation?.start(_activePlaylistEntryId);
+    } else if (eventId == generated.mpv_event_id.MPV_EVENT_PLAYBACK_RESTART) {
+      final observation = _seekObservation;
+      if (observation != null &&
+          observation.completes(_activePlaylistEntryId) &&
+          getProperty('seeking') == 'no') {
+        _seekObservation = null;
+        _emitNativeEvent(
+          NativeSeekCompleted(
+            playlistEntryId: observation.playlistEntryId,
+            observationId: observation.observationId,
+          ),
+        );
+      }
+    } else if (eventId == generated.mpv_event_id.MPV_EVENT_START_FILE) {
+      _seekObservation = null;
       final playlistEntryId = _hasPlaylistEntryIds && event.ref.data != nullptr
           ? event.ref.data
                 .cast<generated.mpv_event_start_file>()
@@ -1777,6 +1808,7 @@ class NativePlayer extends PlatformPlayer {
         ),
       );
     } else if (eventId == generated.mpv_event_id.MPV_EVENT_END_FILE) {
+      _seekObservation = null;
       final data = event.ref.data;
       final endFile = data == nullptr
           ? null
@@ -1855,6 +1887,7 @@ class NativePlayer extends PlatformPlayer {
       );
     } else if (eventId == generated.mpv_event_id.MPV_EVENT_QUEUE_OVERFLOW) {
       _activePlaylistEntryId = null;
+      _seekObservation = null;
       _emitNativeEvent(const NativeEventQueueOverflow());
     }
   }
@@ -2628,20 +2661,32 @@ class NativePlayer extends PlatformPlayer {
 
   /// Calls mpv command passed as [args].
   /// Automatically freeds memory after command sending.
-  Future<void> command(List<String> args) {
+  Future<void> command(List<String> args, {int? seekObservationId}) {
     throwIfDisposed();
+    if (args.isNotEmpty && args.first == 'seek' && _seekObservation != null) {
+      throw StateError('A native seek observation is still in flight.');
+    }
     final pointers = args.map((e) => e.toNativeUtf8()).toList();
     final arr = calloc<Pointer<Uint8>>(pointers.length + 1);
     for (int i = 0; i < args.length; i++) {
       arr[i] = pointers[i];
     }
     final requestNumber = _asyncRequestNumber++;
+    final entryId = _activePlaylistEntryId;
+    if (seekObservationId != null && entryId != null) {
+      _seekObservation = NativeSeekObservation(
+        requestId: requestNumber,
+        observationId: seekObservationId,
+        playlistEntryId: entryId,
+      );
+    }
     final completer = Completer<int>();
     _registerRequest(requestNumber, completer);
     final immediate = mpv.mpv_command_async(ctx, requestNumber, arr);
     calloc.free(arr);
     pointers.forEach(calloc.free);
     if (immediate < 0) {
+      if (_seekObservation?.requestId == requestNumber) _seekObservation = null;
       // Sending failed
       _takeRequest(requestNumber);
       completer.complete(immediate);
@@ -2663,6 +2708,7 @@ class NativePlayer extends PlatformPlayer {
   /// [Pointer] to [generated.mpv_handle] of this instance.
   Pointer<generated.mpv_handle> ctx = nullptr;
 
+  NativeSeekObservation? _seekObservation;
   final StreamController<NativePlayerEvent> _nativeEventsController =
       StreamController<NativePlayerEvent>.broadcast(sync: true);
   final Completer<void> _released = Completer<void>();

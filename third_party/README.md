@@ -44,6 +44,8 @@ Dart/Flutter 依赖已停止跟踪远端 Git 分支。普通依赖固定到 pub.
 
 平台构建覆盖编译和打包，后台通知、GPU/MediaCodec、窗口主题和 WebView 退出由人工实机回归覆盖。`third_party` 的上游检查告警如实记录，不靠关闭检查或削弱测试来清零。
 
+media_kit 的 seek 提交回执与落点完成分离；完成事件携带观察序号及原生文件身份，播放层维护等待和超时隔离。实现修订见该包的 [UPSTREAM.md](media_kit/UPSTREAM.md)。
+
 ## 原生二进制与 SDK
 
 Windows 各构建模式使用 [mpv 预编译包](mpv/README.md)。源码、重建脚本、许可与 `prebuilt/` 中的归档和摘要均纳入 Git；工具链、编译缓存与解压目录保存在 `build/`。应用 CI 直接校验并使用预编译包，独立原生库工作流负责从固定源码重建。打包收集 libmpv、ANGLE 的 DLL 依赖闭包，并随应用交付许可与包来源记录。
@@ -53,6 +55,8 @@ Android 原生库继续使用版本化下载地址与 SHA-256 校验。mpv 属�
 Windows x64 的 cnativeapi 使用 [预编译入口](nativeapi/README.md)，内部 nativeapi 已静态链接。固定的 cnativeapi 0.3.0 源码保留在本地包中，重建产物位于 `nativeapi/prebuilt/`，许可随应用分发。
 
 Flutter SDK 与 `material_ui` 补丁由 `lib/scripts/patch.ps1` 管理，构建脚本按实际依赖解析路径应用补丁，详见[工具入口](../tool/README.md#平台构建)。
+
+Android 帧计划引擎补丁单独维护在 [`tool/engine/frame_plan/`](../tool/engine/frame_plan/README.md)，固定 Flutter 框架与引擎提交，并应用到隔离检出。常规 FVM 构建流程保持原有入口；自编引擎的源码材料、构建命令与 APK 身份校验见该目录说明。
 
 ## 历史记录
 

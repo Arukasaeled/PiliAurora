@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 enum FrameSyncModel { isolated, android }
 
-/// 两种模型共用请求时间换算；Android 模型同时模拟目标帧时钟和视频驱动 Dart 帧。
+/// 两种模型共用引擎目标帧时钟；Android 模型另由视频驱动 Dart 帧。
 class FrameSyncFixture {
   FrameSyncFixture(
     this.tester,
@@ -20,8 +20,7 @@ class FrameSyncFixture {
   int get screenPeriod => (1000000 / refreshRate).round();
 
   int get now =>
-      tester.binding.clock.now().microsecondsSinceEpoch -
-      (model == FrameSyncModel.android ? screenPeriod : 0);
+      tester.binding.clock.now().microsecondsSinceEpoch - screenPeriod;
 
   int slotTime(int slot) => roundSlotsUp
       ? slot * (1000000 / refreshRate).ceil()

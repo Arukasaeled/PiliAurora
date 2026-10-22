@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:pili_aurora/plugin/pl_player/utils/android_video_output.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -52,9 +51,10 @@ void main() {
     () async {
       var completed = false;
       final resize =
-          setAndroidVideoOutputSize(
+          setAndroidSurfaceSize(
             player: player,
-            size: (width: 1156, height: 650),
+            width: 1156,
+            height: 650,
             waitForFrame: true,
           ).then((accepted) {
             completed = true;
@@ -78,9 +78,10 @@ void main() {
     'source invalidation cancels receipt and unblocks source-size rebuild',
     () async {
       var current = true;
-      final resize = setAndroidVideoOutputSize(
+      final resize = setAndroidSurfaceSize(
         player: player,
-        size: (width: 1156, height: 650),
+        width: 1156,
+        height: 650,
         isCurrent: () => current,
         waitForFrame: true,
       );
@@ -116,9 +117,10 @@ void main() {
       return false;
     });
     expect(
-      await setAndroidVideoOutputSize(
+      await setAndroidSurfaceSize(
         player: player,
-        size: (width: 1156, height: 650),
+        width: 1156,
+        height: 650,
         waitForFrame: true,
       ),
       isFalse,
@@ -144,9 +146,10 @@ void main() {
       return null;
     });
     expect(
-      await setAndroidVideoOutputSize(
+      await setAndroidSurfaceSize(
         player: player,
-        size: (width: 1156, height: 650),
+        width: 1156,
+        height: 650,
         waitForFrame: true,
         canStart: () => mayStart,
       ),
@@ -162,9 +165,10 @@ void main() {
   test(
     'failed or cancelled current receipt is not a successful handoff',
     () async {
-      final resize = setAndroidVideoOutputSize(
+      final resize = setAndroidSurfaceSize(
         player: player,
-        size: (width: 1156, height: 650),
+        width: 1156,
+        height: 650,
         waitForFrame: true,
       );
       await entered.future;

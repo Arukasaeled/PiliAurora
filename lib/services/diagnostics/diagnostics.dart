@@ -654,7 +654,18 @@ class Diagnostics extends ChangeNotifier with WidgetsBindingObserver {
         'storageError': storageError,
       },
     };
-    latest = Map<String, Object?>.from(DiagnosticRedactor.clean(latest) as Map);
+    // 慢帧详情、各模块和存储状态分别限界，避免一个大来源耗尽整条采样预算。
+    latest = {
+      for (final entry in latest!.entries)
+        if (entry.key != 'sources')
+          entry.key: DiagnosticRedactor.clean(entry.value),
+      'sources': {
+        for (final entry in sources.entries.take(64))
+          ...Map<String, Object?>.from(
+            DiagnosticRedactor.clean({entry.key: entry.value}) as Map,
+          ),
+      },
+    };
     // GPU 引擎列表使用独立预算，避免挤占播放器和采集器状态字段。
     if (Platform.isWindows) {
       latest!['gpu'] = DiagnosticRedactor.clean(_gpuMetrics.sample());

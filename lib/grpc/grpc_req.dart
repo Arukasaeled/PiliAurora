@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show gzip;
 import 'dart:typed_data';
 
 import 'package:pili_aurora/grpc/bilibili/rpc.pb.dart';
@@ -8,10 +9,36 @@ import 'package:pili_aurora/http/init.dart';
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, compute;
 import 'package:protobuf/protobuf.dart' show GeneratedMessage;
+
+/// 输出在首次展开前按获配上限分配；gzip 尾部长度仅用于预约，
+/// 实际解压仍逐块核对，损坏或伪造的长度无法扩大工作集。
+class _BoundedDecodeSink implements Sink<List<int>> {
+  _BoundedDecodeSink(int limit) : _buffer = Uint8List(limit);
+
+  final Uint8List _buffer;
+  int _length = 0;
+
+  Uint8List get bytes => Uint8List.sublistView(_buffer, 0, _length);
+
+  @override
+  void add(List<int> data) {
+    final next = _length + data.length;
+    if (next > _buffer.length) {
+      throw DanmakuWorkTooLarge(next, _buffer.length);
+    }
+    _buffer.setRange(_length, next, data);
+    _length = next;
+  }
+
+  @override
+  void close() {}
+}
 
 abstract final class GrpcReq {
   static const _gzipMinLength = 64;
@@ -32,25 +59,54 @@ abstract final class GrpcReq {
       ..setAll(5, proto);
   }
 
-  static Uint8List decompressProtobuf(Uint8List data) {
+  static Uint8List decompressProtobuf(Uint8List data, {int? maxDecodedBytes}) {
+    if (data.length < 5 || (data[0] != 0 && data[0] != 1)) {
+      throw const FormatException('gRPC 帧头无效');
+    }
     final length = ByteData.sublistView(data, 1, 5).getInt32(0, Endian.big);
+    if (length < 0 || length > data.length - 5) {
+      throw const FormatException('gRPC 帧长度越界');
+    }
 
     if (data[0] == 1) {
+      if (maxDecodedBytes != null) {
+        final output = _BoundedDecodeSink(maxDecodedBytes);
+        final decoder = gzip.decoder.startChunkedConversion(output);
+        // 分片投喂，避免一次输入在底层解码器中积累整份展开结果。
+        for (var offset = 5; offset < length + 5; offset += 16384) {
+          final end = (offset + 16384).clamp(0, length + 5);
+          decoder.add(Uint8List.sublistView(data, offset, end));
+        }
+        decoder.close();
+        return output.bytes;
+      }
       return const GZipDecoder().decodeBytes(
         Uint8List.sublistView(data, 5, length + 5),
       );
     } else {
+      if (maxDecodedBytes != null && length > maxDecodedBytes) {
+        throw DanmakuWorkTooLarge(length, maxDecodedBytes);
+      }
       return Uint8List.sublistView(data, 5, length + 5);
     }
   }
 
-  static LoadingState<T> _parse<T>((Uint8List, T Function(Uint8List)) args) {
+  static (LoadingState<T>, int) _parse<T>(
+    (Uint8List, T Function(Uint8List), int?, int Function(Uint8List)?, int?)
+    args,
+  ) {
     try {
-      final data = decompressProtobuf(args.$1);
+      final data = decompressProtobuf(args.$1, maxDecodedBytes: args.$3);
+      final storage = args.$4?.call(data) ?? 0;
+      if (args.$5 case final limit?) {
+        final bytes =
+            2 * args.$1.length + 2 * (args.$3 ?? data.length) + 2 * storage;
+        if (bytes > limit) throw DanmakuWorkTooLarge(bytes, limit);
+      }
       final grpcResponse = args.$2(data);
-      return Success(grpcResponse);
+      return (Success(grpcResponse), storage);
     } catch (e) {
-      return Error(e.toString());
+      return (Error(e.toString()), 0);
     }
   }
 
@@ -59,6 +115,10 @@ abstract final class GrpcReq {
     GeneratedMessage request,
     T Function(Uint8List) grpcParser, {
     bool isolate = false,
+    bool danmakuWork = false,
+    int Function(Uint8List)? inspectDecoded,
+    DanmakuWorkToken? workToken,
+    Future<void> Function(T, DanmakuWorkLease)? consume,
     Account? account,
     bool retry = true,
   }) async {
@@ -95,11 +155,56 @@ abstract final class GrpcReq {
           details: {'bytes': data.length, 'background': background},
         );
         try {
-          final LoadingState<T> result = background
-              ? await compute(_parse<T>, (data, grpcParser))
-              : _parse<T>((data, grpcParser));
+          final decodedLimit = danmakuWork
+              ? GrpcDecodePolicy.estimatedDecodedBytes(data)
+              : null;
+          if (decodedLimit != null &&
+              decodedLimit > DanmakuProcessingBudget.maxDecodedBytes) {
+            throw DanmakuWorkTooLarge(
+              decodedLimit,
+              DanmakuProcessingBudget.maxDecodedBytes,
+            );
+          }
+          final parseArgs = (
+            data,
+            grpcParser,
+            decodedLimit,
+            inspectDecoded,
+            danmakuWork ? DanmakuWorkQuota.instance.maxBytes : null,
+          );
+          Future<(LoadingState<T>, int)> decode() async => background
+              ? await compute(_parse<T>, parseArgs)
+              : _parse<T>(parseArgs);
+          final result = danmakuWork
+              ? await DanmakuWorkQuota.instance.runWithLease(
+                  DanmakuWorkQuota.instance.maxBytes,
+                  (lease) async {
+                    final (decoded, storage) = await decode();
+                    if (!(workToken?.isCancelled ?? false)) {
+                      if (decoded case Success(:final response)) {
+                        await consume?.call(
+                          response,
+                          lease.retaining(
+                            // compute 已结束；下一阶段保留主 isolate 的输入与解析结果。
+                            data.length + decodedLimit! + storage,
+                          ),
+                        );
+                      }
+                    }
+                    return decoded;
+                  },
+                  token: workToken,
+                  waitingBytes: data.length + 256,
+                )
+              : (await decode()).$1;
           operation?.finish(error: result is Error ? result.errMsg : null);
           return result;
+        } on DanmakuWorkBusy {
+          return const Error('弹幕处理等待额度已满');
+        } on DanmakuWorkCancelled {
+          return const Error('弹幕任务已失效');
+        } on DanmakuWorkTooLarge {
+          return const Error('弹幕响应超过处理预算');
         } catch (error) {
           operation?.finish(error: error);
           rethrow;

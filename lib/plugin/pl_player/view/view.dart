@@ -30,6 +30,7 @@ import 'package:pili_aurora/models/remote/video/video_detail/episode.dart'
 import 'package:pili_aurora/models/remote/video/video_detail/ugc_season.dart';
 import 'package:pili_aurora/pages/common/common_intro_controller.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
+import 'package:pili_aurora/pages/danmaku/interaction.dart';
 import 'package:pili_aurora/pages/live_room/widgets/bottom_control.dart'
     as live_bottom;
 import 'package:pili_aurora/pages/video/controller.dart';
@@ -77,7 +78,6 @@ import 'package:pili_aurora/utils/storage_key.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/utils.dart';
 import 'package:pili_aurora/utils/rate_limiter.dart';
-import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:collection/collection.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
@@ -271,6 +271,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   @override
   void initState() {
     super.initState();
+    plPlayerController.addDanmakuRuleListener(_removeDmAction);
 
     _controlsListener = plPlayerController.showControls.listen(
       _onControlChanged,
@@ -441,6 +442,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
 
   @override
   void dispose() {
+    plPlayerController.removeDanmakuRuleListener(_removeDmAction);
     _unregisterVideoDiagnostics?.call();
     _danmakuListener?.cancel();
     _tapGestureRecognizer.dispose();
@@ -1473,7 +1475,11 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       default:
         if (_suspendedDm == null) {
           plPlayerController.controls = !plPlayerController.showControls.value;
-        } else if (_suspendedDm!.suspend) {
+        } else if (plPlayerController.danmakuInteraction?.snapshot.any(
+              (item) =>
+                  item.identity == _suspendedDm!.identity && item.selected,
+            ) ??
+            false) {
           _dmOffset.value = details.localPosition;
         } else {
           _suspendedDm = null;
@@ -1482,25 +1488,16 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   }
 
   void _onTapDown(TapDownDetails details) {
-    final ctr = plPlayerController.danmakuController;
-    if (ctr != null) {
-      final pos = details.localPosition;
-      final res = ctr.findSingleDanmaku(pos);
-      if (res != null) {
-        final (dy, item) = res;
-        if (item != _suspendedDm) {
-          _suspendedDm?.suspend = false;
-          if (item.content.extra == null) {
-            _dmOffset.value = null;
-            return;
-          }
-          _suspendedDm = item..suspend = true;
-          this.dy = dy;
-        }
-      } else {
-        _suspendedDm?.suspend = false;
-        _dmOffset.value = null;
-      }
+    final interaction = plPlayerController.danmakuInteraction;
+    final item = interaction?.hitTest(details.localPosition);
+    if (item != null &&
+        item.extra != null &&
+        interaction!.select(item.identity)) {
+      _suspendedDm = item;
+    } else {
+      interaction?.clearSelection();
+      _suspendedDm = null;
+      _dmOffset.value = null;
     }
   }
 
@@ -2560,13 +2557,12 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   static const _actionItemWidth = 40.0;
   static const _actionItemHeight = 35.0 - _triangleHeight;
 
-  DanmakuItem<DanmakuExtra>? _suspendedDm;
-  late double dy = 0;
+  DanmakuDisplaySnapshot<DanmakuExtra>? _suspendedDm;
   late final Rxn<Offset> _dmOffset = Rxn<Offset>();
 
   void _removeDmAction() {
     if (_suspendedDm != null) {
-      _suspendedDm?.suspend = false;
+      plPlayerController.danmakuInteraction?.clearSelection();
       _suspendedDm = null;
       _dmOffset.value = null;
     }
@@ -2606,9 +2602,18 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   }
 
   Widget _buildDmAction(
-    DanmakuItem<DanmakuExtra> item,
+    DanmakuDisplaySnapshot<DanmakuExtra> item,
     Offset offset,
   ) {
+    final interaction = plPlayerController.danmakuInteraction;
+    if (interaction == null ||
+        !interaction.isValid ||
+        !interaction.snapshot.any(
+          (entry) => entry.identity == item.identity && entry.selected,
+        )) {
+      _removeDmAction();
+      return const SizedBox.shrink();
+    }
     final dx = offset.dx;
     // fullscreen
     if (dx > maxWidth) {
@@ -2616,11 +2621,11 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
       return const SizedBox.shrink();
     }
 
-    final seekOffset = _getValidOffset(item.content.text);
+    final seekOffset = _getValidOffset(item.text);
 
     final overlayWidth = _actionItemWidth * (seekOffset == null ? 3 : 4);
 
-    final top = dy + item.height + _triangleHeight + 2;
+    final top = item.bounds.bottom + _triangleHeight + 2;
 
     final realLeft = dx + overlayWidth / 2;
 
@@ -2632,12 +2637,12 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
     final right = maxWidth - left;
     final triangleOffset = realLeft - left;
 
-    if (right > (maxWidth - item.xPosition)) {
+    if (right > (maxWidth - item.bounds.left)) {
       _removeDmAction();
       return const SizedBox.shrink();
     }
 
-    final extra = item.content.extra;
+    final extra = item.extra;
     if (extra == null) {
       _removeDmAction();
       return const SizedBox.shrink();
@@ -2694,9 +2699,9 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                   CustomIcons.player_dm_tip_copy,
                   color: Colors.white,
                 ),
-                onTap: () => Utils.copyText(item.content.text),
+                onTap: () => Utils.copyText(item.text),
               ),
-              if (item.content.selfSend)
+              if (item.selfSend)
                 _dmActionItem(
                   const Icon(
                     size: 20,
@@ -2749,7 +2754,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                   CustomIcons.player_dm_tip_copy,
                   color: Colors.white,
                 ),
-                onTap: () => Utils.copyText(item.content.text),
+                onTap: () => Utils.copyText(item.text),
               ),
               _dmActionItem(
                 const Icon(
@@ -2762,7 +2767,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
                   roomId: (widget.bottomControl as live_bottom.BottomControl)
                       .liveRoomCtr
                       .roomId,
-                  msg: item.content.text,
+                  msg: item.text,
                   extra: extra,
                 ),
               ),

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
 import 'package:pili_aurora/plugin/pl_player/models/data_source.dart';
 
 enum PlaybackStartPolicy { play, pause, preserve }
@@ -606,11 +607,13 @@ class PlaybackExecutionContext {
     required this.monotonicNow,
     required this.cancelled,
     required this.registerCancellation,
+    this.seekSequence = 0,
   });
 
   final int requestId;
   final int runtimeId;
   final int loadId;
+  final int seekSequence;
   final bool Function() isCurrent;
   final Duration deadline;
   final Duration Function() monotonicNow;
@@ -672,6 +675,15 @@ class PlaybackShutdownResult {
 }
 
 /// Session 面向运行时的 seam；生产 adapter 是 NativePlaybackRuntime。
+abstract interface class PlaybackMediaClockSampler {
+  void sampleMediaClock();
+}
+
+abstract interface class PlaybackSeekSubmissionGate {
+  bool get seekSubmissionBlocked;
+  Stream<void> get seekSubmissionChanges;
+}
+
 abstract interface class PlaybackRuntimePort {
   int get runtimeId;
 
@@ -734,6 +746,18 @@ sealed class PlaybackRuntimeEvent {
 
   final int runtimeId;
   final int? loadId;
+}
+
+class PlaybackRuntimeMediaAnchor extends PlaybackRuntimeEvent {
+  const PlaybackRuntimeMediaAnchor({
+    required super.runtimeId,
+    required int super.loadId,
+    required this.seekSequence,
+    required this.anchor,
+  });
+
+  final int seekSequence;
+  final PlaybackMediaAnchor anchor;
 }
 
 class PlaybackRuntimeStateChanged extends PlaybackRuntimeEvent {

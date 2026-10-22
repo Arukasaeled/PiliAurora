@@ -4,6 +4,10 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/grpc/bilibili/community/service/dm/v1.pb.dart';
 import 'package:pili_aurora/pages/danmaku/merge.dart';
+import 'package:pili_aurora/pages/danmaku/element_size.dart';
+import 'package:pili_aurora/pages/danmaku/processing_rules.dart';
+import 'package:pili_aurora/models/user/danmaku_rule.dart';
+import 'package:pili_aurora/services/danmaku/work_quota.dart';
 
 DanmakuElem _dm(
   String text,
@@ -20,6 +24,221 @@ DanmakuElem _dm(
 );
 
 void main() {
+  test('ordered worker cancellation retains quota until worker exit', () async {
+    final quota = DanmakuWorkQuota();
+    final token = DanmakuWorkToken();
+    late Future<void> successor;
+    var successorStarted = false;
+    final pending = quota.runWithLease(
+      quota.maxBytes,
+      (lease) => processOrderedDanmakuBatches(
+        Stream.value([_dm('worker has processed this batch', 0)]),
+        rules: DanmakuProcessingRules(),
+        lease: lease,
+        token: token,
+        consume: (_) {
+          expect(quota.snapshot['runningTasks'], 1);
+          token.cancel();
+          successor = quota.run(1, () {
+            successorStarted = true;
+          });
+          expect(successorStarted, isFalse);
+        },
+      ),
+    );
+    await expectLater(pending, throwsA(isA<DanmakuWorkCancelled>()));
+    await successor;
+    expect(successorStarted, isTrue);
+    expect(quota.snapshot['runningTasks'], 0);
+  });
+  test('oversized rule description fails before constructing its snapshot', () {
+    expect(
+      () => DanmakuProcessingRules(
+        filter: RuleFilter(['x' * (1024 * 1024)], [], {}),
+      ),
+      throwsA(isA<DanmakuWorkTooLarge>()),
+    );
+  });
+  test('cursor bytes reject new groups without silently changing matching semantics', () {
+    final cursor = DanmakuMergeCursor(
+      maxGroupBytes: 1500,
+      maxNormalizedBytes: 160,
+    );
+    final original = cursor.appendOrdered([_dm('original', 0)]).single;
+    expect(
+      () => cursor.appendOrdered([_dm('different', 1)]),
+      throwsA(isA<DanmakuWorkTooLarge>()),
+    );
+    expect(original.count, 1);
+    expect(cursor.groupBytes, lessThanOrEqualTo(1500));
+    expect(cursor.normalizedBytes, lessThanOrEqualTo(160));
+  });
+  test(
+    'insufficient inherited lease and oversized first item are rejected',
+    () async {
+      final quota = DanmakuWorkQuota();
+      await expectLater(
+        quota.runWithLease(
+          1024,
+          (lease) => mergeDanmakuInBackground([_dm('small', 0)], lease: lease),
+        ),
+        throwsA(isA<DanmakuWorkTooLarge>()),
+      );
+      await expectLater(
+        mergeDanmakuInBackground([
+          _dm('x' * DanmakuProcessingBudget.batchBytes, 0),
+        ]),
+        throwsA(isA<DanmakuWorkTooLarge>()),
+      );
+      expect(DanmakuWorkQuota.instance.snapshot['runningTasks'], 0);
+    },
+  );
+  test('worker snapshots filters, marks own messages and preserves disabled merge order', () async {
+    final filter = RuleFilter(
+      ['blocked'],
+      [RegExp('pattern', caseSensitive: false)],
+      {'uid'},
+    );
+    final rules = DanmakuProcessingRules(
+      merge: false,
+      selfHash: 'own',
+      fileSource: false,
+      segmentIndex: 0,
+      filter: filter,
+    );
+    filter.dmFilterString.clear();
+    filter.dmRegExp.clear();
+    filter.dmUid.clear();
+    final input = [
+      _dm('late', 200),
+      _dm('early', 100),
+      _dm('blocked', 101),
+      _dm('PATTERN', 102),
+      _dm('uid blocked', 103)..midHash = 'uid',
+      _dm('blocked own', 104)..midHash = 'own',
+      _dm('blocked stale own', 105, self: true),
+      _dm('other segment', 360000),
+    ];
+    final result = await processDanmakuInBackground(input, rules: rules);
+    expect(result.map((e) => e.content), ['late', 'early', 'blocked own']);
+    expect(result.last.isSelf, isTrue);
+    expect(result.every((e) => e.count == 0), isTrue);
+    expect(input[5].isSelf, isFalse);
+    expect(input[6].isSelf, isTrue);
+  });
+
+  test('filtering spans batches before duplicate admission', () async {
+    final input = [
+      for (var i = 0; i < 600; i++) _dm(i.isEven ? 'blocked' : 'keep', i),
+    ];
+    final result = await processDanmakuInBackground(
+      input,
+      rules: DanmakuProcessingRules(filter: RuleFilter(['blocked'], [], {})),
+    );
+    expect(result.single.content, 'keep');
+    expect(result.single.count, 300);
+    expect(input.every((e) => e.count == 0), isTrue);
+  });
+
+  test(
+    'worker batches reconcile earlier counts and match stable full merge',
+    () async {
+      final input = List.generate(
+        1100,
+        (i) => _dm(
+          i % 4 == 0 ? '相同长弹幕内容' : '原始条目$i',
+          i * 11,
+          mode: i % 19 == 0 ? 7 : 1,
+          self: i % 37 == 0,
+        ),
+      )..shuffle(Random(19));
+      final expected = DanmakuMerger().merge([
+        for (final element in input)
+          DanmakuElem.fromBuffer(element.writeToBuffer()),
+      ]);
+      final actual = await mergeDanmakuInBackground(input);
+      expect(
+        actual.map((e) => e.writeToBuffer()),
+        expected.map((e) => e.writeToBuffer()),
+      );
+      expect(input.every((e) => e.count == 0), isTrue);
+    },
+  );
+
+  test(
+    'cancelled background work finishes before its quota is released',
+    () async {
+      final token = DanmakuWorkToken();
+      final pending = mergeDanmakuInBackground(
+        List.generate(600, (i) => _dm('重复', i)),
+        token: token,
+      );
+      Timer.run(token.cancel);
+      await expectLater(pending, throwsA(isA<DanmakuWorkCancelled>()));
+      expect(DanmakuWorkQuota.instance.snapshot['runningTasks'], 0);
+      expect(await DanmakuWorkQuota.instance.run(1, () => 42), 42);
+    },
+  );
+
+  test('ordered batches preserve anchors and update earlier counts', () {
+    final cursor = DanmakuMergeCursor();
+    final first = cursor.appendOrdered([
+      _dm('相同内容', 0),
+      _dm('固定项', 1, mode: 5),
+    ]);
+    final second = cursor.appendOrdered([
+      _dm('相同内容', 20000),
+      _dm('相同内容', 20001),
+      _dm('相同内容', 20001, self: true),
+    ]);
+    expect(first.map((e) => e.count), [2, 1]);
+    expect(second.map((e) => e.progress), [20001, 20001]);
+    expect(second.map((e) => e.count), [1, 1]);
+  });
+
+  test('batch partition does not alter dense matching or result order', () {
+    final input = List.generate(
+      5000,
+      (i) => _dm(
+        i % 3 == 0 ? '重复的长弹幕内容' : '独立条目编号$i',
+        i * 11,
+        mode: i % 31 == 0 ? 7 : 1,
+        self: i % 43 == 0,
+        pool: i % 7 == 0 ? 3 : 0,
+      ),
+    );
+    List<List<int>> run(int batchSize) {
+      final cursor = DanmakuMergeCursor();
+      final result = <DanmakuElem>[];
+      for (var start = 0; start < input.length; start += batchSize) {
+        result.addAll(
+          cursor.appendOrdered([
+            for (var i = start; i < min(start + batchSize, input.length); i++)
+              DanmakuElem.fromBuffer(input[i].writeToBuffer()),
+          ]),
+        );
+      }
+      return result.map((e) => e.writeToBuffer()).toList();
+    }
+
+    final expected = run(input.length);
+    for (final size in [1, 7, 256, 1024]) {
+      expect(run(size), expected, reason: 'batchSize=$size');
+    }
+  });
+
+  test('unordered append fails before modifying existing merge state', () {
+    final cursor = DanmakuMergeCursor();
+    final first = cursor.appendOrdered([_dm('重复', 100)]).single;
+    expect(
+      () => cursor.appendOrdered([_dm('重复', 101), _dm('重复', 99)]),
+      throwsArgumentError,
+    );
+    expect(first.count, 1);
+    cursor.appendOrdered([_dm('重复', 101)]);
+    expect(first.count, 2);
+  });
+
   test(
     'merges repeated rating pool text while preserving different scores',
     () {

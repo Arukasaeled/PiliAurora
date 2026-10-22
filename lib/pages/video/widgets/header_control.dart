@@ -20,6 +20,7 @@ import 'package:pili_aurora/models/video/play/url.dart';
 import 'package:pili_aurora/models/remote/video/video_play_info/subtitle.dart';
 import 'package:pili_aurora/pages/common/common_intro_controller.dart';
 import 'package:pili_aurora/pages/danmaku/danmaku_model.dart';
+import 'package:pili_aurora/pages/danmaku/interaction.dart';
 import 'package:pili_aurora/pages/video/controller.dart';
 import 'package:pili_aurora/pages/video/introduction/local/controller.dart';
 import 'package:pili_aurora/pages/video/introduction/pgc/controller.dart';
@@ -46,7 +47,6 @@ import 'package:pili_aurora/utils/subtitle_utils.dart';
 import 'package:pili_aurora/utils/utils.dart';
 import 'package:pili_aurora/utils/rate_limiter.dart';
 import 'package:battery_plus/battery_plus.dart';
-import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:collection/collection.dart';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
@@ -249,6 +249,7 @@ class HeaderControl extends StatefulWidget {
             final filter = ctr.filters;
             if (filter.dmUid.add(extra.mid)) {
               filter.count++;
+              ctr.filters = filter;
               GStorage.localCache.put(LocalCacheKey.danmakuFilterRules, filter);
             }
             DanmakuFilterHttp.danmakuFilterAdd(filter: extra.mid, type: 2);
@@ -899,9 +900,9 @@ class HeaderControlState extends State<HeaderControl>
   }
 
   void showDanmakuPool() {
-    final ctr = plPlayerController.danmakuController;
-    if (ctr == null) return;
+    if (plPlayerController.danmakuInteraction == null) return;
     showBottomSheet((context, setState) {
+      final ctr = plPlayerController.danmakuInteraction;
       final theme = Theme.of(context);
       final isPortrait =
           MediaQuery.orientationOf(context) == Orientation.portrait;
@@ -947,11 +948,7 @@ class HeaderControlState extends State<HeaderControl>
                   ),
                   child: CustomScrollView(
                     slivers: [
-                      ?_buildDanmakuList(ctr.staticDanmaku.nonNulls.toList()),
-                      ?_buildDanmakuList(
-                        ctr.scrollDanmaku.expand((e) => e).toList(),
-                      ),
-                      ?_buildDanmakuList(ctr.specialDanmaku.toList()),
+                      ?_buildDanmakuList(ctr?.snapshot ?? const []),
                       const SliverToBoxAdapter(child: SizedBox(height: 12)),
                     ],
                   ),
@@ -964,20 +961,20 @@ class HeaderControlState extends State<HeaderControl>
     });
   }
 
-  Widget? _buildDanmakuList(List<DanmakuItem<DanmakuExtra>> list) {
+  Widget? _buildDanmakuList(List<DanmakuDisplaySnapshot<DanmakuExtra>> list) {
     if (list.isEmpty) return null;
 
     return SliverList.builder(
       itemCount: list.length,
       itemBuilder: (context, index) {
         final item = list[index];
-        final extra = item.content.extra! as VideoDanmaku;
+        final extra = item.extra! as VideoDanmaku;
         return ListTile(
           dense: true,
           contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-          onLongPress: () => Utils.copyText(item.content.text),
+          onLongPress: () => Utils.copyText(item.text),
           title: Text(
-            item.content.text,
+            item.text,
             style: const TextStyle(fontSize: 14),
           ),
           trailing: Row(
@@ -1017,12 +1014,17 @@ class HeaderControlState extends State<HeaderControl>
                   ],
                 ),
               ),
-              if (item.content.selfSend)
+              if (item.selfSend)
                 iconButton(
-                  onPressed: () => HeaderControl.deleteDanmaku(
-                    extra.id,
-                    plPlayerController.cid!,
-                  ).then((_) => item.expired = true),
+                  onPressed: () =>
+                      HeaderControl.deleteDanmaku(
+                        extra.id,
+                        plPlayerController.cid!,
+                      ).then(
+                        (_) => plPlayerController.danmakuDisplay?.remove?.call(
+                          extra.id,
+                        ),
+                      ),
                   icon: const Icon(CustomIcons.player_dm_tip_recall),
                 )
               else

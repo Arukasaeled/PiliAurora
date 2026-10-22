@@ -1,5 +1,10 @@
 import 'dart:async';
 
+import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
+import 'package:pili_aurora/pages/danmaku/window_screen.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/background_policy.dart';
@@ -9,6 +14,275 @@ import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  for (final buffering in [false, true]) {
+    testWidgets('播放状态切换${buffering ? '缓冲' : '暂停'}立即冻结媒体锚点', (tester) async {
+      var now = 2000000;
+      final runtime = _SamplingRuntime();
+      final session = PlaybackSession(
+        runtime: runtime,
+        mediaClockNowUs: () => now,
+      );
+      final owner = session.attach();
+      addTearDown(owner.close);
+      await tester.runAsync(
+        () => owner.load(_plan('clock'), start: PlaybackStartPolicy.play),
+      );
+      runtime.emitActual(
+        session.loadId,
+        const PlaybackActual(playing: true, buffering: false),
+      );
+      const anchor = PlaybackMediaAnchor(
+        positionUs: 1000000,
+        observedAtUs: 2000000,
+        effectiveRate: 1,
+        advancing: true,
+        ready: true,
+        continuity: 1,
+        validForUs: 500000,
+      );
+      void emitAnchor(PlaybackMediaAnchor value) => runtime._events.add(
+        PlaybackRuntimeMediaAnchor(
+          runtimeId: runtime.runtimeId,
+          loadId: session.loadId,
+          seekSequence: 0,
+          anchor: value,
+        ),
+      );
+      emitAnchor(anchor);
+      expect(session.currentMediaAnchor!.advancing, isTrue);
+      final renderer = DanmakuWindowRenderer<void>(
+        option: const DanmakuOption(fontSize: 20, duration: 8, safeArea: false),
+        size: const Size(320, 120),
+      );
+      addTearDown(renderer.dispose);
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Center(
+            child: SizedBox(
+              width: 320,
+              height: 120,
+              child: DanmakuWindowScreen<void>(
+                renderer: renderer,
+                clock: session,
+                size: const Size(320, 120),
+                monotonicUs: () => now,
+                frameTimeUs: () => now,
+                prepareFrame: (r, p, {required effectiveRate}) {
+                  if (r.validUntilUs != r.validFromUs) return;
+                  r.prepare(
+                    [
+                      DanmakuWindowContent(
+                        'scroll',
+                        r.validFromUs,
+                        DanmakuContentItem<void>('state'),
+                      ),
+                    ],
+                    generation: r.generation,
+                    preparedUntilUs: r.validFromUs + 10000000,
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      now += 25000;
+      await tester.pump(const Duration(microseconds: 25000));
+      final stoppedAt = renderer.presentationTimeUs;
+      runtime.emitActual(
+        session.loadId,
+        PlaybackActual(playing: buffering, buffering: buffering),
+      );
+      expect(session.currentMediaAnchor!.advancing, isFalse);
+      final frozen = session.currentMediaAnchor!;
+      expect(frozen.positionUs, 1025000);
+      expect(frozen.observedAtUs, now);
+      expect(frozen.positionAt(9000000), frozen.positionUs);
+      expect(renderer.presentationTimeUs, stoppedAt);
+      expect(tester.hasRunningAnimations, isFalse);
+      // 状态切换前的 worker 结果迟到时，暂停不能被旧采样撤销。
+      emitAnchor(anchor);
+      emitAnchor(
+        const PlaybackMediaAnchor(
+          positionUs: 1040000,
+          observedAtUs: 2040000,
+          effectiveRate: 1,
+          advancing: true,
+          ready: true,
+          continuity: 1,
+          validForUs: 500000,
+        ),
+      );
+      expect(session.currentMediaAnchor!.advancing, isFalse);
+      expect(session.currentMediaAnchor!.positionUs, frozen.positionUs);
+      var samples = 0;
+      runtime.onSample = () => samples++;
+      now += 1000000;
+      await tester.pump(const Duration(seconds: 1));
+      expect(renderer.presentationTimeUs, stoppedAt);
+      runtime.emitActual(
+        session.loadId,
+        const PlaybackActual(playing: true, buffering: false),
+      );
+      expect(samples, 1);
+      expect(session.currentMediaAnchor!.advancing, isFalse);
+      expect(session.currentMediaAnchor!.positionUs, frozen.positionUs);
+      expect(tester.hasRunningAnimations, isFalse);
+      // 暂停期间的读取结果在恢复后返回，也不能包含暂停时长的外推。
+      emitAnchor(anchor);
+      expect(session.currentMediaAnchor!.advancing, isFalse);
+      final resumed = PlaybackMediaAnchor(
+        positionUs: frozen.positionUs,
+        observedAtUs: now,
+        effectiveRate: 1,
+        advancing: true,
+        ready: true,
+        continuity: 1,
+        validForUs: 500000,
+      );
+      emitAnchor(resumed);
+      expect(session.currentMediaAnchor, same(resumed));
+      expect(session.currentMediaAnchor!.positionAt(now + 20000), 1045000);
+      now += 20000;
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(renderer.presentationTimeUs, 1045000);
+      await tester.pumpWidget(const SizedBox.shrink());
+      owner.close();
+      await tester.pump();
+      expect(session.isDisposed, isTrue);
+    });
+  }
+
+  test('暂停加载进入 ready 后主动取得首个媒体锚点', () async {
+    final runtime = _SamplingRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    const anchor = PlaybackMediaAnchor(
+      positionUs: 0,
+      observedAtUs: 1000000,
+      effectiveRate: 1,
+      advancing: false,
+      ready: true,
+      continuity: 1,
+      validForUs: 500000,
+    );
+    runtime.onSample = () => runtime._events.add(
+      PlaybackRuntimeMediaAnchor(
+        runtimeId: runtime.runtimeId,
+        loadId: session.loadId,
+        seekSequence: 0,
+        anchor: anchor,
+      ),
+    );
+    await owner.load(_plan('paused'), start: PlaybackStartPolicy.pause);
+    expect(session.currentMediaAnchor, same(anchor));
+    owner.close();
+    await runtime.released;
+  });
+
+  test('seek 等待原生资格时暂停可执行，较新目标替换旧等待', () async {
+    final runtime = _GatedRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('gate'), start: PlaybackStartPolicy.play);
+    final first = owner.seek(const Duration(seconds: 2));
+    expect((await owner.setPlaying(false)).outcome, CommandOutcome.applied);
+    final second = owner.seek(const Duration(seconds: 3));
+    expect((await first).outcome, CommandOutcome.superseded);
+    expect(runtime.seekCalls, isEmpty);
+    runtime.unblock();
+    expect((await second).outcome, CommandOutcome.applied);
+    expect(runtime.seekCalls, [const Duration(seconds: 3)]);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('seek 资格等待超时释放订阅，迟到完成仍可开启后续提交', () async {
+    final runtime = _GatedRuntime();
+    final session = PlaybackSession(
+      runtime: runtime,
+      commandBudget: const Duration(milliseconds: 30),
+    );
+    final owner = session.attach();
+    await owner.load(_plan('gate'), start: PlaybackStartPolicy.play);
+    final result = await owner.seek(const Duration(seconds: 2));
+    expect(result.outcome, CommandOutcome.failed);
+    expect(result.failure?.category, PlaybackFailureCategory.timeout);
+    expect(runtime.changes.hasListener, isFalse);
+    expect(runtime.seekCalls, isEmpty);
+    runtime.unblock();
+    expect(
+      (await owner.seek(const Duration(seconds: 3))).outcome,
+      CommandOutcome.applied,
+    );
+    expect(runtime.changes.hasListener, isFalse);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('关闭使外部 seek 等待立即结束，无需原生落点完成', () async {
+    final runtime = _GatedRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('gate'), start: PlaybackStartPolicy.play);
+    final seek = owner.seek(const Duration(seconds: 2));
+    owner.close();
+    expect((await seek).outcome, CommandOutcome.superseded);
+    await runtime.released;
+    expect(runtime.seekCalls, isEmpty);
+  });
+
+  test('媒体时钟独立发布，丢弃其他 runtime、旧加载和旧 seek 的采样', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('clock'), start: PlaybackStartPolicy.play);
+    final samples = <PlaybackMediaAnchor?>[];
+    final subscription = session.mediaAnchors.listen(samples.add);
+    const anchor = PlaybackMediaAnchor(
+      positionUs: 1000000,
+      observedAtUs: 2000000,
+      effectiveRate: 1,
+      advancing: true,
+      ready: true,
+      continuity: 1,
+      validForUs: 500000,
+    );
+    void emit({int? runtimeId, int? loadId, int sequence = 0}) {
+      runtime._events.add(
+        PlaybackRuntimeMediaAnchor(
+          runtimeId: runtimeId ?? runtime.runtimeId,
+          loadId: loadId ?? session.loadId,
+          seekSequence: sequence,
+          anchor: anchor,
+        ),
+      );
+    }
+
+    final version = session.currentSnapshot.snapshotVersion;
+    emit(runtimeId: -1);
+    emit(loadId: session.loadId - 1);
+    expect(samples, isEmpty);
+    emit();
+    expect(session.currentMediaAnchor, same(anchor));
+    expect(session.currentSnapshot.snapshotVersion, version);
+    await owner.seek(const Duration(seconds: 2));
+    expect(session.currentMediaAnchor, isNull);
+    emit();
+    expect(samples, [anchor, null]);
+    emit(sequence: 1);
+    expect(session.currentMediaAnchor, same(anchor));
+    final next = session.attach();
+    expect(session.currentMediaAnchor, isNull);
+    emit(sequence: 1);
+    expect(samples, [anchor, null, anchor, null]);
+    await subscription.cancel();
+    owner.close();
+    next.close();
+    await runtime.released;
+  });
 
   test('加载期间进入后台抑制后续播放，切换 owner 后仍保持策略', () async {
     final binding = TestWidgetsFlutterBinding.instance;
@@ -317,6 +591,23 @@ void main() {
     await runtime.released;
   });
 
+  test('页面关闭但媒体租约尚未释放时，原生播放器立即暂停', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('movie'), start: PlaybackStartPolicy.play);
+    final lease = owner.acquireKeepAlive()!;
+    expect(runtime.playCalls.last, isTrue);
+
+    owner.close();
+    await _until(() => !runtime.playCalls.last);
+    expect(session.isDisposed, isFalse);
+
+    lease.close();
+    await runtime.released;
+    expect(session.isDisposed, isTrue);
+  });
+
   test('关闭inactive owner不影响当前活动owner的播放', () async {
     final runtime = _FakeRuntime();
     final session = PlaybackSession(runtime: runtime);
@@ -471,7 +762,7 @@ void main() {
     expect(runtime.loadedPlans.last.reloadPosition, isNull);
     expect(runtime.shaderCalls, isEmpty);
     expect(session.currentSnapshot.intent.playing, isTrue);
-    expect(runtime.playCalls, [true, true]);
+    expect(runtime.playCalls, [true, false, true]);
 
     owner.close();
     await runtime.released;
@@ -601,6 +892,152 @@ void main() {
     expect((await nextLoad).outcome, LoadOutcome.ready);
     expect(runtime.loadedKeys, ['first', 'second']);
     expect(session.currentPlan?.contentKey, 'second');
+  });
+
+  test('地址重新解析时暂停旧媒体，失败后保持静音与用户意图', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    addTearDown(() async {
+      owner.close();
+      await runtime.released;
+    });
+    await owner.load(_plan('movie'), start: PlaybackStartPolicy.play);
+    final resolving = Completer<PlaybackPlan?>();
+    final query = owner.query((_) => resolving.future);
+    await _until(() => !runtime.playCalls.last);
+    expect(session.currentSnapshot.phase, PlaybackPhase.loading);
+    expect(session.currentSnapshot.intent.playing, isTrue);
+    resolving.complete(null);
+    expect((await query).outcome, LoadOutcome.failed);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.intent.playing, isTrue);
+  });
+
+  test('运行时失败使迟到的 play 收敛到暂停', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final playing = Completer<void>();
+    final started = Completer<void>();
+    addTearDown(() async {
+      if (!playing.isCompleted) playing.complete();
+      owner.close();
+      await runtime.released;
+    });
+    await owner.load(_plan('movie'));
+    runtime.onSetPlaying = (value, context, index) async {
+      if (value) {
+        started.complete();
+        await playing.future;
+      }
+      runtime.playCalls.add(value);
+      return const PlaybackRuntimeCommandResult();
+    };
+    final command = owner.setPlaying(true);
+    await started.future;
+    runtime._events.add(
+      PlaybackRuntimeFailure(
+        runtimeId: runtime.runtimeId,
+        loadId: session.loadId,
+        failure: const PlaybackFailure(
+          category: PlaybackFailureCategory.source,
+          operation: 'read',
+          stage: PlaybackStage.observing,
+          recoverable: true,
+          cause: 'source-failed',
+        ),
+      ),
+    );
+    playing.complete();
+    await command;
+    await _until(() => runtime.playCalls.length >= 3);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.phase, PlaybackPhase.failed);
+  });
+
+  test('重新加载中用户暂停，输出就绪后保持暂停', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    addTearDown(() async {
+      owner.close();
+      await runtime.released;
+    });
+    await owner.load(_plan('movie'), start: PlaybackStartPolicy.play);
+    final resolving = Completer<PlaybackPlan?>();
+    final query = owner.query((_) => resolving.future);
+    await _until(() => !runtime.playCalls.last);
+    await owner.setPlaying(false);
+    resolving.complete(_plan('movie'));
+    expect((await query).outcome, LoadOutcome.ready);
+    expect(runtime.playCalls.last, isFalse);
+    expect(session.currentSnapshot.intent.playing, isFalse);
+  });
+
+  test('同页切来源及地址查询完成后从最新位置续播', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final plan = _plan('movie');
+    await owner.load(plan, start: PlaybackStartPolicy.play);
+    runtime.position = const Duration(milliseconds: 123456);
+    await owner.load(plan.withSource(_plan('cdn').source));
+    expect(runtime.loadedPlans.last.startPosition, runtime.position);
+
+    final resolving = Completer<PlaybackPlan?>();
+    final query = owner.query((_) => resolving.future);
+    runtime.position = const Duration(milliseconds: 125678);
+    resolving.complete(plan);
+    await query;
+    expect(runtime.loadedPlans.last.startPosition, runtime.position);
+    owner.close();
+    await runtime.released;
+  });
+
+  test('重载失败清零后连续重试保留续播位置，seek 后使用新的当前位置', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    final plan = _plan('movie');
+    await owner.load(plan, start: PlaybackStartPolicy.play);
+    runtime.position = const Duration(milliseconds: 123456);
+    runtime.onLoad = (plan, context, index) async {
+      runtime.position = Duration.zero;
+      return _failedLoad(context);
+    };
+    await owner.retry();
+    await owner.retry();
+    expect(
+      runtime.loadedPlans.last.startPosition,
+      const Duration(milliseconds: 123456),
+    );
+    runtime.onLoad = null;
+    await owner.retry();
+    runtime.position = const Duration(seconds: 10);
+    await owner.retry();
+    expect(runtime.loadedPlans.last.startPosition, const Duration(seconds: 10));
+    owner.close();
+    await runtime.released;
+  });
+
+  test('新内容首次加载失败后可重试，使用失败内容的来源与起播位置', () async {
+    final runtime = _FakeRuntime();
+    final session = PlaybackSession(runtime: runtime);
+    final owner = session.attach();
+    await owner.load(_plan('old'));
+    runtime.position = const Duration(seconds: 99);
+    runtime.onLoad = (plan, context, index) async {
+      runtime.position = Duration.zero;
+      return _failedLoad(context);
+    };
+    await owner.load(_plan('new'));
+    runtime.onLoad = null;
+    expect((await owner.retry()).outcome, LoadOutcome.ready);
+    expect(runtime.loadedPlans.last.contentKey, 'new');
+    expect(runtime.loadedPlans.last.startPosition, isNull);
+    owner.close();
+    await runtime.released;
   });
 
   test('自动恢复从当前播放位置继续，保留当前配置和来源候选', () async {
@@ -832,6 +1269,16 @@ PlaybackPlan _plan(
   configuration: PlaybackConfiguration(audioOnly: audioOnly),
 );
 
+PlaybackRuntimeLoadResult _failedLoad(PlaybackExecutionContext context) =>
+    PlaybackRuntimeLoadResult(
+      loaded: false,
+      output: PlaybackOutputPreparation(
+        strategy: PlaybackOutputStrategy.failed,
+        evidence: 'source-failed',
+        outputEpoch: context.loadId,
+      ),
+    );
+
 PlaybackRuntimeLoadResult _audioLoaded(PlaybackExecutionContext context) =>
     PlaybackRuntimeLoadResult(
       loaded: true,
@@ -955,6 +1402,12 @@ class _FakeRuntime implements PlaybackRuntimePort {
     bool playing,
     PlaybackExecutionContext context,
   ) {
+    // 与原生运行时一致：失去归属的命令不会触碰播放器。
+    if (!context.isCurrent()) {
+      return Future.value(
+        const PlaybackRuntimeCommandResult(applied: false),
+      );
+    }
     final index = _playIndex++;
     if (onSetPlaying != null) return onSetPlaying!(playing, context, index);
     playCalls.add(playing);
@@ -1043,4 +1496,25 @@ class _FakeRuntime implements PlaybackRuntimePort {
     unawaited(_events.close());
     return const PlaybackShutdownResult.released();
   }
+}
+
+class _GatedRuntime extends _FakeRuntime implements PlaybackSeekSubmissionGate {
+  final changes = StreamController<void>.broadcast(sync: true);
+  bool blocked = true;
+  void unblock() {
+    blocked = false;
+    changes.add(null);
+  }
+
+  @override
+  bool get seekSubmissionBlocked => blocked;
+  @override
+  Stream<void> get seekSubmissionChanges => changes.stream;
+}
+
+class _SamplingRuntime extends _FakeRuntime
+    implements PlaybackMediaClockSampler {
+  void Function()? onSample;
+  @override
+  void sampleMediaClock() => onSample?.call();
 }

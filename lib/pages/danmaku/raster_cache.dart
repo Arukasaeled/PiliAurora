@@ -1,9 +1,36 @@
 import 'dart:ui' as ui;
+import 'dart:math' as math;
+
+import 'package:flutter/painting.dart' as painting;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
-import 'package:canvas_danmaku/utils/utils.dart' as canvas_danmaku;
+import 'package:canvas_danmaku/text_renderer.dart' as canvas_danmaku;
 
-typedef DanmakuRasterKey = (String, int, bool, bool, int?, double);
+const danmakuActiveRasterBytes =
+    int.fromEnvironment(
+      'WINDOWS_DANMAKU_MAX_ACTIVE_BYTES_MIB',
+      defaultValue: 96,
+    ) *
+    1024 *
+    1024;
+
+typedef DanmakuRasterKey = (String, int, bool, bool, int?, double, Object?);
+
+class _InlineRasterKey {
+  _InlineRasterKey(List<DanmakuInlineImage> images)
+    : entries = [
+        for (final image in images)
+          (image.placeholder, image.width, image.height, image.image),
+      ];
+  final List<(String, double, double, ui.Image)> entries;
+  @override
+  int get hashCode => Object.hashAll(entries);
+  @override
+  bool operator ==(Object other) =>
+      other is _InlineRasterKey &&
+      entries.length == other.entries.length &&
+      entries.indexed.every((entry) => entry.$2 == other.entries[entry.$1]);
+}
 
 class DanmakuRaster {
   DanmakuRaster(this.width, this.height, this.bytes, this.paragraph);
@@ -37,6 +64,47 @@ class DanmakuRasterCache {
   DanmakuOption option;
   double devicePixelRatio;
   String? fontFamily;
+  canvas_danmaku.DanmakuTextRenderer? _textRenderer;
+  canvas_danmaku.DanmakuTextRenderer get textRenderer {
+    final current = _textRenderer;
+    if (current != null &&
+        current.devicePixelRatio == devicePixelRatio &&
+        current.fontFamily == fontFamily) {
+      return current;
+    }
+    return _textRenderer = canvas_danmaku.DanmakuTextRenderer(
+      devicePixelRatio: devicePixelRatio,
+      fontFamily: fontFamily,
+    );
+  }
+
+  double measureTrackHeight() {
+    final painter = painting.TextPainter(
+      text: painting.TextSpan(
+        text: '弹幕',
+        style: painting.TextStyle(
+          fontSize: option.fontSize,
+          fontWeight: ui.FontWeight.values[option.fontWeight],
+          fontFamily: fontFamily,
+          height: option.lineHeight,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    final paragraph = textRenderer.generateParagraph(
+      content: DanmakuContentItem('弹幕'),
+      fontSize: option.fontSize,
+      fontWeight: option.fontWeight,
+    );
+    final height = math.max(
+      painter.height,
+      paragraph.height + option.strokeWidth,
+    );
+    painter.dispose();
+    paragraph.dispose();
+    return height;
+  }
+
   final int maxEntries;
   final int maxBytes;
   final int maxItemBytes;
@@ -69,16 +137,17 @@ class DanmakuRasterCache {
     content.selfSend,
     content.count,
     content.fontSizeScale,
+    content.inlineImages.isEmpty
+        ? null
+        : _InlineRasterKey(content.inlineImages),
   );
 
   ui.Image? rasterize(DanmakuContentItem content, DanmakuRaster entry) {
     if (entry.image == null) {
       final paragraph = entry.paragraph;
       if (paragraph == null) return null;
-      canvas_danmaku.DmUtils.devicePixelRatio = devicePixelRatio;
-      canvas_danmaku.DmUtils.fontFamily = fontFamily;
-      canvas_danmaku.DmUtils.updateSelfSendPaint(option.strokeWidth);
-      entry.image = canvas_danmaku.DmUtils.recordDanmakuImage(
+
+      entry.image = textRenderer.recordDanmakuImage(
         contentParagraph: paragraph,
         content: content,
         fontSize: option.fontSize,
@@ -95,13 +164,10 @@ class DanmakuRasterCache {
   }
 
   DanmakuRaster? get(DanmakuContentItem content, {bool rasterize = false}) {
-    canvas_danmaku.DmUtils.devicePixelRatio = devicePixelRatio;
-    canvas_danmaku.DmUtils.fontFamily = fontFamily;
-    canvas_danmaku.DmUtils.updateSelfSendPaint(option.strokeWidth);
     final key = keyOf(content);
     var entry = _entries.remove(key);
     if (entry == null) {
-      final paragraph = canvas_danmaku.DmUtils.generateParagraph(
+      final paragraph = textRenderer.generateParagraph(
         content: content,
         fontSize: option.fontSize,
         fontWeight: option.fontWeight,

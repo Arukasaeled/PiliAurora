@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:pili_aurora/plugin/pl_player/utils/android_video_output.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/video_output_resizer.dart';
 
 const landscape = (width: 1920, height: 1080);
@@ -54,9 +53,10 @@ void main() {
       commits.add(size);
     };
     resizer = VideoOutputResizer(
-      apply: (size, isCurrent) => setAndroidVideoOutputSize(
+      apply: (size, isCurrent) => setAndroidSurfaceSize(
         player: player,
-        size: size,
+        width: size.width,
+        height: size.height,
         isCurrent: isCurrent,
       ),
       onError: (_, error, _) => errors.add(error),
