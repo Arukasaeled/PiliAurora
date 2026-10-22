@@ -89,6 +89,7 @@ void main() {
       }
       await tester.pumpWidget(const SizedBox.shrink());
       player.videoDisplaySyncActive.dispose();
+      (player.frameSource as _FrameSource).frameState.dispose();
       await GStorage.setting.delete(SettingBoxKey.videoSync);
       expect(tester.takeException(), isNull);
     });
@@ -100,7 +101,7 @@ class _Player implements PlPlayerController {
   @override
   final bool isLive;
   @override
-  final PlaybackFrameSource frameSource = const EmptyPlaybackFrameSource();
+  final PlaybackFrameSource frameSource = _FrameSource();
   @override
   final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier<bool>(true);
   @override
@@ -138,4 +139,11 @@ class _Clock implements PlaybackMediaClock {
   PlaybackMediaAnchor? get currentMediaAnchor => null;
   @override
   Stream<PlaybackMediaAnchor?> get mediaAnchors => const Stream.empty();
+}
+
+class _FrameSource implements PlaybackFrameSource {
+  @override
+  final ValueNotifier<PlaybackFrameState> frameState = ValueNotifier(
+    const PlaybackFrameState(),
+  );
 }

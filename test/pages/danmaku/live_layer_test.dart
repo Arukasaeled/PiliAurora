@@ -1,3 +1,7 @@
+import 'package:pili_aurora/plugin/pl_player/playback/frame_timing.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+
+import 'dart:developer' show Timeline;
 import 'dart:async';
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
@@ -124,6 +128,8 @@ void main() {
     final messages = StreamController<LiveDanmakuMessage<void>>.broadcast(
       sync: true,
     );
+    final source = _Source();
+    addTearDown(source.frameState.dispose);
     var now = 0;
     late DanmakuInteractionHandle<void> Function() interaction;
     await tester.pumpWidget(
@@ -138,6 +144,7 @@ void main() {
             option: const DanmakuOption(massiveMode: true),
             size: const Size(800, 400),
             frameRate: 30,
+            frameSource: source,
             monotonicUs: () => now,
             frameTimeUs: () => now,
             createdInteraction: (get, _) => interaction = get,
@@ -159,6 +166,7 @@ void main() {
       final next = (slot * 1000000 / 120).round();
       await tester.binding.delayed(Duration(microseconds: next - now));
       now = next;
+      if (slot % 4 == 0) source.emit(slot ~/ 4);
       messages.add(
         LiveDanmakuMessage(
           identity: slot,
@@ -229,6 +237,8 @@ void main() {
       final messages = StreamController<LiveDanmakuMessage<void>>.broadcast(
         sync: true,
       );
+      final source = _Source();
+      addTearDown(source.frameState.dispose);
       var now = 0;
       var running = true;
       var visible = true;
@@ -240,6 +250,7 @@ void main() {
           child: LiveDanmakuLayer<void>(
             messages: messages.stream,
             running: running,
+            frameSource: source,
             visible: visible,
             option: const DanmakuOption(duration: 2),
             size: const Size(800, 400),
@@ -252,6 +263,7 @@ void main() {
       await tester.pumpWidget(build());
       await tester.pump();
       expect(messages.hasListener, isTrue);
+      expect(source.frameState.listening, isTrue);
       messages.add(
         const LiveDanmakuMessage(
           identity: 'one',
@@ -283,10 +295,42 @@ void main() {
       await tester.pumpWidget(build());
       await tester.pump();
       expect(messages.hasListener, isFalse);
+      expect(source.frameState.listening, isFalse);
       expect(previous.isValid, isFalse);
       await tester.pumpWidget(const SizedBox.shrink());
       await messages.close();
       expect(tester.takeException(), isNull);
     },
   );
+}
+
+class _Source implements PlaybackFrameSource {
+  static const output = OutputOperationToken(
+    runtimeId: 1,
+    loadId: 1,
+    outputEpoch: 1,
+    configRevision: 0,
+  );
+  @override
+  final _State frameState = _State();
+  void emit(int sequence) {
+    frameState.value = PlaybackFrameState(
+      output: output,
+      samplingGeneration: 1,
+      admission: VideoFrameSamplingAdmission.active,
+      epoch: 1,
+      videoSamples: VideoFrameBatch(
+        output: output,
+        samplingGeneration: 1,
+        kind: VideoFrameSampleKind.refreshRequested,
+        sequence: sequence,
+        monotonicUs: [Timeline.now],
+      ),
+    );
+  }
+}
+
+class _State extends ValueNotifier<PlaybackFrameState> {
+  _State() : super(const PlaybackFrameState());
+  bool get listening => hasListeners;
 }
