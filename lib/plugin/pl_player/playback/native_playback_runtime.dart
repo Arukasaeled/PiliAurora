@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:developer' show Timeline;
 
+import 'package:pili_aurora/plugin/pl_player/playback/frame_timing.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -61,7 +63,8 @@ class NativePlaybackRuntime
   final _frameTimings = PlaybackVideoFrameTimings(
     useRequestTimings: Platform.isAndroid,
   );
-  ValueNotifier<List<int>> get videoFrameTimings => _frameTimings.frames;
+  PlaybackFrameSource get frameSource => _frameTimings;
+  ValueListenable<List<int>> get videoFrameTimings => _frameTimings.frames;
   ValueListenable<bool> get videoFramePresented => _frameTimings.presented;
   final ValueNotifier<bool> videoDisplaySyncActive = ValueNotifier(false);
   final StreamController<PlaybackRuntimeEvent> _events =
@@ -185,6 +188,7 @@ class NativePlaybackRuntime
     }
     _mediaClockSeekSequence = context.seekSequence;
     _mediaClockSeekPending = true;
+    _syncVideoFrameSampling();
     _seekSubmissionBlocked = true;
     _seekObservationTimeout = Timer(const Duration(seconds: 5), () {
       _seekObservationTimeout = null;
@@ -401,6 +405,7 @@ class NativePlaybackRuntime
   @override
   Future<PlaybackShutdownResult> shutdown() {
     _shutdownRequested = true;
+    _syncVideoFrameSampling();
     _releaseSeekObservation();
     return _shutdownFuture ??= _serialize(_shutdown);
   }
@@ -475,6 +480,8 @@ class NativePlaybackRuntime
         outputEpoch: ++_outputEpoch,
         configRevision: _configRevision,
       );
+      _samplingEnabled = false;
+      _frameTimings.beginLoad(token, Timeline.now);
       await output.beginOutputForLoad(token);
       if (!context.isCurrent()) {
         await output.invalidateOutputGeneration(token);
@@ -496,7 +503,6 @@ class NativePlaybackRuntime
       });
       _activeNow = context.monotonicNow;
       _resetHealthEvidence();
-      _frameTimings.beginLoad();
 
       player
         ..setMediaHeader(
@@ -826,7 +832,6 @@ class NativePlaybackRuntime
               : DiagnosticLogLevel.info,
           details: details,
         ),
-        onAndroidFrameTimings: _recordLegacyFrameTimings,
       );
       // The explicit preloaded participant owns paused-load surface sizing;
       // the legacy post-videoParams attach mode bypasses that proof gate.
@@ -840,7 +845,6 @@ class NativePlaybackRuntime
         androidOutputLimitHeight: base.androidOutputLimitHeight,
         androidOutputLimit: base.androidOutputLimit,
         onAndroidDiagnostic: base.onAndroidDiagnostic,
-        onAndroidFrameTimings: base.onAndroidFrameTimings,
         androidAttachSurfaceAfterVideoParameters: false,
       );
       final video = await VideoController.create(
@@ -878,8 +882,8 @@ class NativePlaybackRuntime
         player
             .observeProperty('display-sync-active')
             .listen(
-              (value) => videoDisplaySyncActive.value = value == 'yes',
-              onError: (Object _) => videoDisplaySyncActive.value = false,
+              (value) => _setDisplaySyncActive(value == 'yes'),
+              onError: (Object _) => _setDisplaySyncActive(false),
             ),
       );
       _subscriptions.add(
@@ -915,6 +919,10 @@ class NativePlaybackRuntime
       );
       _subscriptions.add(
         video.outputProgress.listen(_observeOutputProgress),
+      );
+      _frameTimings.setFrameTimelineSupported(video.frameTimelineSupported);
+      _subscriptions.add(
+        video.frameEvents.listen(_frameTimings.accept),
       );
       // 输出已可挂载；媒体探测和首帧准备继续在原生加载链中完成。
       _videoControllerListenable.value = video;
@@ -992,7 +1000,10 @@ class NativePlaybackRuntime
   void _subscribePlayerState(Player player) {
     _subscriptions.addAll([
       player.stream.position.listen((_) => sampleMediaClock()),
-      player.stream.completed.listen((_) => sampleMediaClock()),
+      player.stream.completed.listen((_) {
+        _syncVideoFrameSampling();
+        sampleMediaClock();
+      }),
       player.stream.playing.listen((value) {
         _playing = value;
         sampleMediaClock();
@@ -1009,8 +1020,42 @@ class NativePlaybackRuntime
     ]);
   }
 
-  void _recordLegacyFrameTimings(List<int> frames) {
-    _frameTimings.recordRequests(frames);
+  bool _samplingEnabled = false;
+
+  void _setDisplaySyncActive(bool active) {
+    videoDisplaySyncActive.value = active;
+    _frameTimings.setDisplaySyncActive(active);
+  }
+
+  void _syncVideoFrameSampling() {
+    final output = _videoController;
+    final token = _activeBinding?.token;
+    final enabled =
+        !_shutdownRequested &&
+        _playing &&
+        !_buffering &&
+        !_seeking &&
+        !_mediaClockSeekPending &&
+        _player?.state.completed == false &&
+        token != null &&
+        _activeBinding?.retiring == false &&
+        token == _frameTimings.frameState.value.output;
+    if (_samplingEnabled == enabled) return;
+    _samplingEnabled = enabled;
+    _frameTimings.setEnabled(enabled, Timeline.now);
+    if (output != null && token != null) {
+      unawaited(
+        output.setVideoFrameSampling(token, enabled).catchError((Object error) {
+          if (_frameTimings.frameState.value.output == token) {
+            _frameTimings.invalidate(Timeline.now);
+          }
+          _diagnostics?.event(
+            'video.sampling.failed',
+            details: {'error': '$error'},
+          );
+        }),
+      );
+    }
   }
 
   Future<void> _handleLifecycleHook(
@@ -1139,6 +1184,10 @@ class NativePlaybackRuntime
       return;
     }
     try {
+      if (_frameTimings.frameState.value.output == binding.token) {
+        _frameTimings.withdraw(Timeline.now);
+        _samplingEnabled = false;
+      }
       await _videoController?.invalidateOutputGeneration(binding.token!);
       binding.unloaded = true;
       _tryRetireBinding(binding);
@@ -1161,6 +1210,7 @@ class NativePlaybackRuntime
         _mediaClockSeekPending = false;
         _mediaClockContinuity++;
         _releaseSeekObservation();
+        _syncVideoFrameSampling();
         sampleMediaClock();
       case NativeStartFile(:final playlistEntryId):
         final pending = _pendingLoad;
@@ -1779,7 +1829,7 @@ class NativePlaybackRuntime
     _lastVideoFrameAdvance = null;
     _lastVideoFrameConsumed = null;
     _lastVideoFrameNumber = null;
-    _recordLegacyFrameTimings(const []);
+    _frameTimings.invalidate(Timeline.now);
     if (!keepCapabilities) {
       _hasVideo = null;
       _hasAudio = null;
@@ -1790,6 +1840,7 @@ class NativePlaybackRuntime
   }
 
   void _emitActual(int? loadId) {
+    _syncVideoFrameSampling();
     final player = _player;
     if (player == null || loadId == null) return;
     final now = _activeNow();
@@ -1951,6 +2002,7 @@ class NativePlaybackRuntime
 
     recordStage('begin');
     _shutdownRequested = true;
+    _syncVideoFrameSampling();
     _healthExpiry?.cancel();
     try {
       final player = _player;
@@ -2071,7 +2123,7 @@ class NativePlaybackRuntime
     }
     _subscriptions.clear();
     if (!_events.isClosed) unawaited(_events.close());
-    _frameTimings.clearPhase();
+    _frameTimings.invalidate(Timeline.now);
     videoDisplaySyncActive.value = false;
     unawaited(_seekSubmissionChanges.close());
     _frameTimings.dispose();

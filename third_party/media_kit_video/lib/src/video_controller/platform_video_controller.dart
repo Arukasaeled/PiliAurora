@@ -5,6 +5,7 @@
 /// Use of this source code is governed by MIT license that can be found in the LICENSE file.
 import 'dart:async';
 import 'dart:io';
+import 'package:media_kit_video/src/video_controller/video_frame_sampling.dart';
 import 'package:flutter/widgets.dart';
 
 import 'package:media_kit/media_kit.dart';
@@ -43,6 +44,26 @@ abstract class PlatformVideoController {
   /// Batches of frames that the platform texture consumer has acquired.
   Stream<VideoOutputProgress> get outputProgress =>
       _outputProgressController.stream;
+
+  final _frameEvents = StreamController<VideoFrameEvent>.broadcast(sync: true);
+  final _frameEventGate = VideoFrameEventGate();
+  Stream<VideoFrameEvent> get frameEvents => _frameEvents.stream;
+  bool frameTimelineSupported = false;
+
+  Future<void> setVideoFrameSampling(
+    OutputOperationToken token,
+    bool enabled,
+  ) async {}
+
+  @protected
+  void bindFrameOutput(OutputOperationToken? output) =>
+      _frameEventGate.bind(output);
+
+  @protected
+  void emitFrameEvent(VideoFrameEvent event) {
+    if (!_frameEvents.isClosed && _frameEventGate.accept(event))
+      _frameEvents.add(event);
+  }
 
   /// {@macro platform_video_controller}
   PlatformVideoController(this.player, this.configuration);
@@ -105,6 +126,7 @@ abstract class PlatformVideoController {
   @protected
   void closeOutputProgress() {
     unawaited(_outputProgressController.close());
+    unawaited(_frameEvents.close());
   }
 
   /// A [Future] that completes when the first video frame has been rendered.
@@ -182,9 +204,6 @@ class VideoControllerConfiguration {
   final void Function(String event, Map<String, Object?> details)?
   onAndroidDiagnostic;
 
-  /// Bounded batches of completed texture refresh requests in monotonic microseconds.
-  final ValueChanged<List<int>>? onAndroidFrameTimings;
-
   /// Whether to attach `android.view.Surface` after video parameters are known.
   ///
   /// The default Android path configures a verified single-track GPU Surface
@@ -204,6 +223,5 @@ class VideoControllerConfiguration {
     this.androidOutputLimitHeight,
     this.androidOutputLimit,
     this.onAndroidDiagnostic,
-    this.onAndroidFrameTimings,
   });
 }

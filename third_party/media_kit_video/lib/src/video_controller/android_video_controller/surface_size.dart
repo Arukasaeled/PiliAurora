@@ -174,7 +174,14 @@ Future<bool> setAndroidSurfaceSize({
       set('wid', wid.toString());
       set('vo', 'gpu');
     }
-    if (!waitForFrame) return true;
+    if (!waitForFrame) {
+      await _channel
+          .invokeMethod<void>('VideoOutputManager.ConfirmSurfaceConfigured', {
+            'handle': player.handle.toString(),
+            ...operationToken.toPlatformArguments(),
+          });
+      return current();
+    }
     final request = (++_nextFrameWait).toString();
     _frameWaits[player] = request;
     _frameWaitTokens[player] = operationToken;

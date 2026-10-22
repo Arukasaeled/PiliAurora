@@ -19,17 +19,32 @@ void VideoOutputManager::Create(
     std::function<void(const OutputOperationToken&, int64_t, int64_t, int64_t)>
         output_attached_callback,
     std::function<void(const OutputOperationToken&, int64_t)>
-        frame_consumed_callback) {
+        frame_consumed_callback,
+    VideoFrameSamplingCallback frame_sampling_callback) {
   control_thread_pool_->Post([this, handle, configuration,
-                              texture_update_callback,
-                              output_attached_callback,
-                              frame_consumed_callback]() {
+                              texture_update_callback, output_attached_callback,
+                              frame_consumed_callback,
+                              frame_sampling_callback]() {
     if (video_outputs_.find(handle) != video_outputs_.end()) return;
     auto instance = std::make_unique<VideoOutput>(
         handle, configuration, registrar_, thread_pool_.get(),
-        output_attached_callback, frame_consumed_callback);
+        output_attached_callback, frame_consumed_callback,
+        frame_sampling_callback);
     instance->SetTextureUpdateCallback(texture_update_callback);
     video_outputs_.insert(std::make_pair(handle, std::move(instance)));
+  });
+}
+
+void VideoOutputManager::SetFrameSampling(
+    int64_t handle, OutputOperationToken token, bool enabled,
+    std::function<void(bool)> on_complete) {
+  control_thread_pool_->Post([this, handle, token, enabled, on_complete]() {
+    const auto output = video_outputs_.find(handle);
+    if (output == video_outputs_.end()) {
+      on_complete(false);
+      return;
+    }
+    output->second->SetFrameSampling(token, enabled, on_complete);
   });
 }
 

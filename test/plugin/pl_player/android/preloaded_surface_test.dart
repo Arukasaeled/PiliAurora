@@ -52,6 +52,78 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  test('平台通道隔离旧 token、旧代次和同输出倒序批次', () async {
+    final received = <VideoFrameEvent>[];
+    final subscription = controller.frameEvents.listen(received.add);
+    addTearDown(subscription.cancel);
+    Future<void> emit(Map<String, Object> data) async {
+      final completed = Completer<void>();
+      ServicesBinding.instance.channelBuffers.push(
+        channel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall('VideoOutput.FrameSampling', {
+            'handle': player.handle,
+            'token': token.toPlatformArguments(),
+            ...data,
+          }),
+        ),
+        (_) => completed.complete(),
+      );
+      await completed.future;
+    }
+
+    await emit({
+      'samplingGeneration': 1,
+      'admission': 'active',
+      'validAfterUs': 0,
+    });
+    await emit({
+      'samplingGeneration': 1,
+      'kind': 'refreshRequested',
+      'sequence': 10,
+      'monotonicUs': [1000],
+    });
+    await emit({
+      'samplingGeneration': 2,
+      'admission': 'blocked',
+      'validAfterUs': 2000,
+    });
+    await emit({
+      'samplingGeneration': 3,
+      'admission': 'active',
+      'validAfterUs': 3000,
+    });
+    await emit({
+      'samplingGeneration': 1,
+      'kind': 'refreshRequested',
+      'sequence': 11,
+      'monotonicUs': [4000],
+    });
+    await emit({
+      'samplingGeneration': 3,
+      'kind': 'refreshRequested',
+      'sequence': 10,
+      'monotonicUs': [4000],
+    });
+    await emit({
+      'samplingGeneration': 3,
+      'kind': 'refreshRequested',
+      'sequence': 12,
+      'monotonicUs': [4000],
+    });
+    expect(received.whereType<VideoFrameBatch>().map((b) => b.sequence), [
+      10,
+      12,
+    ]);
+    await controller.invalidateOutputGeneration(token);
+    await emit({
+      'samplingGeneration': 4,
+      'admission': 'active',
+      'validAfterUs': 5000,
+    });
+    expect(received, hasLength(5));
+  });
+
   for (final selectedBeforeDecode in [false, true]) {
     for (final displayWidth in [1920, 1440]) {
       test(

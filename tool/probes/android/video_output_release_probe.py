@@ -53,6 +53,7 @@ public class VideoOutputReleaseProbe {
       void error(String code, String message, Object details) { errors++; }
     }
   }
+  void transitionSampling(String admission) { events.add("sampling." + admission); }
   void resetFrameSamples() {}
   void finishFrameWait(boolean accepted) {}
   void diagnostic(String event, Throwable error) {}
@@ -67,10 +68,10 @@ public class VideoOutputReleaseProbe {
     output.dispose(first);
     check(first.successes == 1, "release receipt must follow JNI deletion without a fixed delay");
     check(output.wid == 0, "released JNI reference must be cleared");
-    check(output.events.equals(List.of("texture", "surface", "jni")), "resource release order");
+    check(output.events.equals(List.of("sampling.blocked", "texture", "surface", "jni")), "resource release order");
     var repeated = new MethodChannel.Result();
     output.dispose(repeated);
-    check(repeated.successes == 1 && output.events.size() == 3, "idempotent release receipt");
+    check(repeated.successes == 1 && output.events.size() == 4, "idempotent release receipt");
     var broken = new VideoOutputReleaseProbe();
     broken.deleteGlobalObjectRef.fail = true;
     var error = new MethodChannel.Result();
@@ -78,12 +79,12 @@ public class VideoOutputReleaseProbe {
     check(error.errors == 1 && error.successes == 0, "JNI failure cannot acknowledge release");
     var errorAgain = new MethodChannel.Result();
     broken.dispose(errorAgain);
-    check(errorAgain.errors == 1 && broken.events.size() == 3, "failed reference stays quarantined");
+    check(errorAgain.errors == 1 && broken.events.size() == 4, "failed reference stays quarantined");
     var empty = new VideoOutputReleaseProbe();
     empty.wid = 0;
     var noReference = new MethodChannel.Result();
     empty.dispose(noReference);
-    check(noReference.successes == 1 && empty.events.size() == 2, "output without JNI reference");
+    check(noReference.successes == 1 && empty.events.size() == 3, "output without JNI reference");
     System.out.println("PASS: production Surface disposal, immediate receipt, idempotence and JNI failure");
   }
 }

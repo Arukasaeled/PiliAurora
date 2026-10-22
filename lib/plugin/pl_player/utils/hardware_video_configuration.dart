@@ -12,7 +12,6 @@ VideoControllerConfiguration hardwareVideoConfiguration({
   VideoOutputSize? Function()? androidOutputLimit,
   void Function(String event, Map<String, Object?> details)?
   onAndroidDiagnostic,
-  void Function(List<int>)? onAndroidFrameTimings,
 }) {
   final windowsSize = VideoOutputSizePolicy.fitWithinLimit(
     source: windowsSourceSize,
@@ -28,7 +27,6 @@ VideoControllerConfiguration hardwareVideoConfiguration({
     androidOutputLimitHeight: androidOutputLimitHeight,
     androidOutputLimit: androidOutputLimit,
     onAndroidDiagnostic: onAndroidDiagnostic,
-    onAndroidFrameTimings: onAndroidFrameTimings,
     // 由 mpv 顺序探测并处理运行时回退；不依赖特定等级或措辞的错误日志。
     hwdec: enabled ? HwDecType.orderedCandidates(configured).join(',') : 'no',
   );

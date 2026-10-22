@@ -41,3 +41,5 @@ Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频�
 2026-10-17（piliaurora.6）：Android 单视频轨的 demux 宽高有效时，在 preloaded 阶段挂载 Surface。裁剪、PAR 或旋转未确认时先使用临时缓冲区，并继续由 FILE_LOADED 核对轨道和最终几何；同尺寸复用已挂载的输出，尺寸变化沿用 VO 更新缓冲区，避免直播从 null 输出切到 GPU 后重建解码器、触发不可 seek 错误和音画偏移。完整的 preloaded 几何证据仍须满足原有确认条件。主机回归覆盖实际控制器的挂载顺序、同尺寸复用与显示几何修正；MediaCodec、首帧延迟和音画同步仍需 Android 真机验收。
 
 2026-10-17（piliaurora.7）：修正 on_preloaded 早于 mpv 选轨的时序：写入 vid 后核对唯一候选轨道，FILE_LOADED 再核对实际 selected 与几何。Android 释放时同步设置 vo=null、wid=0 后删除 JNI Surface 全局引用，去掉原有固定 5000ms 延迟；释放回执仍等待真实 JNI 删除，失败继续隔离资源。回归覆盖未选轨启动、释放顺序和待回执重入；主机 Java 探针运行生产释放方法，检查即时回执及删除失败。MediaCodec 启动、GPU 与 JNI 并发行为仍需 Android 真机复测。
+
+2026-10-22：新增带输出 token、采样代次、阶段和序号的视频帧通道。Android 监听注册冻结身份，请求完成与实际新 buffer 取图共同确认候选；重配、暂停和 seek 关闭采样，恢复点后的新帧确认再开启活动代次。Windows 消费回调携带已渲染纹理的身份与采样代次，经 render 队列验证后发布。首帧和健康证据继续走独立消费进度入口。同 token 重配保留批次序号，移除旧的无类型 Android 请求回调。

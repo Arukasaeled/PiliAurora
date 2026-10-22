@@ -27,7 +27,8 @@ VideoOutput::VideoOutput(int64_t handle,
                                             int64_t, int64_t)>
                              output_attached_callback,
                          std::function<void(const OutputOperationToken&, int64_t)>
-                             frame_consumed_callback)
+                             frame_consumed_callback,
+                         VideoFrameSamplingCallback frame_sampling_callback)
     : handle_(reinterpret_cast<mpv_handle*>(handle)),
       width_(configuration.width),
       height_(configuration.height),
@@ -35,7 +36,8 @@ VideoOutput::VideoOutput(int64_t handle,
       registrar_(registrar),
       thread_pool_ref_(thread_pool_ref),
       output_attached_callback_(std::move(output_attached_callback)),
-      frame_consumed_callback_(std::move(frame_consumed_callback)) {
+      frame_consumed_callback_(std::move(frame_consumed_callback)),
+      frame_sampling_callback_(std::move(frame_sampling_callback)) {
   // The constructor must be invoked through the thread pool, because
   // |ANGLESurfaceManager| & libmpv render context creation can conflict with
   // the existing |Render| or |Resize| calls from another |VideoOutput|
@@ -151,6 +153,7 @@ void VideoOutput::ResetRenderer(std::function<void(bool)> on_ready) {
       return;
     }
     texture_update_pending_ = true;
+    TransitionSampling("blocked");
     renderer_reset_pending_ = true;
     if (render_context_ != nullptr) {
       mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
@@ -330,12 +333,24 @@ bool VideoOutput::Render() {
         !active_token_invalidated_ && frame_seen_token_.has_value() &&
         *frame_seen_token_ == *active_token_;
     if (current_file_frame) rendered_frame_token_ = *active_token_;
+    if (current_file_frame && frame_updated && sampling_enabled_ &&
+        sampling_admission_ == "blocked" && !resize_in_progress_)
+      TransitionSampling("priming");
     {
       std::lock_guard<std::mutex> lock(textures_mutex_);
       if (current_file_frame) {
         texture_frame_tokens_[texture_id_] = *active_token_;
+        if (frame_updated)
+          texture_sampling_frames_.insert_or_assign(
+              texture_id_,
+              TextureFrameIdentity{
+                  *active_token_, sampling_generation_,
+                  std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch())
+                      .count()});
       } else {
         texture_frame_tokens_.erase(texture_id_);
+        texture_sampling_frames_.erase(texture_id_);
       }
     }
     try {
@@ -343,12 +358,14 @@ bool VideoOutput::Render() {
       if (!registrar_->texture_registrar()->MarkTextureFrameAvailable(texture_id_)) {
         std::lock_guard<std::mutex> lock(textures_mutex_);
         texture_frame_tokens_.erase(texture_id_);
+        texture_sampling_frames_.erase(texture_id_);
         return false;
       }
     } catch (...) {
       // Keep the protective frame if rendering/registration failed.
       std::lock_guard<std::mutex> lock(textures_mutex_);
       texture_frame_tokens_.erase(texture_id_);
+      texture_sampling_frames_.erase(texture_id_);
       return false;
     }
     if (frame_updated) renderer_reset_pending_ = false;
@@ -385,8 +402,35 @@ bool VideoOutput::IsCurrentToken(const OutputOperationToken& token) const {
          !active_token_invalidated_;
 }
 
-void VideoOutput::BeginOutputForLoad(
-    OutputOperationToken token,
+void VideoOutput::TransitionSampling(const std::string& admission) {
+  sampling_generation_++;
+  sampling_admission_ = admission;
+  sampling_valid_after_us_ =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count();
+  if (active_token_.has_value())
+    frame_sampling_callback_({*active_token_, sampling_generation_, admission,
+                              sampling_valid_after_us_, 0});
+}
+
+void VideoOutput::SetFrameSampling(OutputOperationToken token, bool enabled,
+                                   std::function<void(bool)> on_complete) {
+  thread_pool_ref_->Post([this, token, enabled, on_complete]() {
+    if (!IsCurrentToken(token)) {
+      on_complete(false);
+      return;
+    }
+    sampling_enabled_ = enabled;
+    TransitionSampling(enabled && output_prepared_ && !resize_in_progress_ &&
+                               !renderer_reset_pending_
+                           ? "priming"
+                           : "blocked");
+    on_complete(true);
+  });
+}
+
+void VideoOutput::BeginOutputForLoad(OutputOperationToken token,
     std::function<void(bool)> on_complete) {
   thread_pool_ref_->Post([this, token, on_complete]() {
     bool accepted = token.runtime_id > 0 && token.load_id > 0 &&
@@ -399,6 +443,7 @@ void VideoOutput::BeginOutputForLoad(
         if (render_context_ != nullptr) {
           mpv_render_context_update(render_context_);
         }
+        sampling_sequence_ = 0;
         high_water_token_ = token;
         active_token_ = token;
         active_token_invalidated_ = false;
@@ -409,6 +454,7 @@ void VideoOutput::BeginOutputForLoad(
         attached_token_notified_.reset();
         std::lock_guard<std::mutex> lock(textures_mutex_);
         texture_frame_tokens_.clear();
+        texture_sampling_frames_.clear();
       } else {
         accepted = false;
       }
@@ -416,6 +462,7 @@ void VideoOutput::BeginOutputForLoad(
       if (render_context_ != nullptr) {
         mpv_render_context_update(render_context_);
       }
+      sampling_sequence_ = 0;
       high_water_token_ = token;
       active_token_ = token;
       active_token_invalidated_ = false;
@@ -426,7 +473,10 @@ void VideoOutput::BeginOutputForLoad(
       attached_token_notified_.reset();
       std::lock_guard<std::mutex> lock(textures_mutex_);
       texture_frame_tokens_.clear();
+      texture_sampling_frames_.clear();
     }
+    if (accepted && sampling_admission_ != "blocked")
+      TransitionSampling("blocked");
     on_complete(accepted);
   });
 }
@@ -454,6 +504,7 @@ void VideoOutput::PrepareForLoad(
     {
       std::lock_guard<std::mutex> lock(textures_mutex_);
       texture_frame_tokens_.clear();
+      texture_sampling_frames_.clear();
     }
     const auto required_width = GetVideoWidth();
     const auto required_height = GetVideoHeight();
@@ -507,6 +558,7 @@ void VideoOutput::InvalidateOutputGeneration(
     bool acknowledged = false;
     if (high_water_token_.has_value()) {
       if (*high_water_token_ == token) {
+        TransitionSampling("blocked");
         active_token_invalidated_ = true;
         output_prepared_ = false;
         active_track_id_.clear();
@@ -516,6 +568,7 @@ void VideoOutput::InvalidateOutputGeneration(
         {
           std::lock_guard<std::mutex> lock(textures_mutex_);
           texture_frame_tokens_.clear();
+          texture_sampling_frames_.clear();
         }
         acknowledged = true;
       } else if (high_water_token_->CanReplace(token)) {
@@ -538,17 +591,32 @@ void VideoOutput::NotifyTextureUpdate(int64_t id, int64_t width, int64_t height)
 }
 
 void VideoOutput::NotifyFrameConsumed(int64_t texture_id) {
-  std::optional<OutputOperationToken> token;
+  std::optional<TextureFrameIdentity> frame;
   {
     std::lock_guard<std::mutex> lock(textures_mutex_);
-    const auto found = texture_frame_tokens_.find(texture_id);
-    if (found != texture_frame_tokens_.end()) token = found->second;
+    const auto found = texture_sampling_frames_.find(texture_id);
+    if (found != texture_sampling_frames_.end()) {
+      frame = found->second;
+      texture_sampling_frames_.erase(found);
+    }
   }
-  if (!token.has_value()) return;
-  const auto timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
+  if (!frame.has_value()) return;
+  const auto timestamp =
+      std::chrono::duration_cast<std::chrono::microseconds>(
                              std::chrono::steady_clock::now().time_since_epoch())
                              .count();
-  frame_consumed_callback_(*token, timestamp);
+  thread_pool_ref_->Post([this, frame = *frame, timestamp]() {
+    if (!IsCurrentToken(frame.token)) return;
+    frame_consumed_callback_(frame.token, timestamp);
+    if (frame.generation != sampling_generation_ ||
+        frame.rendered_at_us <= sampling_valid_after_us_ || !sampling_enabled_)
+      return;
+    if (sampling_admission_ == "priming")
+      TransitionSampling("active");
+    else if (sampling_admission_ == "active")
+      frame_sampling_callback_(
+          {frame.token, frame.generation, "", timestamp, ++sampling_sequence_});
+  });
 }
 
 void VideoOutput::SetSize(std::optional<int64_t> width,
@@ -694,6 +762,7 @@ void VideoOutput::Resize(int64_t required_width,
     FinishResize(required_width, required_height, false);
     return;
   }
+  TransitionSampling("blocked");
   resize_in_progress_ = true;
   std::cout << required_width << " " << required_height << std::endl;
   const auto old_texture_id = texture_id_;
@@ -729,6 +798,7 @@ bool VideoOutput::ApplyResize(int64_t required_width, int64_t required_height) {
   {
     std::lock_guard<std::mutex> lock(textures_mutex_);
     texture_frame_tokens_.clear();
+    texture_sampling_frames_.clear();
   }
   // H/W
   if (surface_manager_ != nullptr) {
@@ -777,6 +847,7 @@ bool VideoOutput::ApplyResize(int64_t required_width, int64_t required_height) {
     texture_variants_.emplace(
         std::make_pair(texture_id_, std::move(texture_variant)));
     texture_frame_tokens_.erase(texture_id_);
+    texture_sampling_frames_.erase(texture_id_);
   }
   // S/W
   if (pixel_buffer_ != nullptr) {
@@ -818,6 +889,7 @@ bool VideoOutput::ApplyResize(int64_t required_width, int64_t required_height) {
     texture_variants_.emplace(
         std::make_pair(texture_id_, std::move(texture_variant)));
     texture_frame_tokens_.erase(texture_id_);
+    texture_sampling_frames_.erase(texture_id_);
   }
   return texture_id_ != 0;
 }
@@ -868,6 +940,7 @@ void VideoOutput::UnregisterTexture(int64_t id,
           textures_.erase(id);
           pixel_buffer_textures_.erase(id);
           texture_frame_tokens_.erase(id);
+          texture_sampling_frames_.erase(id);
         }
         if (on_unregistered) on_unregistered();
         {
