@@ -37,7 +37,7 @@ Windows SDK 默认读取安装登记；非默认位置也可传 `--windows-sdk E
 
 输出目录为 `flutter/engine/src/out/piliaurora_windows_profile/` 或对应 Release 目录，
 包含 `flutter_windows.dll` 与 `engine-identity.json`。身份文件登记源码提交、补丁摘要、
-DLL 摘要、运行模式、架构和原生测试状态。
+DLL 摘要、运行模式、架构和原生测试状态，格式遵循[共同身份协议](../README.md)。
 
 ## 对照采集
 
@@ -45,7 +45,7 @@ DLL 摘要、运行模式、架构和原生测试状态。
 pwsh -NoProfile -File tool/probes/windows/measure_danmaku.ps1 -PresentMonPath E:/tools/PresentMon-2.5.1-x64.exe -EngineLibrary E:/engine/windows-pacing/flutter/engine/src/out/piliaurora_windows_profile/flutter_windows.dll
 ```
 
-采集入口检查 Profile/x64 和摘要，临时替换本次生成的探针 DLL，并在结束后恢复。
+采集入口通过统一构建脚本生成对应配置的探针，检查 Profile/x64、应用配置和引擎身份；`-SkipBuild` 复用相同身份的输出。
 添加 `-Media <本地视频>` 测量视频合成负载。原始数据、引擎身份、同帧关联与
 ±1/±2/±3 汇总保存在独立采集目录；完整流程见[平台探针](../../probes/README.md#windows-弹幕帧节奏探针)。
 

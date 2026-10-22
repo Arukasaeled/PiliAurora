@@ -10,15 +10,21 @@ import build_apk
 class BuildApkTest(unittest.TestCase):
     def validate(self, **changes):
         identity = {
-            "target": "lib/main.dart", "mode": "profile", "package": "test.profile",
-            "engineRevision": build_apk.ENGINE_REVISION, "apkSha256": "apk",
-            "tickerSha256": "ticker", "contentComposition": True,
-            "dartDefines": ["PROBE=true"],
+            "profile": "androidFramePlan", "mode": "profile", "engineCommit": build_apk.ENGINE_REVISION,
+            "application": {"target": "lib/main.dart", "package": "test.profile", "apkSha256": "apk",
+                "tickerSha256": "ticker", "sourceSha256": "source", "dartDefines": ["PROBE=true"]},
         }
-        identity.update(changes)
+        for key, value in changes.items():
+            if key in {"mode", "profile", "engineCommit"}:
+                identity[key] = value
+            else:
+                identity["application"][key] = value
+        identity["identityDigest"] = build_apk.engine_identity.identity_digest(identity)
         build_apk.validate_source_identity(
             identity, target="lib/main.dart", mode="profile", package="test.profile",
-            apk_hash="apk", ticker_hash="ticker", dart_defines=["PROBE=true"])
+            apk_hash="apk", ticker_hash="ticker", dart_defines=["PROBE=true"],
+            engine_digest=build_apk.engine_identity.identity_digest({
+                "profile": "androidFramePlan", "mode": "profile", "engineCommit": build_apk.ENGINE_REVISION}), source_hash="source")
 
     def test_matching_source_can_be_reused(self):
         self.validate()
@@ -26,8 +32,9 @@ class BuildApkTest(unittest.TestCase):
     def test_changed_build_configuration_refuses_reuse(self):
         for key, value in {
             "target": "probe.dart", "mode": "release", "package": "other",
-            "engineRevision": "other", "apkSha256": "changed",
-            "tickerSha256": "changed", "contentComposition": False,
+            "engineCommit": "other", "apkSha256": "changed",
+            "tickerSha256": "changed", "profile": "standard",
+            "sourceSha256": "changed",
             "dartDefines": ["PROBE=false"],
         }.items():
             with self.subTest(field=key), self.assertRaises(ValueError):
@@ -37,12 +44,13 @@ class BuildApkTest(unittest.TestCase):
         identity = {
             "target": "lib/main.dart", "mode": "profile", "package": "test.profile",
             "engineRevision": build_apk.ENGINE_REVISION, "apkSha256": "apk",
-            "tickerSha256": "ticker", "contentComposition": True,
+            "tickerSha256": "ticker", "profile": "androidFramePlan",
+            "identityDigest": "engine", "sourceSha256": "source",
         }
         with self.assertRaises(ValueError):
             build_apk.validate_source_identity(
                 identity, target="lib/main.dart", mode="profile", package="test.profile",
-                apk_hash="apk", ticker_hash="ticker", dart_defines=[])
+                apk_hash="apk", ticker_hash="ticker", dart_defines=[], engine_digest="engine", source_hash="source")
 
     def test_restore_reinstates_bytes_and_removes_new_files(self):
         with tempfile.TemporaryDirectory() as directory:

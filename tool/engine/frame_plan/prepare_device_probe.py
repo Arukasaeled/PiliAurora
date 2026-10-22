@@ -18,6 +18,7 @@ Future<void> main() async {
 """ + text[end:]
     text = text.replace("import 'frame_plan_window.dart';", """import 'package:pili_aurora/pages/danmaku/window_screen.dart';
 import 'package:pili_aurora/common/widgets/scale_app.dart';""")
+    text = text.replace("import 'dart:io';\n", "")
     text = text.replace("    probeDirty = true;\n", "")
     text = text.replace("; probeGate = probeUseGate;", ";")
     text = text.replace("; probeGate = false;", ";")

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:pili_aurora/plugin/pl_player/playback/presentation_profile.dart';
+
 import 'package:pili_aurora/app/app.dart';
 import 'package:pili_aurora/app/app_paths.dart';
 import 'package:pili_aurora/app/platform_setup.dart';
@@ -44,6 +46,7 @@ Future<void> bootstrapApplication([List<String> arguments = const []]) async {
 }
 
 Future<void> _bootstrapApplication(List<String> arguments) async {
+  initializePresentationEngineConfiguration();
   ScaledWidgetsFlutterBinding.ensureInitialized();
   await initializeSupportPath();
   final windows = DesktopPlaybackWindows.instance;

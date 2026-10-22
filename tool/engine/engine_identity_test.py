@@ -1,0 +1,116 @@
+import copy
+import json
+from pathlib import Path
+import struct
+import tempfile
+import unittest
+import zipfile
+from unittest.mock import patch
+
+import engine_identity as protocol
+
+
+class EngineIdentityTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+
+    def artifact(self, profile="androidFramePlan"):
+        library = self.root / ("libflutter.so" if profile == "androidFramePlan" else "flutter_windows.dll")
+        header = bytearray(128)
+        if profile == "androidFramePlan":
+            header[:6] = b"\x7fELF\x02\x01"
+            struct.pack_into("<H", header, 18, 183)
+        else:
+            header[:2] = b"MZ"
+            struct.pack_into("<I", header, 60, 64)
+            header[64:70] = b"PE\0\0\x64\x86"
+        library.write_bytes(header)
+        with patch.object(protocol, "validate_sdk"):
+            identity = protocol.create_identity(library, profile=profile, mode="profile",
+                sdk=self.root, native_tests_passed=True)
+        protocol.write_json(library.with_name("engine-identity.json"), identity)
+        return library, identity
+
+    def test_both_platforms_require_exact_artifact_and_configuration(self):
+        for profile in protocol.PROFILES:
+            library, identity = self.artifact(profile)
+            self.assertEqual(protocol.validate_engine(library, profile=profile, mode="profile"), identity)
+            for field, value in {
+                "schemaVersion": 0, "profile": "standard", "frameworkCommit": "old",
+                "engineCommit": "old", "patchSha256": "changed", "overlaySha256": "changed",
+                "binarySha256": "changed", "mode": "release", "architecture": "x86",
+                "nativeTestsPassed": False,
+            }.items():
+                changed = {**identity, field: value}
+                protocol.write_json(library.with_name("engine-identity.json"), changed)
+                with self.subTest(profile=profile, field=field), self.assertRaises(ValueError):
+                    protocol.validate_engine(library, profile=profile, mode="profile")
+
+    def test_binary_architecture_is_checked_independently_of_manifest(self):
+        library, identity = self.artifact()
+        library.write_bytes(b"wrong architecture")
+        identity["binarySha256"] = protocol.sha256(library)
+        protocol.write_json(library.with_name("engine-identity.json"), identity)
+        with self.assertRaises(ValueError):
+            protocol.validate_engine(library, profile="androidFramePlan", mode="profile")
+
+    def test_identity_digest_binds_generated_defines_but_excludes_application_receipt(self):
+        _, identity = self.artifact()
+        digest = protocol.identity_digest(identity)
+        self.assertIn(f"PILIAURORA_ENGINE_IDENTITY={digest}", protocol.dart_defines("androidFramePlan", identity))
+        self.assertEqual(protocol.identity_digest({**identity, "identityDigest": digest, "application": {}}), digest)
+        changed = copy.deepcopy(identity)
+        changed["binarySha256"] = "other"
+        self.assertNotEqual(protocol.identity_digest(changed), digest)
+        self.assertEqual(protocol.dart_defines("standard"), [
+            "PILIAURORA_PRESENTATION_PROFILE=standard", "PILIAURORA_ENGINE_IDENTITY="])
+        with self.assertRaises(ValueError):
+            protocol.dart_defines("androidFramePlan")
+        for key in protocol.RESERVED_DEFINES:
+            with self.assertRaises(ValueError):
+                protocol.validate_defines([key + "=override"])
+
+    def test_packaged_engine_and_extra_abi_are_verified(self):
+        library, _ = self.artifact()
+        apk = self.root / "test.apk"
+        for extra in [False, True]:
+            with zipfile.ZipFile(apk, "w") as archive:
+                archive.write(library, "lib/arm64-v8a/libflutter.so")
+                if extra:
+                    archive.writestr("lib/x86_64/libflutter.so", b"wrong")
+            if extra:
+                with self.assertRaises(ValueError):
+                    protocol.verify_packaged_engine(apk, library)
+            else:
+                protocol.verify_packaged_engine(apk, library)
+
+    def test_standard_output_removes_old_identity_after_binary_verification(self):
+        artifacts = self.root / "bin/cache/artifacts/engine/windows-x64"
+        artifacts.mkdir(parents=True)
+        (artifacts / "flutter_windows.dll").write_bytes(b"standard")
+        output = self.root / "output"
+        output.mkdir()
+        (output / "flutter_windows.dll").write_bytes(b"custom")
+        identity = output / "engine-identity.json"
+        identity.write_text("old custom identity")
+        with self.assertRaises(ValueError):
+            protocol.verify_standard_output(output, sdk=self.root, platform="windows", mode="debug")
+        self.assertTrue(identity.exists())
+        (output / "flutter_windows.dll").write_bytes(b"standard")
+        protocol.verify_standard_output(output, sdk=self.root, platform="windows", mode="debug")
+        self.assertFalse(identity.exists())
+
+    def test_fixed_sdk_commits_are_required(self):
+        (self.root / "bin/internal").mkdir(parents=True)
+        (self.root / "bin/internal/engine.version").write_text(protocol.ENGINE_COMMIT)
+        with patch.object(protocol.subprocess, "check_output", return_value=protocol.FRAMEWORK_COMMIT):
+            protocol.validate_sdk(self.root)
+        with patch.object(protocol.subprocess, "check_output", return_value="different"):
+            with self.assertRaises(ValueError):
+                protocol.validate_sdk(self.root)
+
+
+if __name__ == "__main__":
+    unittest.main()

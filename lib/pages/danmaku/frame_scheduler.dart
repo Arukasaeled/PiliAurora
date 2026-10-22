@@ -23,9 +23,10 @@ final class DanmakuFrame {
 class DanmakuFrameScheduler with WidgetsBindingObserver {
   DanmakuFrameScheduler({
     required this.onFrame,
-    this.engine = const PresentationEngineConfiguration(),
+    PresentationEngineConfiguration? engine,
     TargetPlatform? platform,
-  }) : _platform = platform ?? defaultTargetPlatform {
+  }) : engine = engine ?? presentationEngineConfiguration,
+       _platform = platform ?? defaultTargetPlatform {
     _ticker = FrameRateTicker(
       (_) => _deliver(),
       videoFrameTimings: _frames,

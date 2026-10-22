@@ -6,7 +6,15 @@ param(
     [string]$Mode = "debug",
     [ValidateSet("armeabi-v7a", "arm64-v8a", "x86_64")]
     [string]$Abi,
-    [string]$WindowsEngineLibrary,
+    [Alias('WindowsEngineLibrary')]
+    [string]$EngineLibrary,
+    [string]$FlutterSdk,
+    [string]$AndroidSdk,
+    [string]$Target = 'lib/main.dart',
+    [string]$Output,
+    [string[]]$DartDefine = @(),
+    [switch]$DevRelease,
+    [string]$SourceApk,
     [switch]$SkipPatch,
     [switch]$SkipPubGet
 )
@@ -19,14 +27,38 @@ if ($Abi -and $Platform -ne "android") {
     throw "-Abi 仅适用于 Android 构建。"
 }
 
+$engineProfile = 'standard'
 $windowsEnginePath = $null
-if ($WindowsEngineLibrary) {
-    if ($Platform -ne 'windows' -or $Mode -eq 'debug') {
-        throw '-WindowsEngineLibrary 适用于 Windows Profile/Release 构建。'
+if ($EngineLibrary) {
+    if ($Mode -eq 'debug') { throw '自编引擎适用于 Profile/Release 构建。' }
+    if ($Platform -eq 'android') {
+        if ($Abi -and $Abi -ne 'arm64-v8a') { throw 'Android 自编引擎当前要求 arm64-v8a。' }
+        if (-not $FlutterSdk -or -not $AndroidSdk) { throw 'Android 自编构建需要 -FlutterSdk 和 -AndroidSdk。' }
+        if ($Mode -eq 'release' -and -not $DevRelease) { throw 'Android 自编 Release 当前使用 -DevRelease 独立测试包。' }
+        if ($DevRelease -and $Mode -ne 'release') { throw '-DevRelease 要求 -Mode release。' }
+        $builder = Join-Path $PSScriptRoot 'engine/frame_plan/build_apk.py'
+        $customMode = if ($Mode -eq 'release') { 'dev-release' } else { 'profile' }
+        $customArguments = @($builder, '--flutter-sdk', $FlutterSdk, '--engine-library', $EngineLibrary,
+            '--android-sdk', $AndroidSdk, '--mode', $customMode, '--target', $Target)
+        if ($Output) { $customArguments += @('--output', $Output) }
+        if ($SourceApk) { $customArguments += @('--skip-build', '--source-apk', $SourceApk) }
+        if ($SkipPatch) { $customArguments += '--skip-patch' }
+        if ($SkipPubGet) { $customArguments += '--skip-pub-get' }
+        foreach ($define in $DartDefine) { $customArguments += "--dart-define=$define" }
+        & python @customArguments
+        if ($LASTEXITCODE -ne 0) { throw 'Android 自编引擎装配失败。' }
+        exit 0
     }
-    . (Join-Path $PSScriptRoot 'engine/windows_frame_pacing/engine_identity.ps1')
-    $windowsEnginePath = (Resolve-Path -LiteralPath $WindowsEngineLibrary).Path
-    $null = Get-WindowsFramePacingEngineIdentity -LibraryPath $windowsEnginePath -Mode $Mode -RequireNativeTests
+    $engineProfile = 'windowsDwmPaced'
+    $windowsEnginePath = (Resolve-Path -LiteralPath $EngineLibrary).Path
+}
+if ($FlutterSdk -or $AndroidSdk -or $DevRelease -or $SourceApk -or $Output) {
+    throw '隔离 SDK、dev 包、复用 APK 和输出参数用于 Android 自编构建。'
+}
+foreach ($define in $DartDefine) {
+    if ($define.Split('=')[0] -in @('PILIAURORA_PRESENTATION_PROFILE', 'PILIAURORA_ENGINE_IDENTITY', 'PILIAURORA_CONTENT_COMPOSITION')) {
+        throw '呈现配置参数由构建入口生成。'
+    }
 }
 
 $dart = Get-Command dart -ErrorAction SilentlyContinue
@@ -140,8 +172,15 @@ if (-not $SkipPatch) {
 # 解析及补丁步骤结束后检查最终锁文件，禁止重新引入 Git 来源。
 Invoke-Fvm @("exec", "dart", "--packages=.dart_tool/package_config.json", "tool/check_dependencies.dart")
 
-$target = if ($Platform -eq "android") { "apk" } else { "windows" }
-$buildArguments = @("exec", "flutter", "build", $target, "--$Mode")
+$identityArguments = @((Join-Path $PSScriptRoot 'engine/engine_identity.py'), '--profile', $engineProfile,
+    '--mode', $Mode, '--flutter-sdk', (Resolve-FvmFlutterRoot))
+if ($windowsEnginePath) { $identityArguments += @('--library', $windowsEnginePath) }
+$configurationJson = & python @identityArguments
+if ($LASTEXITCODE -ne 0) { throw '构建引擎身份校验失败。' }
+$presentationConfiguration = $configurationJson | ConvertFrom-Json
+
+$buildTarget = if ($Platform -eq "android") { "apk" } else { "windows" }
+$buildArguments = @("exec", "flutter", "build", $buildTarget, "--$Mode")
 if ($Abi) {
     $targetPlatform = switch ($Abi) {
         "armeabi-v7a" { "android-arm" }
@@ -150,7 +189,10 @@ if ($Abi) {
     }
     $buildArguments += "--target-platform=$targetPlatform"
 }
-$buildArguments += "--no-pub"
+$buildArguments += @('--no-pub', "--target=$Target")
+foreach ($define in @($presentationConfiguration.dartDefines) + $DartDefine) {
+    $buildArguments += "--dart-define=$define"
+}
 Invoke-Fvm -Arguments $buildArguments
 
 if ($Platform -eq 'windows') {
@@ -158,17 +200,32 @@ if ($Platform -eq 'windows') {
     $runnerDirectory = Join-Path $Workspace "build/windows/x64/runner/$modeDirectory"
     $outputIdentityPath = Join-Path $runnerDirectory 'engine-identity.json'
     if ($windowsEnginePath) {
-        $identity = Get-WindowsFramePacingEngineIdentity -LibraryPath $windowsEnginePath -Mode $Mode -RequireNativeTests
+        $verifiedJson = & python @identityArguments
+        if ($LASTEXITCODE -ne 0) { throw '构建后引擎身份校验失败。' }
+        $verified = $verifiedJson | ConvertFrom-Json
+        if ($verified.identityDigest -ne $presentationConfiguration.identityDigest) { throw '构建期间引擎身份发生变化。' }
+        $identity = $verified.identity
         $destination = Join-Path $runnerDirectory 'flutter_windows.dll'
         Copy-Item -LiteralPath $windowsEnginePath -Destination $destination
-        if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $identity.sha256) {
+        if ((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $identity.binarySha256) {
             throw '输出目录的自编引擎摘要不匹配。'
         }
-        Copy-Item -LiteralPath (Join-Path (Split-Path $windowsEnginePath -Parent) 'engine-identity.json') `
-            -Destination $outputIdentityPath
-        Write-Host "已装配固定 Windows 引擎：$($identity.sha256)"
+        $identity | Add-Member -NotePropertyName identityDigest -NotePropertyValue $presentationConfiguration.identityDigest
+        $identity | Add-Member -NotePropertyName application -NotePropertyValue @{
+            target = $Target
+            binarySha256 = (Get-FileHash -LiteralPath (Join-Path $runnerDirectory 'PiliAurora.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        $identity | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $outputIdentityPath -Encoding utf8
+        Write-Host "已装配固定 Windows 引擎：$($identity.binarySha256)"
     }
-    elseif (Test-Path -LiteralPath $outputIdentityPath) {
-        Remove-Item -LiteralPath $outputIdentityPath
+    else {
+        & python @identityArguments --verify-standard-output $runnerDirectory --platform windows | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw '标准 Windows 输出核对失败。' }
     }
+}
+
+if ($Platform -eq 'android') {
+    $apkPath = Join-Path $Workspace "build/app/outputs/flutter-apk/app-$Mode.apk"
+    & python @identityArguments --verify-standard-output $apkPath --platform android | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '标准 Android 输出核对失败。' }
 }

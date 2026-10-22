@@ -25,25 +25,24 @@ New-Item -ItemType Directory -Path $outputPath | Out-Null
 Push-Location $workspace
 $probeProcess = $null
 $captureProcess = $null
-$stockEngineBackup = $null
-$installedEngine = $null
 $sessionName = 'PiliAuroraDanmaku-' + [Guid]::NewGuid().ToString('N')
 try {
     if (-not $SkipBuild) {
-        & fvm flutter build windows --profile --no-pub --target tool/probes/windows/danmaku_frame_pacing.dart
+        $buildOptions = @('-Platform', 'windows', '-Mode', 'profile', '-Target', 'tool/probes/windows/danmaku_frame_pacing.dart', '-SkipPubGet')
+        if ($enginePath) { $buildOptions += @('-EngineLibrary', $enginePath) }
+        & pwsh -NoProfile -File (Join-Path $workspace 'tool/build.ps1') @buildOptions
         if ($LASTEXITCODE -ne 0) { throw 'Windows 探针构建失败。' }
     }
     $binary = Join-Path $workspace 'build/windows/x64/runner/Profile/PiliAurora.exe'
+    $identityFile = Join-Path (Split-Path $binary -Parent) 'engine-identity.json'
     if ($enginePath) {
         . (Join-Path $workspace 'tool/engine/windows_frame_pacing/engine_identity.ps1')
-        $identityFile = Join-Path (Split-Path $enginePath -Parent) 'engine-identity.json'
-        $null = Get-WindowsFramePacingEngineIdentity -LibraryPath $enginePath -Mode profile
-        $installedEngine = Join-Path (Split-Path $binary -Parent) 'flutter_windows.dll'
-        $stockEngineBackup = Join-Path $outputPath 'stock-flutter_windows.dll'
-        Copy-Item -LiteralPath $installedEngine -Destination $stockEngineBackup
-        Copy-Item -LiteralPath $enginePath -Destination $installedEngine
+        $expected = Get-WindowsFramePacingEngineIdentity -LibraryPath $enginePath -Mode profile
+        $installed = Get-WindowsFramePacingEngineIdentity -LibraryPath (Join-Path (Split-Path $binary -Parent) 'flutter_windows.dll') -Mode profile
+        if ($expected.binarySha256 -ne $installed.binarySha256) { throw '探针应用配置与引擎身份不匹配，请重新构建。' }
         Copy-Item -LiteralPath $identityFile -Destination (Join-Path $outputPath 'engine-identity.json')
     }
+    elseif (Test-Path -LiteralPath $identityFile) { throw '标准探针输出仍包含自编引擎身份，请重新构建。' }
     $report = Join-Path $outputPath 'probe.json'
     $csv = Join-Path $outputPath 'presentmon.csv'
     $probeArguments = @('"' + $report + '"')
@@ -90,6 +89,5 @@ finally {
         & $presentMon --session_name $sessionName --terminate_existing_session | Out-Null
         if (-not $captureProcess.WaitForExit(5000)) { $captureProcess.Kill() }
     }
-    if ($stockEngineBackup) { Copy-Item -LiteralPath $stockEngineBackup -Destination $installedEngine }
     Pop-Location
 }
