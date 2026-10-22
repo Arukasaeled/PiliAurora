@@ -1,6 +1,5 @@
 import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -67,8 +66,9 @@ void main() {
             await binding.delayed(Duration(microseconds: delay));
           }
           if (binding.hasScheduledFrame) {
-            binding.handleBeginFrame(Duration(microseconds: target));
-            binding.handleDrawFrame();
+            binding
+              ..handleBeginFrame(Duration(microseconds: target))
+              ..handleDrawFrame();
           }
         }
 

@@ -52,8 +52,9 @@ def main():
     while depth:
         depth+=(source[end]=='{')-(source[end]=='}');end+=1
     build=root/'build/windows-playback-diagnosis'
+    build.mkdir(parents=True, exist_ok=True)
     fixture=build/'resize_ack_probe.dart'
     fixture.write_text(HEADER+source[start:end]+MAIN,encoding='utf-8')
-    raise SystemExit(subprocess.run(['dart.bat',str(fixture)],shell=True).returncode)
+    raise SystemExit(subprocess.run(['fvm.bat', 'dart', str(fixture)], cwd=root).returncode)
 
 if __name__=='__main__':main()

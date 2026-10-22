@@ -22,9 +22,9 @@
 pwsh -NoProfile -File tool/run-ci-tests.ps1
 ```
 
-`run-ci-tests.ps1` 默认使用 FVM，通过 `flutter test --no-pub` 执行 GitHub Actions 选择的范围，覆盖依赖政策、诊断、消息、设置、弹幕及播放恢复等模块；清单以脚本中的 `$ciTests` 为准。弹幕按整个 `test/pages/danmaku` 目录纳入，新增回归无需另补文件列表。依赖需预先准备；脚本不解析或安装依赖、不修改 Flutter SDK、不应用补丁，也不构建应用。GitHub Actions 由补丁步骤统一解析一次依赖，随后运行依赖验收工具并调用同一测试脚本；测试和构建阶段均使用 `--no-pub`。
+`run-ci-tests.ps1` 默认使用 FVM，通过 `flutter test --no-pub` 执行 GitHub Actions 选择的范围，覆盖依赖政策、诊断、消息、设置、弹幕及播放恢复等模块；清单以脚本中的 `$ciTests` 为准。默认清单显式选择关键行为回归；扩大帧率矩阵、实验对照和其余模块测试在本地通过 `fvm flutter test` 按需运行。依赖需预先准备；脚本不解析或安装依赖、不修改 Flutter SDK、不应用补丁，也不构建应用。GitHub Actions 由补丁步骤统一解析一次依赖，随后运行依赖验收工具并调用同一测试脚本；测试和构建阶段均使用 `--no-pub`。
 
-`.github/workflows/checks.yml` 在 PR 和手动触发时以 `contents: read` 执行依赖验收、播放器和弹幕目录及全部测试/工具的严格静态分析、CI 测试、Java 探针和 Android 采集器单元测试。现有发布工作流继续独立运行。
+`.github/workflows/checks.yml` 在 PR 和手动触发时以 `contents: read` 执行依赖验收、播放器和弹幕目录及全部测试/工具的严格静态分析、CI 测试、Java 探针及 Python 工具回归（Android 采集和帧计划打包身份）。现有发布工作流继续独立运行。
 
 Java 探针要求 PATH 中有 JDK 25，依赖已通过固定 Flutter SDK 准备：
 

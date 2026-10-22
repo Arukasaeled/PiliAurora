@@ -15,6 +15,24 @@ def sha256(path):
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
+def validate_source_identity(identity, *, target, mode, package, apk_hash,
+                             ticker_hash, dart_defines):
+    if (identity["target"] != target or identity["mode"] != mode or
+            identity["package"] != package or identity["engineRevision"] != ENGINE_REVISION or
+            identity["apkSha256"] != apk_hash or identity["tickerSha256"] != ticker_hash or
+            identity.get("contentComposition") is not True or
+            identity.get("dartDefines") != dart_defines):
+        raise ValueError("Source APK identity differs from the requested build configuration")
+
+
+def restore_workspace_state(backup):
+    for path, content in backup.items():
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(content)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--flutter-sdk", type=Path, required=True)
@@ -29,6 +47,9 @@ def main():
     args = parser.parse_args()
     if args.skip_build != (args.source_apk is not None):
         parser.error("--skip-build and --source-apk must be used together")
+    if any(value.split("=", 1)[0] == "PILIAURORA_CONTENT_COMPOSITION"
+           for value in args.dart_define):
+        parser.error("PILIAURORA_CONTENT_COMPOSITION is set by this frame-plan builder")
     repo = Path(__file__).resolve().parents[3]
     sdk = args.flutter_sdk.resolve()
     mode = "release" if args.mode == "dev-release" else "profile"
@@ -58,13 +79,11 @@ def main():
         repo / f"build/app/outputs/flutter-apk/app-{mode}.apk")
     if args.source_apk:
         identity = json.loads(source.with_suffix(".json").read_text(encoding="utf-8"))
-        if (identity["target"] != args.target or
-                identity["mode"] != mode or identity["package"] != package or
-                identity["engineRevision"] != ENGINE_REVISION or
-                identity["apkSha256"] != sha256(source) or
-                identity["tickerSha256"] != sha256(
-                    repo / "third_party/canvas_danmaku/lib/frame_rate_ticker.dart")):
-            raise ValueError("Source APK identity differs from the requested mode, target or ticker")
+        validate_source_identity(
+            identity, target=args.target, mode=mode, package=package,
+            apk_hash=sha256(source),
+            ticker_hash=sha256(repo / "third_party/canvas_danmaku/lib/frame_rate_ticker.dart"),
+            dart_defines=args.dart_define)
     library = args.engine_library.resolve()
     if not library.is_file():
         raise FileNotFoundError(library)
@@ -126,14 +145,13 @@ def main():
                 "target": args.target, "mode": mode, "abi": "arm64-v8a",
                 "package": package, "customEngine": True,
                 "contentComposition": True,
+                "dartDefines": args.dart_define,
                 "enginePatchSha256": sha256(Path(__file__).with_name("engine.patch")),
                 "plannerSha256": sha256(Path(__file__).with_name("frame_presentation_plan.h")),
                 "tickerSha256": sha256(repo / "third_party/canvas_danmaku/lib/frame_rate_ticker.dart"),
             }, indent=2) + "\n", encoding="utf-8")
         finally:
-            for path, content in backup.items():
-                if content is not None:
-                    path.write_bytes(content)
+            restore_workspace_state(backup)
     print(output)
     print(manifest_path)
 

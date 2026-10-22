@@ -44,7 +44,7 @@ ninja -C out/android_profile_arm64 -j 8 libflutter.so
 python tool/engine/frame_plan/build_apk.py --flutter-sdk <隔离Flutter-SDK> --engine-library <lib.stripped/libflutter.so> --android-sdk <Android-SDK>
 ```
 
-默认输出 `build/android-frame-plan/PiliAurora-frame-plan-arm64-profile.apk`，包名 `io.github.wallpap.piliaurora.profile`，使用本机标准 debug keystore。脚本执行现有依赖验收与补丁流程，构建 arm64 Profile，替换自编引擎，校验签名和包内库摘要，并生成身份 JSON。`--skip-build --source-apk <已构建APK>` 可复用 AOT 产物，重新装配前核对来源 APK 的身份 JSON、目标入口、ticker 与 APK 摘要。输入包含 preload 探针时会报错。
+默认输出 `build/android-frame-plan/PiliAurora-frame-plan-arm64-profile.apk`，包名 `io.github.wallpap.piliaurora.profile`，使用本机标准 debug keystore。脚本执行现有依赖验收与补丁流程，构建 arm64 Profile，替换自编引擎，校验签名和包内库摘要，并生成身份 JSON。`--skip-build --source-apk <已构建APK>` 可复用 AOT 产物，重新装配前核对来源 APK 的身份 JSON、目标入口、ticker、内容合成开关、自定义 Dart 编译参数与 APK 摘要。复用时传入与来源构建一致的 `--dart-define`；缺少编译参数登记的旧身份文件需重新构建。`PILIAURORA_CONTENT_COMPOSITION` 由脚本固定启用。输入包含 preload 探针时会报错。
 
 构建包含帧计划的 dev Release 包时，先将引擎 GN 参数改为 `--runtime-mode release`，构建 `out/android_release_arm64`，再执行：
 
@@ -58,6 +58,7 @@ python tool/engine/frame_plan/build_apk.py --mode dev-release --flutter-sdk <隔
 
 ```powershell
 fvm flutter test --no-pub test/pages/danmaku/video_presentation_cadence_test.dart
+python -m unittest discover -s tool/engine/frame_plan -p '*_test.py' -v
 python -m unittest discover -s tool/experiments/android -p '*_test.py' -v
 ```
 
