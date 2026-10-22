@@ -18,6 +18,7 @@
 | 追踪启动、播放、下载和消息调用 | [运行流程](runtime-flows.md) |
 | 排查问题、收集诊断和复现数据 | [维护与排障](maintenance.md) |
 | 修改 Windows 视频输出或超分切换 | [Windows 视频输出](windows-video-output.md) |
+| 重建或对照 Windows 帧节奏引擎 | [固定引擎与身份校验](../tool/engine/windows_frame_pacing/README.md) |
 | 修改消息、私信与分享 | [消息模块](../lib/services/messaging/README.md) |
 | 修改请求账号绑定与 Cookie | [账号拦截器](../lib/utils/accounts/account_manager/README.md) |
 | 更新依赖或核对来源与许可证 | [第三方依赖](../third_party/README.md) |

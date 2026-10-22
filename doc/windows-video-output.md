@@ -36,6 +36,8 @@ GL 纹理状态。真实直播的首次播放、刷新与纹理像素验证见
 
 Windows 的 Debug、Profile、Release 构建均使用 `third_party/mpv/prebuilt/` 的预编译包，GitHub CI 使用相同归档。源码、工具链和许可说明见[mpv 构建入口](../third_party/mpv/README.md)；CMake 检查构建输入和运行文件摘要，缺失或过期时终止。
 
+Flutter 窗口的最终呈现由引擎负责。[Windows 帧节奏引擎](../tool/engine/windows_frame_pacing/README.md)在 ANGLE 支持时启用 DirectComposition，并调整 DWM 相位、Surface vsync 与呈现队列。该引擎通过 `-WindowsEngineLibrary` 显式装配到 Profile/Release 应用；默认发布和 CI 使用 FVM 引擎。排查弹幕呈现时使用[帧节奏探针](../tool/probes/README.md#windows-弹幕帧节奏探针)保留实际 `PresentMode` 与逐帧关联结果。
+
 相关验证入口：
 
 - `test/plugin/pl_player/playback/shader_updates_test.dart`：shader 更新顺序与失败后恢复 `vo`。

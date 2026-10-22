@@ -89,7 +89,7 @@ flowchart TD
 - API/模型：`lib/http/danmaku.dart`、`reply.dart`，`lib/models/remote/danmaku/`、`reply/`。
 - 渲染：通用组件和播放器插件；直播弹幕另走直播间链路。
 - 视频弹幕和直播消息的生命周期不同。修改渲染或消息队列时分别检查两条链路和对应测试。
-- 视频弹幕支持相似内容合并、重复字号放大与帧率档位；设置入口和规则见[弹幕合并与帧率设置](danmaku-merge.md)。合并实现位于 `lib/pages/danmaku/merge.dart`，过滤与后台结果接入位于 `controller.dart`；相关测试见 `test/pages/danmaku/`。
+- 视频弹幕支持相似内容合并和重复字号放大；Android 提供帧率档位，Windows 自动跟随屏幕。设置入口和规则见[弹幕合并与帧率设置](danmaku-merge.md)。合并实现位于 `lib/pages/danmaku/merge.dart`，过滤与后台结果接入位于 `controller.dart`；相关测试见 `test/pages/danmaku/`。
 
 ## 直播
 

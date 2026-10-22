@@ -22,6 +22,10 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 
 视频详情或播放器 → 弹幕 API 与解析 → 弹幕状态和渲染。Windows 高密度场景请记录编码、分辨率、输出尺寸、弹幕密度、硬件解码状态、构建模式和复现时长。
 
+Windows 点播和直播弹幕自动跟随屏幕，排查时同时记录屏幕刷新率、窗口可见状态和引擎来源。使用[Windows 弹幕帧节奏探针](../tool/probes/README.md#windows-弹幕帧节奏探针)按 QPC、Flutter 帧编号与 Raster 时间段关联 PresentMon 事件；结合实际 `PresentMode`、已显示关联率、显示事件覆盖率与 ±1/±2/±3 连续性判定定位呈现波动。隐藏或完全遮挡窗口的采集应与正常可见场景分别解释。
+
+自编引擎的固定版本、DWM 相位、DirectComposition、计时线程修复和装配步骤见[Windows 帧节奏引擎](../tool/engine/windows_frame_pacing/README.md)。应用输出中的 `engine-identity.json` 可核对补丁与 DLL 摘要；默认发布和 CI 使用 FVM 引擎，自编引擎通过构建参数显式选择。
+
 弹幕加载为空时，先对照 `grpcDecode` 与来源快照中的 `elements/rawSegments/pendingSegments`。响应已收到但出现 `DanmakuWorkTooLarge` 时，分别核对解压、protobuf 预检和合并阶段的预算。已知元素字段槽位包含在元素基数内，未知字段另行计费；解码 worker 退出后保留存活的缓冲区与解析结果，合并沿用同一租约，已预留的输入计费一次。当前进程处理配额为 64 MiB，解压响应上限为 8 MiB，单条编码上限为 64 KiB；相关回归见 `test/grpc/decode_policy_test.dart` 与 `test/pages/danmaku/controller_test.dart`。
 
 Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度。开启性能记录后，`danmaku.layer.*` 快照的 `scheduler` 提供 `updates`、`frameRequests`、`timerWakeups` 累计数，按同一窗口的差值计算频率。`updates` 是实际 ticker 更新次数；`frameRequests` 是提交给引擎的帧请求数，含被合并的请求。`mode` 为 `locked`、`independent`、`vsync`、`muted` 或 `stopped`；`nativePeriodUs`、`syncPeriodUs`、`stableIntervals` 用于检查相位学习和回退，`lastUpdateMonotonicUs` 与 `lastFrameRequestMonotonicUs` 使用本进程单调时钟。Android 与 Windows 使用同一图层快照。图层还记录活动图片、缓存、窗口、配置准备和工作集预算；直播包含候选、资源任务和在途预留。计数读取沿用现有诊断周期。
@@ -30,7 +34,7 @@ Android 高刷屏相位问题应同时记录 Scene、视频刷新和弹幕调度
 
 播放器快照的 `appLifecycle` 记录采样时的应用生命周期。性能记录的 `route` 跟踪当前页面，弹窗和菜单沿用下方页面；旧版记录会将未命名弹窗写为 `/`，因此该值不能单独证明用户已返回首页。系统后台策略由播放会话持有，覆盖加载、切换页面和后台媒体租约存续期间。
 
-Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`consumedFrameBatches/consumedFrameSamples` 单独统计带当前输出 token 的纹理消费。弹幕相位使用请求时间，消费时间用于首帧与健康证据；两路时间不可混入同一个相位学习器。Windows 沿用输出消费批次作为调度来源。播放器 `runtime.initialize.*` 日志按资源槽等待、Player 创建和输出创建分别记录累计与分段耗时，可用于区分地址请求和本地初始化的等待。
+Android 的 `nativeFrameBatches/nativeFrameSamples` 统计刷新请求批次，`consumedFrameBatches/consumedFrameSamples` 单独统计带当前输出 token 的纹理消费。弹幕相位使用请求时间，消费时间用于首帧与健康证据；两路时间不可混入同一个相位学习器。Windows 保留输出消费诊断，弹幕跟随屏幕，不向图层传入视频帧时序。播放器 `runtime.initialize.*` 日志按资源槽等待、Player 创建和输出创建分别记录累计与分段耗时，可用于区分地址请求和本地初始化的等待。
 
 点播图层的 `mediaAnchor` 记录位置、采样单调时刻、倍速、推进状态、连续域和有效期限；`presentationTimeUs` 是实际呈现的媒体时间，`sampledAtUs` 是读取诊断的单调时刻。结合 `visible/opacity/tickerEnabled` 区分隐藏与时钟冻结。播放器额外记录规范 `session` 的 phase、stage、runtime/request/load 身份、播放意图和 inhibitor。性能记录的各部分及各来源使用独立的有界脱敏预算，慢帧详情不会耗尽后续图层的预算。
 
@@ -48,9 +52,9 @@ Android 点播的滚动弹幕与视频共用 Flutter 输出 Surface。存在新�
 
 播放会话收到暂停、缓冲或 seeking 状态时立即发布冻结锚点，终态也停止外推；推进样本受当前运行状态约束。恢复时保留冻结位置并主动重新采样，使用状态切换后的新锚点继续运动，迟到结果按采样时刻和媒体身份过滤。冻结时间使用与原生媒体锚点一致的 `Timeline.now` 时钟域。
 
-视觉连续性使用同一帧的 UI 更新、Raster 提交和 SurfaceFlinger 实际呈现时间建立对应，同时保留逐帧间隔、呈现延迟和媒体位移／实际间隔。按跨 1/2/3 帧的时间跨度与间隔序列差分检查周期性变化，并汇总以每帧为中心的 ±1/±2/±3 窗口（3/5/7 帧）：记录相对目标间隔误差与相对媒体速率误差的 RMS、呈现延迟极差及窗口总位移速度，汇总样本数、分位数和峰值。窗口内 RMS 保留长短帧相抵时的波动，首尾和缺帧边界采用完整窗口；暂停、切档和媒体代次分段计算。分析工具见[按需实验](../tool/experiments/README.md)。平均 FPS、长间隔计数和帧目标时钟下的位移速度分别保留为调度指标。
+视觉连续性使用同一帧的 UI 更新、Raster 提交和平台实际呈现时间建立对应，Android 使用 SurfaceFlinger，Windows 使用 PresentMon；同时保留逐帧间隔、呈现延迟和媒体位移／实际间隔。按跨 1/2/3 帧的时间跨度与间隔序列差分检查周期性变化，并汇总以每帧为中心的 ±1/±2/±3 窗口（3/5/7 帧）：记录相对目标间隔误差与相对媒体速率误差的 RMS、呈现延迟极差及窗口总位移速度，汇总样本数、分位数和峰值。窗口内 RMS 保留长短帧相抵时的波动，首尾和缺帧边界采用完整窗口；暂停、切档和媒体代次分段计算。分析工具见[按需实验](../tool/experiments/README.md)。平均 FPS、长间隔计数和帧目标时钟下的位移速度分别保留为调度指标。
 
-弹幕调度快照另提供 `frameCallbacks`（收到的 Dart 帧回调）和 `deadlineSkips`（早于更新截止时间而略过的回调）。结合 `updates/frameRequests` 差分，区分引擎未交付回调与回调到达后未更新。`updateGapBuckets` 记录连续更新的系统帧时间间隔，桶互斥，上限分别为 10/20/30/40/60/100ms，最后一桶大于100ms；按相邻快照差分读取窗口分布。`maxUpdateGapUs` 为累计最大间隔，`longUpdateGaps` 统计超过目标档位正常屏幕槽位量化的间隔，例如120Hz上的60FPS超过约16.67ms、90FPS正常的1/2槽交替不计为长间隔。暂停、静音和切档中断连续统计；所有计数继续累计。这些是弹幕更新时序，最终呈现还需对照 SurfaceFlinger 或 Perfetto。
+弹幕调度快照另提供 `frameCallbacks`（收到的 Dart 帧回调）和 `deadlineSkips`（早于更新截止时间而略过的回调）。结合 `updates/frameRequests` 差分，区分引擎未交付回调与回调到达后未更新。`updateGapBuckets` 记录连续更新的系统帧时间间隔，桶互斥，上限分别为 10/20/30/40/60/100ms，最后一桶大于100ms；按相邻快照差分读取窗口分布。`maxUpdateGapUs` 为累计最大间隔，`longUpdateGaps` 统计超过目标档位正常屏幕槽位量化的间隔，例如120Hz上的60FPS超过约16.67ms、90FPS正常的1/2槽交替不计为长间隔。暂停、静音和切档中断连续统计；所有计数继续累计。这些是弹幕更新时序，最终呈现需对照 Android 的 SurfaceFlinger／Perfetto 或 Windows 的 PresentMon。
 
 帧调度矩阵覆盖约 5.7ms 以内的回调/批次迟到。`test/pages/danmaku/frame_late_delivery_test.dart` 另覆盖回调交付跨过帧目标后，按剩余时间请求仍可到达的下一更新槽位；20–31ms 的 Timer 迟到会按迟到量合并错过的更新。唤醒预算持续扣除交付延迟，超过目标时刻后也沿用同一时间基准。
 

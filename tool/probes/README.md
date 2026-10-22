@@ -131,6 +131,52 @@ fvm flutter run --profile --no-pub -d <设备ID> -t tool/probes/android/playback
 
 同时采集 SurfaceFlinger 和 Perfetto，按单调时钟截取三段测量窗口。Perfetto 配置使用 `write_into_file: true`、`file_write_period_ms: 1000`，并检查 `traced_buf_bytes_overwritten`；环形缓冲覆盖与文件传输完整是不同的检查项。将 FrameTiming、更新频率和最终呈现间隔分别比较，24 FPS 视频与 60 FPS 弹幕混合产生的图层帧数不代表弹幕更新数。
 
+## Windows 弹幕帧节奏探针
+
+`windows/danmaku_frame_pacing.dart` 在独立可见窗口中运行生产点播与直播弹幕组件，
+分别输入 12 条和 60 条滚动／顶部／底部混合弹幕。每组预热后采样 10 秒，
+记录帧目标间隔、活动数量、逐帧位移、Build/Raster 耗时和窗口状态。
+探针不初始化账号或访问网络。
+
+```powershell
+pwsh -NoProfile -File tool/probes/windows/measure_danmaku.ps1 -PresentMonPath E:/tools/PresentMon-2.5.1-x64.exe
+# 叠加本地视频的 mpv/ANGLE 纹理负载，音频输出为 null；复用刚构建的探针。
+pwsh -NoProfile -File tool/probes/windows/measure_danmaku.ps1 -PresentMonPath E:/tools/PresentMon-2.5.1-x64.exe -Media E:/media/fixture.mp4 -SkipBuild
+# 对已有采集重复执行关联与汇总，无需重新启动应用。
+python tool/probes/windows/danmaku_frame_pacing_analysis.py build/my-run/probe.json build/my-run/presentmon.csv --output build/my-run
+```
+
+采集入口默认构建 Profile 探针，使用独立 ETW session 按进程 ID 采集 PresentMon
+v1 QPC CSV，等待数据写入后自动执行同帧关联与汇总。默认目录为
+`build/windows-danmaku-validation/时间戳/`；`-OutputDirectory` 可指定尚未存在的目录。
+`-SkipBuild` 要求 Profile 目录当前就是此探针。PresentMon 使用官方独立命令行工具
+（已验证 2.5.1），无需安装服务；采集失败时查看目录内的 stdout/stderr。
+`-EngineLibrary <flutter_windows.dll>` 可对照[固定自编引擎](../engine/windows_frame_pacing/README.md)，
+入口核对身份文件、Profile/x64 模式和摘要，采集后恢复探针原引擎。
+
+探针窗口临时置顶，并确认实际可见；测量时避免其他置顶窗口遮挡它。
+Windows 隐藏启动和窗口完全遮挡会影响帧交付，须结合报告里的窗口状态解释数据。
+四组都有活动弹幕、帧频达到屏幕刷新率的 95%，且超过 1.5 个屏幕周期的间隔少于 1%
+时，`probe.json` 的调度检查通过。处理脚本按 QPC 校准、Flutter 帧编号及 Raster
+时间段唯一关联 PresentMon 呈现事件，再复用
+`tool/experiments/danmaku/presentation_continuity_analysis.py` 的 ±1/±2/±3（3/5/7 帧）分析。
+未匹配、重复、歧义和未显示的帧不补点；缺帧中断窗口。
+最终判定要求已显示关联率 ≥95%、全部显示事件覆盖率 ≥99%，三个半径均有完整窗口，速度 RMS P95 ≤10%，
+含单步速度偏差超过 10% 的窗口比例 <1%。失败返回非零退出码。
+
+原始数据为 `probe.json`、`presentmon.csv`；`presentation-stage-*.json` 保存同帧关联，
+`continuity-stage-*.json` 保存完整局部窗口、跨帧跨度及差分，
+`summary.json`、`summary.csv`、`summary.md` 汇总各场景、三个窗口半径及实际 `PresentMode`。
+点播使用持续有效的合成媒体时钟；可选视频检查合成负载，不覆盖真实媒体时钟校准或超分。
+完成后按[构建与测试](../../doc/build-and-test.md#构建)重新构建普通应用入口。
+
+关联、覆盖率与连续性判定的回归可独立运行：
+
+```powershell
+uv run --locked python -m unittest discover -s tool/probes/windows -p danmaku_frame_pacing_analysis_test.py -v
+uv run --locked python -m unittest discover -s tool/experiments/danmaku -p presentation_continuity_analysis_test.py -v
+```
+
 ## Windows 尺寸通道回归探针
 
 `windows_source_size_channel_probe.py` 使用 Flutter 的标准编码器和生产通道处理代码，验证 int32、int64 尺寸均能传入播放器。先完成 Windows 构建以生成 Flutter C++ 头文件，再运行：

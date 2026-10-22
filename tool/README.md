@@ -11,6 +11,7 @@
 | [`probes/`](probes/README.md) | Android、Windows、播放链路和事件循环的隔离回归探针。 |
 | [`experiments/`](experiments/README.md) | 按业务领域组织的按需对照与性能测量。 |
 | [`engine/frame_plan/`](engine/frame_plan/README.md) | Android 帧计划的固定引擎补丁、隔离构建与设备验证。 |
+| [`engine/windows_frame_pacing/`](engine/windows_frame_pacing/README.md) | Windows 帧节奏的固定引擎补丁、隔离构建与呈现对照。 |
 
 默认自动化测试位于 [`test/`](../test/README.md)，测试选择方式见[构建与测试说明](../doc/build-and-test.md)。
 
@@ -52,6 +53,8 @@ pwsh -File tool/build.ps1 -Platform android -Mode release -Abi arm64-v8a
 ```
 
 支持 `armeabi-v7a`、`arm64-v8a` 和 `x86_64`。省略 `-Abi` 时保持通用 APK；指定 Windows 平台和 `-Abi` 会报错。
+
+Windows Profile/Release 可通过 `-WindowsEngineLibrary <flutter_windows.dll>` 显式装配[固定帧节奏引擎](engine/windows_frame_pacing/README.md)。DLL 旁须有构建脚本生成的 `engine-identity.json`，应用构建核对模式、x64 架构、固定提交、当前补丁、DLL 摘要及原生回归通过状态；输出目录保留身份文件。省略参数使用 FVM 引擎并清除旧身份文件，当前 CI 沿用该默认路径。
 
 真机性能测试可构建独立包名的 arm64-v8a release 包：
 

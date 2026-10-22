@@ -34,7 +34,7 @@ On Android and Windows, video and live-stream danmaku share a display implementa
 
 ### Danmaku merging and frame-rate controls
 
-Video danmaku can merge identical or similar comments within 20 seconds and enlarge text based on the number of duplicates. Danmaku can follow the display refresh rate or target 30, 60, 90, or 120 FPS; changes take effect immediately. Track spacing accounts for actual text height, and the comment-density progress bar supports custom colors. See [Danmaku merging and frame-rate settings](doc/danmaku-merge.md).
+Video danmaku can merge identical or similar comments within 20 seconds and enlarge text based on the number of duplicates. Windows danmaku automatically follow the display refresh rate. On Android, danmaku can follow the display or target 30, 60, 90, or 120 FPS; changes take effect immediately. Track spacing accounts for actual text height, and the comment-density progress bar supports custom colors. See [Danmaku merging and frame-rate settings](doc/danmaku-merge.md).
 
 ### Playback stability fixes
 

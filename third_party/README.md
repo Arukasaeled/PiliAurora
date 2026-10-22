@@ -58,6 +58,8 @@ Flutter SDK 与 `material_ui` 补丁由 `lib/scripts/patch.ps1` 管理，构建�
 
 Android 帧计划引擎补丁单独维护在 [`tool/engine/frame_plan/`](../tool/engine/frame_plan/README.md)，固定 Flutter 框架与引擎提交，并应用到隔离检出。常规 FVM 构建流程保持原有入口；自编引擎的源码材料、构建命令与 APK 身份校验见该目录说明。
 
+Windows 帧节奏引擎补丁维护在 [`tool/engine/windows_frame_pacing/`](../tool/engine/windows_frame_pacing/README.md)，固定 Flutter 3.47.5 引擎与 depot_tools 提交，使用 Flutter 的 BSD 许可。源码、工具链和 DLL 保存在独立本地目录；应用构建通过 `-WindowsEngineLibrary` 选用同模式 DLL，并登记补丁、DLL 摘要和原生回归状态。
+
 ## 历史记录
 
 - [首次迁移验收](VALIDATION.md)：2026-10-07 的来源迁移与验证。
