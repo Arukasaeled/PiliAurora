@@ -102,6 +102,19 @@ class EngineIdentityTest(unittest.TestCase):
         protocol.verify_standard_output(output, sdk=self.root, platform="windows", mode="debug")
         self.assertFalse(identity.exists())
 
+    def test_apk_reuse_fingerprint_includes_plugin_native_sources(self):
+        (self.root / "lib").mkdir()
+        (self.root / "lib/main.dart").write_text("void main() {}")
+        (self.root / "pubspec.yaml").write_text("name: fixture")
+        (self.root / "pubspec.lock").write_text("fixture")
+        native = self.root / "third_party/video/android/src"
+        native.mkdir(parents=True)
+        source = native / "VideoOutput.java"
+        source.write_text("original")
+        before = protocol.source_fingerprint(self.root, "lib/main.dart")
+        source.write_text("changed")
+        self.assertNotEqual(protocol.source_fingerprint(self.root, "lib/main.dart"), before)
+
     def test_fixed_sdk_commits_are_required(self):
         (self.root / "bin/internal").mkdir(parents=True)
         (self.root / "bin/internal/engine.version").write_text(protocol.ENGINE_COMMIT)

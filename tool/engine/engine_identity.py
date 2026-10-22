@@ -128,6 +128,19 @@ def source_fingerprint(repo: Path, target: str) -> str:
             files.extend((package / "lib").rglob("*.dart"))
         if (package / "pubspec.yaml").is_file():
             files.append(package / "pubspec.yaml")
+    # 复用的是整份 APK；插件原生实现和 Android 资源也参与来源身份。
+    native_roots = [repo / "android/app/src", *[p / "android/src" for p in (repo / "third_party").iterdir()]]
+    for directory in native_roots:
+        if directory.is_dir():
+            files.extend(path for path in directory.rglob("*") if path.is_file())
+    android_roots = [repo / "android", *[p / "android" for p in (repo / "third_party").iterdir()]]
+    for directory in android_roots:
+        for pattern in ["*.gradle", "*.gradle.kts", "CMakeLists.txt"]:
+            files.extend(directory.glob(pattern))
+    if (repo / "android/app/build.gradle.kts").is_file():
+        files.append(repo / "android/app/build.gradle.kts")
+    if (repo / "assets").is_dir():
+        files.extend(path for path in (repo / "assets").rglob("*") if path.is_file())
     files.extend([repo / "pubspec.yaml", repo / "pubspec.lock", repo / target])
     return digest_json({path.resolve().relative_to(repo.resolve()).as_posix(): sha256(path)
                         for path in files})
