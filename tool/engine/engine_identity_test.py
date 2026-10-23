@@ -109,6 +109,7 @@ class EngineIdentityTest(unittest.TestCase):
         (self.root / "pubspec.lock").write_text("fixture")
         native = self.root / "third_party/video/android/src"
         native.mkdir(parents=True)
+        (self.root / "android/.gradle").mkdir(parents=True)
         source = native / "VideoOutput.java"
         source.write_text("original")
         before = protocol.source_fingerprint(self.root, "lib/main.dart")
