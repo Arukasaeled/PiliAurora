@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:cached_network_image_ce/cached_network_image.dart'
     show BaseCacheManager, DefaultCacheManager, FileInfo;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 
@@ -31,7 +32,7 @@ class ImageLoadingScope extends InheritedWidget {
       enabled != oldWidget.enabled;
 }
 
-/// 复用磁盘缓存，由 Flutter 管理解码器、帧和图片缓存的生命周期。
+/// 复用磁盘缓存和 Flutter 图片缓存，统一管理解码器与帧的生命周期。
 class CachedImageProvider extends ImageProvider<CachedImageProvider> {
   const CachedImageProvider(
     this.url, {
@@ -176,30 +177,151 @@ class CachedImageProvider extends ImageProvider<CachedImageProvider> {
 
 /// 滚动或刷新可能早于文件读取完成；缓存和监听者都退出后，迟到的 codec
 /// 也必须释放。只移除监听时不能释放仍被 ImageCache 保活的动图。
-class _ImageCompleter extends MultiFrameImageStreamCompleter {
+class _ImageCompleter extends ImageStreamCompleter {
   _ImageCompleter(
     this._owner, {
-    required super.codec,
-    required super.scale,
+    required Future<ui.Codec> codec,
+    required double scale,
     required String debugLabel,
-  }) : super(debugLabel: debugLabel);
+  }) : _scale = scale {
+    this.debugLabel = debugLabel;
+    codec.then((value) {
+      if (_released) {
+        value.dispose();
+        return;
+      }
+      _codec = value;
+      _resume();
+    }, onError: _reportDecodeError);
+  }
 
   final _CodecOwner _owner;
+  final double _scale;
+  ui.Codec? _codec;
+  ui.FrameInfo? _nextFrame;
+  Timer? _timer;
+  int? _frameCallback;
+  Duration? _shownTimestamp;
+  Duration? _frameDuration;
+  int _framesEmitted = 0;
+  bool _decoding = false;
+  bool _emitting = false;
+  bool _released = false;
   int _handles = 0;
   bool _hadListener = false;
+
+  void _resume() {
+    if (!hasListeners || _released || _emitting) return;
+    // 恢复监听时复用待显示帧或在途请求，避免迟到结果覆盖下一帧。
+    if (_nextFrame != null) {
+      _scheduleFrame();
+    } else if (_codec != null && !_decoding) {
+      unawaited(_decodeNextFrame());
+    }
+  }
+
+  Future<void> _decodeNextFrame() async {
+    _decoding = true;
+    try {
+      final frame = await _codec!.getNextFrame();
+      if (_released) {
+        frame.image.dispose();
+        return;
+      }
+      _nextFrame = frame;
+      if (_codec!.frameCount == 1) {
+        if (hasListeners) _emitFrame();
+      } else if (hasListeners) {
+        _scheduleFrame();
+      }
+    } catch (error, stack) {
+      _reportDecodeError(error, stack);
+    } finally {
+      _decoding = false;
+    }
+  }
+
+  void _reportDecodeError(Object error, StackTrace stack) {
+    reportError(
+      context: ErrorDescription('resolving an image frame'),
+      exception: error,
+      stack: stack,
+      silent: true,
+    );
+  }
+
+  void _scheduleFrame() {
+    if (_frameCallback != null || _timer != null) return;
+    _frameCallback = SchedulerBinding.instance.scheduleFrameCallback((
+      timestamp,
+    ) {
+      _frameCallback = null;
+      if (!hasListeners || _released || _nextFrame == null) return;
+      final remaining = _shownTimestamp == null
+          ? Duration.zero
+          : _frameDuration! - (timestamp - _shownTimestamp!);
+      if (remaining > Duration.zero) {
+        _timer = Timer(remaining * timeDilation, () {
+          _timer = null;
+          _scheduleFrame();
+        });
+        return;
+      }
+      _shownTimestamp = timestamp;
+      _emitFrame();
+      _resume();
+    });
+  }
+
+  void _emitFrame() {
+    final frame = _nextFrame!;
+    _nextFrame = null;
+    _frameDuration = frame.duration;
+    _framesEmitted++;
+    _emitting = true;
+    try {
+      setImage(
+        ImageInfo(
+          image: frame.image.clone(),
+          scale: _scale,
+          debugLabel: debugLabel,
+        ),
+      );
+    } finally {
+      _emitting = false;
+      frame.image.dispose();
+    }
+    final codec = _codec;
+    if (codec != null &&
+        (codec.frameCount == 1 ||
+            (codec.repetitionCount != -1 &&
+                _framesEmitted ~/ codec.frameCount > codec.repetitionCount))) {
+      codec.dispose();
+      _codec = null;
+    }
+  }
 
   @override
   void addListener(ImageStreamListener listener) {
     _hadListener = true;
     _owner.hasListeners = true;
     super.addListener(listener);
+    _resume();
   }
 
   @override
   void removeListener(ImageStreamListener listener) {
     super.removeListener(listener);
     _owner.hasListeners = hasListeners;
-    if (!hasListeners) _owner.releaseIdleAdmission();
+    if (!hasListeners) {
+      _timer?.cancel();
+      _timer = null;
+      if (_frameCallback case final callback?) {
+        SchedulerBinding.instance.cancelFrameCallbackWithId(callback);
+        _frameCallback = null;
+      }
+      _owner.releaseIdleAdmission();
+    }
     _releaseIfUnused();
   }
 
@@ -232,7 +354,12 @@ class _ImageCompleter extends MultiFrameImageStreamCompleter {
   }
 
   void _releaseIfUnused() {
-    if (_hadListener && !hasListeners && _handles == 0) _owner.dispose();
+    if (_released || !_hadListener || hasListeners || _handles != 0) return;
+    _released = true;
+    _nextFrame?.image.dispose();
+    _nextFrame = null;
+    _owner.dispose();
+    _codec = null;
   }
 }
 
@@ -343,7 +470,7 @@ class _ThrottledCodec implements ui.Codec {
       }
       if (_disposed) {
         frame.image.dispose();
-        return frame;
+        throw const _ImageDecodeCancelled();
       }
       return frameCount > 1 &&
               frame.duration < const Duration(milliseconds: 100)
