@@ -107,17 +107,22 @@ void main() {
       var listening = true;
       var outstanding = 0;
       try {
-        for (var i = 0; i < 100 && codec.gates.isEmpty; i++) await flush();
+        for (var i = 0; i < 100 && codec.gates.isEmpty; i++) {
+          await flush();
+        }
         expect(codec.gates.length, 1);
         codec.gates.first.complete();
         await flush();
         await tester.pump();
-        for (var i = 0; i < 100 && codec.gates.length < 2; i++) await flush();
+        for (var i = 0; i < 100 && codec.gates.length < 2; i++) {
+          await flush();
+        }
         expect(codec.gates.length, 2);
         expect(codec.active, 1);
         for (var i = 0; i < 3; i++) {
-          stream.removeListener(listener);
-          stream.addListener(listener);
+          stream
+            ..removeListener(listener)
+            ..addListener(listener);
           await flush();
         }
         outstanding = codec.active;

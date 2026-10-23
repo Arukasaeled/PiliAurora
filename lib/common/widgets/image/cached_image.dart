@@ -181,9 +181,9 @@ class _ImageCompleter extends ImageStreamCompleter {
   _ImageCompleter(
     this._owner, {
     required Future<ui.Codec> codec,
-    required double scale,
+    required this.scale,
     required String debugLabel,
-  }) : _scale = scale {
+  }) {
     this.debugLabel = debugLabel;
     codec.then((value) {
       if (_released) {
@@ -196,7 +196,7 @@ class _ImageCompleter extends ImageStreamCompleter {
   }
 
   final _CodecOwner _owner;
-  final double _scale;
+  final double scale;
   ui.Codec? _codec;
   ui.FrameInfo? _nextFrame;
   Timer? _timer;
@@ -283,7 +283,7 @@ class _ImageCompleter extends ImageStreamCompleter {
       setImage(
         ImageInfo(
           image: frame.image.clone(),
-          scale: _scale,
+          scale: scale,
           debugLabel: debugLabel,
         ),
       );
@@ -425,6 +425,7 @@ class _ThrottledCodec implements ui.Codec {
 
   final ui.Codec _codec;
   bool _disposed = false;
+  bool _nativeDisposed = false;
   bool _firstFrame = true;
   bool _decoding = false;
   _FrameAdmission? _admission;
@@ -484,6 +485,7 @@ class _ThrottledCodec implements ui.Codec {
       admission.release();
       _decodeAdmission = null;
       operation?.finish();
+      if (_disposed) _disposeNativeCodec();
     }
   }
 
@@ -498,6 +500,13 @@ class _ThrottledCodec implements ui.Codec {
     }
     _admission?.cancel();
     _admission = null;
+    // 原生 dispose 可能丢弃在途回调；等待取帧结束后再销毁，确保名额归还。
+    if (!_decoding) _disposeNativeCodec();
+  }
+
+  void _disposeNativeCodec() {
+    if (_nativeDisposed) return;
+    _nativeDisposed = true;
     Diagnostics.instance.gauge('imageCodecs', --_activeCodecs);
     _codec.dispose();
   }
