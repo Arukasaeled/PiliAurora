@@ -15,6 +15,7 @@
 | 配置环境、构建应用或选择测试 | [构建与测试](build-and-test.md) |
 | 找到一个功能的代码入口 | [功能领域地图](features.md) |
 | 理解模块职责和状态所有权 | [架构概览](architecture.md) |
+| 查看播放器、弹幕与呈现调度的详细图 | [播放器与弹幕架构图](diagrams/README.md) |
 | 追踪启动、播放、下载和消息调用 | [运行流程](runtime-flows.md) |
 | 排查问题、收集诊断和复现数据 | [维护与排障](maintenance.md) |
 | 修改 Windows 视频输出或超分切换 | [Windows 视频输出](windows-video-output.md) |
