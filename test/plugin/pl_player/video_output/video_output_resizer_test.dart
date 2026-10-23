@@ -36,6 +36,9 @@ void main() {
           call.method == 'VideoOutputManager.InvalidateOutputGeneration') {
         return true;
       }
+      if (call.method == 'VideoOutputManager.ConfirmSurfaceConfigured') {
+        return null;
+      }
       expectSync(call.method, 'VideoOutputManager.SetSurfaceTextureSize');
       final args = call.arguments as Map;
       final size = (
