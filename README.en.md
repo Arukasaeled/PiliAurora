@@ -9,13 +9,13 @@ PiliAurora is a third-party Bilibili client for Android and Windows x64, built w
 
 It retains upstream browsing, playback, social features, and multi-account support while focusing on playback resource usage. It reworks Windows danmaku rendering and video output, and adds separate video and live-stream windows, danmaku merging and frame-rate controls, and native sticker management. Danmaku are timed comments displayed over the video.
 
-[Download](https://github.com/wallpap/PiliAurora/releases/latest) · [Changelog](doc/releases/v1.5.1.md) · [Report an issue](https://github.com/wallpap/PiliAurora/issues) · [License](LICENSE)
+[Download](https://github.com/wallpap/PiliAurora/releases/latest) · [Changelog](doc/releases/v1.6.0.md) · [Report an issue](https://github.com/wallpap/PiliAurora/issues) · [License](LICENSE)
 
 ## Screenshots
 
 ### Windows
 
-Pop out videos or live streams into separate windows while continuing to browse in the main window or watch other windows at the same time. The image shows several playback windows running side by side. Danmaku settings let you adjust their appearance and frame rate.
+Pop out videos or live streams into separate windows while continuing to browse in the main window or watch other windows at the same time. The image shows several playback windows running side by side. Windows danmaku automatically follow the display refresh rate; their appearance can be adjusted in danmaku settings.
 
 <p align="center">
   <img src="assets/display/windows-multiwindow-showcase.png" alt="Windows multi-window playback" width="800">
@@ -75,6 +75,10 @@ Android also has an experimental option to scale output to the screen resolution
 The home page and message entry points share unread state. Replies, mentions, likes, system notifications, and direct messages follow the primary account. Switching accounts discards pending responses from the previous account. Conversation actions update shared state, chat history is deduplicated, and stale pagination results are discarded.
 
 Direct messages support text, images, and share cards. Cards and accompanying text share a send lock and report their results separately. Drafts are retained when delivery is awaiting confirmation, with a prompt to check the conversation history. See the [messaging module](lib/services/messaging/README.md).
+
+### Blacklist filtering
+
+Enhanced blacklist filtering is enabled by default under Settings → Account and privacy. It filters blocked authors from recommendations, popular content, search, feeds, and live-stream lists. Cooperative-author checks are also enabled by default: videos marked as collaborations are hidden if any author is blocked. These checks add requests and loading time and can be disabled separately. See [Blacklist filtering](doc/content-filtering.md) for coverage.
 
 ### Everyday additions
 

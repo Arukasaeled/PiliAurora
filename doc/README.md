@@ -6,6 +6,7 @@
 - [English README](../README.en.md)：英文项目介绍、下载和构建入口；详细指南仍以中文提供。
 - [Windows 播放窗口](windows-playback-windows.md)：弹出视频与直播、排列窗口、调节音量和切换声音来源。
 - [弹幕合并与帧率](danmaku-merge.md)：设置入口、匹配规则、字号放大和轨道间距。
+- [信息流黑名单屏蔽](content-filtering.md)：设置入口、过滤范围和合作视频作者检查。
 - [评论与表情包](comments-and-emotes.md)：评论长按菜单、拉黑用户、表情包管理和内容预览。
 
 ## 开发与排障
@@ -29,7 +30,7 @@
 
 ## 版本与维护记录
 
-发布附件见 [GitHub Releases](https://github.com/wallpap/PiliAurora/releases)。当前正式版为 [v1.5.1](releases/v1.5.1.md)，上一正式版为 [v1.5.0](releases/v1.5.0.md)；v1.4.3 与 v1.4.3-rc.1 的改动及说明已合并到 [v1.4.4](releases/v1.4.4.md)，未单独发布。历史记录包括 [v1.4.5](releases/v1.4.5.md)、[v1.4.4](releases/v1.4.4.md)、[v1.4.2](releases/v1.4.2.md)、[v1.4.0](releases/v1.4.0.md)、[v1.2.0](releases/v1.2.0.md)、[v1.0.13](releases/v1.0.13.md) 和 [v1.0.7](releases/v1.0.7.md)，其中的测试结果和行为描述对应当时版本。
+发布附件见 [GitHub Releases](https://github.com/wallpap/PiliAurora/releases)。当前正式版为 [v1.6.0](releases/v1.6.0.md)，上一正式版为 [v1.5.1](releases/v1.5.1.md)；v1.4.3 与 v1.4.3-rc.1 的改动及说明已合并到 [v1.4.4](releases/v1.4.4.md)，未单独发布。历史记录包括 [v1.5.0](releases/v1.5.0.md)、[v1.4.5](releases/v1.4.5.md)、[v1.4.4](releases/v1.4.4.md)、[v1.4.2](releases/v1.4.2.md)、[v1.4.0](releases/v1.4.0.md)、[v1.2.0](releases/v1.2.0.md)、[v1.0.13](releases/v1.0.13.md) 和 [v1.0.7](releases/v1.0.7.md)，其中的测试结果和行为描述对应当时版本。
 
 依赖迁移记录见 [首次迁移验收](../third_party/VALIDATION.md)与[依赖精简记录](../third_party/SIMPLIFICATION.md)。Windows 预编译包、源码和本地、CI 构建步骤见[mpv 构建入口](../third_party/mpv/README.md)，原临时 DLL 的测量见[历史验证记录](../third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md)。
 

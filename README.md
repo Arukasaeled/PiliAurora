@@ -9,13 +9,13 @@ PiliAurora 是面向 Android 和 Windows x64 的 Bilibili 第三方客户端，�
 
 在保留上游浏览、播放、互动和多账号功能的基础上，PiliAurora 集中优化播放时的资源占用，重做 Windows 弹幕渲染与视频输出，并加入视频和直播独立窗口、弹幕合并与帧率调节、原生表情包管理等功能。
 
-[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.5.1.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
+[下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.6.0.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
 
 ## 界面预览
 
 ### Windows
 
-多窗口播放可以弹出视频或直播小窗，并在主窗口继续浏览或者同时看另外的小窗，图中展示的式多个小窗并行播放。弹幕设置可调整显示效果和帧率。
+多窗口播放可以弹出视频或直播小窗，并在主窗口继续浏览或者同时看另外的小窗，图中展示了多个小窗并行播放。Windows 弹幕自动跟随屏幕刷新节奏，显示效果可在弹幕设置中调整。
 
 <p align="center">
   <img src="assets/display/windows-multiwindow-showcase.png" alt="Windows 多窗口播放" width="800">
@@ -75,6 +75,10 @@ Android 另有按屏幕分辨率缩放输出的实验选项，默认关闭。输
 主页和消息入口共享未读状态，回复、@、点赞、系统通知和私信跟随主账号。切换账号后丢弃旧账号的在途响应，会话操作同步共享状态，聊天历史去重，过期分页结果失效。
 
 私信支持文本、图片和分享卡片。卡片与附言共用发送锁，分别反馈结果；发送结果待确认时保留草稿，并提示核对聊天记录。业务实现见[消息模块说明](lib/services/messaging/README.md)。
+
+### 黑名单屏蔽
+
+“设置 → 账号与隐私”中的“增强黑名单屏蔽”默认开启，在推荐、热门、搜索、动态和直播等列表中过滤已拉黑作者。“检查合作视频作者”也默认开启，列表已标识的合作视频中，任一作者被拉黑即屏蔽整条视频。合作作者查询会增加请求量和加载时间，可单独关闭。适用范围见[信息流黑名单屏蔽](doc/content-filtering.md)。
 
 ### 日常功能补充
 
