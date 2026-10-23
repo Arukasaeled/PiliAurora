@@ -1,0 +1,14 @@
+{
+  "depotToolsCommit": "b1c2e86792a7f2b6576c181b7327ddd53b1a42a8",
+  "windowsSdkVersion": "10.0.26100.0",
+  "schemaVersion": 1,
+  "profile": "windowsDwmPaced",
+  "frameworkCommit": "6a19cca56475dbfba1478ee68d7bd0c2ef891da1",
+  "engineCommit": "af7e796e161ae0bb1ff0758c71a7105418bd9ded",
+  "patchSha256": "69db60775d8715b056216e9b6492e97e8194c6ba68c84579326ca4e56db0ec95",
+  "overlaySha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "binarySha256": "5085092222092abf3ae0bfe3e31b7303901f28439c08fa359e951d16525ca395",
+  "mode": "release",
+  "architecture": "x64",
+  "nativeTestsPassed": true
+}

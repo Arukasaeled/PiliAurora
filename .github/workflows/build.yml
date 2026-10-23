@@ -112,9 +112,22 @@ jobs:
               shell: bash
               run: printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-            - name: Build release APK
+            - name: Build release APK with verified prebuilt engines
               if: ${{ github.event_name == 'workflow_dispatch' }}
-              run: flutter build apk --release --split-per-abi --dart-define-from-file=pili_release.json --no-pub
+              shell: pwsh
+              run: |
+                  $ErrorActionPreference = 'Stop'
+                  $metadata = Get-Content pili_release.json | ConvertFrom-Json -AsHashtable
+                  $defines = @($metadata.GetEnumerator() | ForEach-Object { "--dart-define=$($_.Key)=$($_.Value)" })
+                  foreach ($entry in @(@('arm', 'armeabi-v7a'), @('arm64', 'arm64-v8a'), @('x64', 'x86_64'))) {
+                    $arch, $abi = $entry
+                    $engine = "build/prebuilt-engine/android-$arch"
+                    python third_party/flutter_engine/package.py unpack --target "android-$arch" --output $engine
+                    if ($LASTEXITCODE -ne 0) { throw "Engine validation failed: $abi" }
+                    python tool/engine/frame_plan/build_apk.py --mode release --abi $abi --flutter-sdk $env:FLUTTER_ROOT --android-sdk $env:ANDROID_HOME --engine-library "$engine/libflutter.so" --skip-pub-get --skip-patch --output "build/release-apks/PiliAurora_android_$($env:version)_$abi.apk" @defines
+                    if ($LASTEXITCODE -ne 0) { throw "APK assembly failed: $abi" }
+                    Copy-Item "build/release-apks/PiliAurora_android_$($env:version)_$abi.apk" .
+                  }
 
             - name: Build dev APK
               if: ${{ github.event_name == 'pull_request' }}
@@ -122,6 +135,7 @@ jobs:
                   flutter build apk --release --split-per-abi --android-project-arg dev=1 --no-pub
 
             - name: Rename APK with version and ABI
+              if: ${{ github.event_name == 'pull_request' }}
               run: |
                   for file in build/app/outputs/flutter-apk/app-*-release.apk; do
                     abi=$(echo "$file" | sed -E 's|.*app-(.*)-release\.apk|\1|')

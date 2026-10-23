@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "profile": "androidFramePlan",
+  "frameworkCommit": "6a19cca56475dbfba1478ee68d7bd0c2ef891da1",
+  "engineCommit": "af7e796e161ae0bb1ff0758c71a7105418bd9ded",
+  "patchSha256": "33b5e08ef62306d109e2e98d661c0fc1b5e468dc5c24d4957c360e34f3c4405f",
+  "overlaySha256": "5a503581c2ae399385a4a6413ba4c9b7ad9f9a06b725ebff2b118fcd6d32c7db",
+  "binarySha256": "24b01d1b3919ee27b42e035f87bef9dc7b0bfa348b8769debad5a6dddfc461bb",
+  "mode": "release",
+  "architecture": "arm",
+  "nativeTestsPassed": true,
+  "nativeTestEnvironment": {
+    "executor": "qemu-user-android-bionic",
+    "runnerSha256": "fb33bdb2d95dcbe87c958c98edba56ff3370fac56b9d9555d1c7c09ca60e130c",
+    "linkerSha256": "5ca617a5371ca22a8f455950dd154aa2075e420bb2a4d3c997f440b6912af380",
+    "libcSha256": "4d40a9aee7fddf17a377d548c0c324e32f35320896b7babee144fe326df2c433"
+  }
+}

@@ -78,3 +78,11 @@ build/frame-plan-validation/plan_test
 `prepare_device_probe.py` 复用运动夹具数据，生成使用正式 Binding、弹幕组件和原生引擎的设备入口；它使用引擎目标时间，不加载 preload 库。通过 `build_apk.py --target build/frame-plan-engine-probe/probe.dart --dart-define=JANK_MEDIA_URI=<原片URI> --output <隔离探针APK>` 构建。
 
 设备诊断可设置 `log.tag.PILI_FRAME_PLAN=DEBUG`，读取 `submit` 与 `present` 的同一 EGL frame ID。采集结束恢复原属性。`egl_frame_association.py` 保留缺失记录，Surface 代次须分段。设备结果和原始采样放在本地 `doc/dev/`、`build/`。
+
+## 正式 Release 与多架构装配
+
+Android 引擎编译入口支持 `--architecture arm`、`arm64`、`x64`，分别对应 `armeabi-v7a`、`arm64-v8a`、`x86_64`。每个架构使用独立输出目录、二进制摘要和原生回归结果。编译阶段使用的 `--skip-tests` 会将身份中的原生回归状态记为未通过，正式装配前需要完成对应架构的原生回归。
+
+APK 装配入口使用 `--mode release --abi <ABI>` 构建正式包名，沿用 Release 签名；`--mode dev-release` 继续构建 `.dev` 测试包。统一入口对应 `tool/build.ps1 -Platform android -Mode release -Abi <ABI> -EngineLibrary <libflutter.so> -FlutterSdk <隔离SDK> -AndroidSdk <AndroidSDK>`。每份 APK 绑定当前架构的引擎身份，装配后校验包内引擎摘要与 ABI。
+
+缺少 ARM32 设备时，可在 Linux 使用 `--architecture arm --qemu <qemu-arm> --android-rootfs <Android系统库目录>` 执行同一份 `flutter_shell_native_unittests`。系统库目录包含原始 Android 镜像的 `system/bin/linker` 和 `system/lib/`。此路径执行目标架构的原生回归，身份文件另记录 QEMU、Android linker 与 libc 摘要；图形输出与实际呈现效果仍需设备验证。

@@ -18,7 +18,8 @@ class ReleaseApkSigner {
             String storePassword = required(properties, "storePassword");
             String keyPassword = required(properties, "keyPassword");
             Path keystore = repo.resolve("android/app").resolve(storeFile).normalize();
-            Path java = Path.of(System.getProperty("java.home"), "bin", "java.exe");
+            String javaName = System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java";
+            Path java = Path.of(System.getProperty("java.home"), "bin", javaName);
             ProcessBuilder signer = new ProcessBuilder(List.of(
                     java.toString(), "--enable-native-access=ALL-UNNAMED", "-jar", args[1],
                     "sign", "--ks", keystore.toString(), "--ks-key-alias", alias,

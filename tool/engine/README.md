@@ -20,7 +20,7 @@ pwsh -NoProfile -File tool/build.ps1 -Platform android -Mode profile -EngineLibr
 pwsh -NoProfile -File tool/build.ps1 -Platform android -Mode release -DevRelease -EngineLibrary <libflutter.so> -FlutterSdk <隔离SDK> -AndroidSdk <AndroidSDK>
 ```
 
-Windows 兼容原来的 `-WindowsEngineLibrary` 参数。Android 自编装配当前覆盖 arm64 Profile 和独立 dev Release 包。`-Target`、`-DartDefine` 传递应用入口与自定义参数；Android 的 `-SourceApk` 复用已验证 APK，`-Output` 指定输出。呈现配置参数由构建入口保留。
+Windows 兼容原来的 `-WindowsEngineLibrary` 参数。Android 自编装配支持三种 ABI 的正式 Release、Profile，以及 arm64 独立 dev Release 包。`-Target`、`-DartDefine` 传递应用入口与自定义参数；Android 的 `-SourceApk` 复用已验证 APK，`-Output` 指定输出。呈现配置参数由构建入口保留。
 
 编译与原生测试见 [Android](frame_plan/README.md)、[Windows](windows_frame_pacing/README.md)。设备采集入口见 [平台探针](../probes/README.md)。
 
@@ -28,3 +28,9 @@ Windows 兼容原来的 `-WindowsEngineLibrary` 参数。Android 自编装配当
 python -m unittest discover -s tool/engine -p '*_test.py' -v
 python -m unittest discover -s tool/engine/frame_plan -p '*_test.py' -v
 ```
+
+## 正式 Release 与多架构装配
+
+Android 引擎编译入口支持 `--architecture arm`、`arm64`、`x64`，分别对应 `armeabi-v7a`、`arm64-v8a`、`x86_64`。每个架构使用独立输出目录、二进制摘要和原生回归结果。编译阶段使用的 `--skip-tests` 会将身份中的原生回归状态记为未通过，正式装配前需要完成对应架构的原生回归。
+
+APK 装配入口使用 `--mode release --abi <ABI>` 构建正式包名，沿用 Release 签名；`--mode dev-release` 继续构建 `.dev` 测试包。统一入口对应 `tool/build.ps1 -Platform android -Mode release -Abi <ABI> -EngineLibrary <libflutter.so> -FlutterSdk <隔离SDK> -AndroidSdk <AndroidSDK>`。每份 APK 绑定当前架构的引擎身份，装配后校验包内引擎摘要与 ABI。

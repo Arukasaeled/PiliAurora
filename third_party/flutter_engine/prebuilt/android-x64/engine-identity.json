@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "profile": "androidFramePlan",
+  "frameworkCommit": "6a19cca56475dbfba1478ee68d7bd0c2ef891da1",
+  "engineCommit": "af7e796e161ae0bb1ff0758c71a7105418bd9ded",
+  "patchSha256": "33b5e08ef62306d109e2e98d661c0fc1b5e468dc5c24d4957c360e34f3c4405f",
+  "overlaySha256": "5a503581c2ae399385a4a6413ba4c9b7ad9f9a06b725ebff2b118fcd6d32c7db",
+  "binarySha256": "e5d5c12bbd3bf8bf635943da1df7c2b456dbac6c47cfdc549bc5fb6ebed9f8f7",
+  "mode": "release",
+  "architecture": "x64",
+  "nativeTestsPassed": true
+}

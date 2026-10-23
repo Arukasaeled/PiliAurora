@@ -24,7 +24,7 @@ Windows 视频输出的 EGL/mpv 释放顺序、超分切换重建和首帧条件
 
 Windows 点播和直播弹幕自动跟随屏幕，排查时同时记录屏幕刷新率、窗口可见状态和引擎来源。使用[Windows 弹幕帧节奏探针](../tool/probes/README.md#windows-弹幕帧节奏探针)按 QPC、Flutter 帧编号与 Raster 时间段关联 PresentMon 事件；结合实际 `PresentMode`、已显示关联率、显示事件覆盖率与 ±1/±2/±3 连续性判定定位呈现波动。隐藏或完全遮挡窗口的采集应与正常可见场景分别解释。
 
-自编引擎的固定版本、DWM 相位、DirectComposition、计时线程修复和装配步骤见[Windows 帧节奏引擎](../tool/engine/windows_frame_pacing/README.md)。应用输出中的 `engine-identity.json` 可核对补丁与 DLL 摘要；默认发布和 CI 使用 FVM 引擎，自编引擎通过构建参数显式选择。
+自编引擎的固定版本、DWM 相位、DirectComposition、计时线程修复和装配步骤见[Windows 帧节奏引擎](../tool/engine/windows_frame_pacing/README.md)。应用输出中的 `engine-identity.json` 可核对补丁与 DLL 摘要；正式发布和 CI 使用 [Git 跟踪的预编译引擎](../third_party/flutter_engine/README.md)，本地构建通过参数显式选择。
 
 弹幕加载为空时，先对照 `grpcDecode` 与来源快照中的 `elements/rawSegments/pendingSegments`。响应已收到但出现 `DanmakuWorkTooLarge` 时，分别核对解压、protobuf 预检和合并阶段的预算。已知元素字段槽位包含在元素基数内，未知字段另行计费；解码 worker 退出后保留存活的缓冲区与解析结果，合并沿用同一租约，已预留的输入计费一次。当前进程处理配额为 64 MiB，解压响应上限为 8 MiB，单条编码上限为 64 KiB；相关回归见 `test/grpc/decode_policy_test.dart` 与 `test/pages/danmaku/controller_test.dart`。
 

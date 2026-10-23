@@ -64,15 +64,16 @@ def validate_sdk(sdk: Path) -> None:
         raise ValueError("Flutter framework/engine commits differ from the pinned SDK")
 
 
-def validate_architecture(library: Path, architecture: str) -> None:
+def validate_architecture(library: Path, architecture: str, *, profile: str | None = None) -> None:
     with library.open("rb") as binary:
         header = binary.read(64)
-        if architecture == "arm64":
-            valid = (len(header) == 64 and header[:6] == b"\x7fELF\x02\x01" and
-                     struct.unpack_from("<H", header, 18)[0] == 183)
+        if profile != "windowsDwmPaced" and architecture in {"arm", "arm64", "x64"} and header[:4] == b"\x7fELF":
+            elf_class, machine = {"arm": (1, 40), "arm64": (2, 183), "x64": (2, 62)}[architecture]
+            valid = (len(header) >= 52 and header[4:6] == bytes((elf_class, 1)) and
+                     struct.unpack_from("<H", header, 18)[0] == machine)
         else:
             valid = False
-            if len(header) == 64 and header[:2] == b"MZ":
+            if profile != "androidFramePlan" and architecture == "x64" and len(header) == 64 and header[:2] == b"MZ":
                 binary.seek(struct.unpack_from("<I", header, 60)[0])
                 pe = binary.read(6)
                 valid = len(pe) == 6 and pe[:4] == b"PE\0\0" and pe[4:] == b"\x64\x86"
@@ -81,10 +82,12 @@ def validate_architecture(library: Path, architecture: str) -> None:
 
 
 def create_identity(library: Path, *, profile: str, mode: str, sdk: Path,
-                    native_tests_passed: bool, **metadata) -> dict:
+                    native_tests_passed: bool, architecture: str | None = None, **metadata) -> dict:
     validate_sdk(sdk)
-    architecture = PROFILES[profile][0]
-    validate_architecture(library, architecture)
+    architecture = architecture or PROFILES[profile][0]
+    if architecture not in ({"arm", "arm64", "x64"} if profile == "androidFramePlan" else {"x64"}):
+        raise ValueError("Unsupported engine architecture")
+    validate_architecture(library, architecture, profile=profile)
     if mode not in {"profile", "release"}:
         raise ValueError("Custom engines require profile or release mode")
     return {**metadata, "schemaVersion": SCHEMA_VERSION, "profile": profile,
@@ -95,11 +98,13 @@ def create_identity(library: Path, *, profile: str, mode: str, sdk: Path,
 
 
 def validate_engine(library: Path, *, profile: str, mode: str, sdk: Path | None = None,
-                    require_native_tests: bool = True) -> dict:
+                    require_native_tests: bool = True, architecture: str | None = None) -> dict:
     if sdk is not None:
         validate_sdk(sdk)
     identity = json.loads(library.with_name("engine-identity.json").read_text(encoding="utf-8"))
-    architecture = PROFILES[profile][0]
+    architecture = architecture or PROFILES[profile][0]
+    if architecture not in ({"arm", "arm64", "x64"} if profile == "androidFramePlan" else {"x64"}):
+        raise ValueError("Unsupported engine architecture")
     expected = {"schemaVersion": SCHEMA_VERSION, "profile": profile,
                 "frameworkCommit": FRAMEWORK_COMMIT, "engineCommit": ENGINE_COMMIT,
                 "mode": mode, "architecture": architecture,
@@ -111,7 +116,7 @@ def validate_engine(library: Path, *, profile: str, mode: str, sdk: Path | None 
             raise ValueError(f"Engine identity mismatch: {field}")
     if require_native_tests and identity.get("nativeTestsPassed") is not True:
         raise ValueError("This engine artifact has not passed native regression tests")
-    validate_architecture(library, architecture)
+    validate_architecture(library, architecture, profile=profile)
     return identity
 
 
@@ -154,12 +159,14 @@ def source_fingerprint(repo: Path, target: str) -> str:
                         for path in files})
 
 
-def verify_packaged_engine(apk: Path, library: Path) -> None:
+def verify_packaged_engine(apk: Path, library: Path, abi: str = "arm64-v8a") -> None:
     import zipfile
     with zipfile.ZipFile(apk) as archive:
-        embedded = hashlib.sha256(archive.read("lib/arm64-v8a/libflutter.so")).hexdigest()
+        embedded = hashlib.sha256(archive.read(f"lib/{abi}/libflutter.so")).hexdigest()
         abis = {name.split("/")[1] for name in archive.namelist() if name.startswith("lib/")}
-        if embedded != sha256(library) or abis != {"arm64-v8a"}:
+        if f"lib/{abi}/libapp.so" not in archive.namelist():
+            raise ValueError("Packaged APK is missing the target ABI AOT library")
+        if embedded != sha256(library) or abis != {abi}:
             raise ValueError("Packaged engine binary or ABI differs from the verified artifact")
 
 

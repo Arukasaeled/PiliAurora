@@ -66,3 +66,5 @@ Windows 帧节奏引擎补丁维护在 [`tool/engine/windows_frame_pacing/`](../
 - [依赖精简与内化](SIMPLIFICATION.md)：随后各阶段的实现取舍、数量变化和验证。
 
 记录中的包数、版本和测试结果对应各阶段基线；当前版本以登记、包清单与锁文件为准。
+
+正式发布使用的 Flutter 定制引擎按 Android 三种 ABI 和 Windows x64 保存为 [Release 预编译包](flutter_engine/README.md)，由 Git 跟踪二进制压缩包、身份文件与许可证，CI 校验后装配。引擎源码编译与原生回归在更新预编译包时执行。

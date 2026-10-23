@@ -32,14 +32,13 @@ $windowsEnginePath = $null
 if ($EngineLibrary) {
     if ($Mode -eq 'debug') { throw '自编引擎适用于 Profile/Release 构建。' }
     if ($Platform -eq 'android') {
-        if ($Abi -and $Abi -ne 'arm64-v8a') { throw 'Android 自编引擎当前要求 arm64-v8a。' }
         if (-not $FlutterSdk -or -not $AndroidSdk) { throw 'Android 自编构建需要 -FlutterSdk 和 -AndroidSdk。' }
-        if ($Mode -eq 'release' -and -not $DevRelease) { throw 'Android 自编 Release 当前使用 -DevRelease 独立测试包。' }
         if ($DevRelease -and $Mode -ne 'release') { throw '-DevRelease 要求 -Mode release。' }
         $builder = Join-Path $PSScriptRoot 'engine/frame_plan/build_apk.py'
-        $customMode = if ($Mode -eq 'release') { 'dev-release' } else { 'profile' }
+        $customMode = if ($DevRelease) { 'dev-release' } else { $Mode }
         $customArguments = @($builder, '--flutter-sdk', $FlutterSdk, '--engine-library', $EngineLibrary,
             '--android-sdk', $AndroidSdk, '--mode', $customMode, '--target', $Target)
+        if ($Abi) { $customArguments += @('--abi', $Abi) }
         if ($Output) { $customArguments += @('--output', $Output) }
         if ($SourceApk) { $customArguments += @('--skip-build', '--source-apk', $SourceApk) }
         if ($SkipPatch) { $customArguments += '--skip-patch' }

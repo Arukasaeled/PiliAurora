@@ -48,6 +48,37 @@ class EngineIdentityTest(unittest.TestCase):
                 with self.subTest(profile=profile, field=field), self.assertRaises(ValueError):
                     protocol.validate_engine(library, profile=profile, mode="profile")
 
+    def test_android_abis_validate_elf_headers_and_packaged_library(self):
+        for architecture, abi, elf_class, machine in [
+            ("arm", "armeabi-v7a", 1, 40), ("arm64", "arm64-v8a", 2, 183),
+            ("x64", "x86_64", 2, 62),
+        ]:
+            with self.subTest(architecture=architecture):
+                library = self.root / "libflutter.so"
+                header = bytearray(64)
+                header[:6] = b"\x7fELF" + bytes((elf_class, 1))
+                struct.pack_into("<H", header, 18, machine)
+                library.write_bytes(header)
+                with patch.object(protocol, "validate_sdk"):
+                    identity = protocol.create_identity(library, profile="androidFramePlan",
+                        mode="release", sdk=self.root, native_tests_passed=True,
+                        architecture=architecture)
+                protocol.write_json(library.with_name("engine-identity.json"), identity)
+                protocol.validate_engine(library, profile="androidFramePlan", mode="release",
+                    architecture=architecture)
+                with self.assertRaises(ValueError):
+                    protocol.validate_engine(library, profile="androidFramePlan", mode="release",
+                        architecture="arm" if architecture != "arm" else "arm64")
+                apk = self.root / "test.apk"
+                with zipfile.ZipFile(apk, "w") as archive:
+                    archive.write(library, f"lib/{abi}/libflutter.so")
+                    archive.writestr(f"lib/{abi}/libapp.so", b"aot")
+                protocol.verify_packaged_engine(apk, library, abi)
+                header[4] = 2 if elf_class == 1 else 1
+                library.write_bytes(header)
+                with self.assertRaises(ValueError):
+                    protocol.validate_architecture(library, architecture)
+
     def test_binary_architecture_is_checked_independently_of_manifest(self):
         library, identity = self.artifact()
         library.write_bytes(b"wrong architecture")
@@ -55,6 +86,23 @@ class EngineIdentityTest(unittest.TestCase):
         protocol.write_json(library.with_name("engine-identity.json"), identity)
         with self.assertRaises(ValueError):
             protocol.validate_engine(library, profile="androidFramePlan", mode="profile")
+
+    def test_binary_format_is_bound_to_platform(self):
+        for source, target in [("androidFramePlan", "windowsDwmPaced"),
+                               ("windowsDwmPaced", "androidFramePlan")]:
+            library, _ = self.artifact(source)
+            with self.subTest(source=source), patch.object(protocol, "validate_sdk"):
+                with self.assertRaises(ValueError):
+                    protocol.create_identity(library, profile=target, mode="release", sdk=self.root,
+                        native_tests_passed=True, architecture="x64")
+
+    def test_packaged_apk_requires_aot_library(self):
+        library, _ = self.artifact()
+        apk = self.root / "missing-aot.apk"
+        with zipfile.ZipFile(apk, "w") as archive:
+            archive.write(library, "lib/arm64-v8a/libflutter.so")
+        with self.assertRaisesRegex(ValueError, "AOT"):
+            protocol.verify_packaged_engine(apk, library)
 
     def test_identity_digest_binds_generated_defines_but_excludes_application_receipt(self):
         _, identity = self.artifact()
@@ -78,6 +126,7 @@ class EngineIdentityTest(unittest.TestCase):
         for extra in [False, True]:
             with zipfile.ZipFile(apk, "w") as archive:
                 archive.write(library, "lib/arm64-v8a/libflutter.so")
+                archive.writestr("lib/arm64-v8a/libapp.so", b"aot")
                 if extra:
                     archive.writestr("lib/x86_64/libflutter.so", b"wrong")
             if extra:

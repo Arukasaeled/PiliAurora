@@ -96,9 +96,19 @@ jobs:
         shell: pwsh
         run: python third_party/nativeapi/package.py verify
 
-      - name: Build Windows release
+      - name: Build Windows release with verified prebuilt engine
+        shell: pwsh
         run: |
-          fastforge package --platform windows --targets exe --flutter-build-args="dart-define-from-file=pili_release.json,no-pub" --skip-clean
+          $ErrorActionPreference = 'Stop'
+          $configuration = python third_party/flutter_engine/package.py unpack --target windows-x64 --output build/prebuilt-engine/windows-x64
+          if ($LASTEXITCODE -ne 0) { throw 'Windows engine validation failed' }
+          $configuration | Set-Content build/windows-engine-config.json -Encoding utf8NoBOM
+          $defines = @(($configuration | ConvertFrom-Json).dartDefines | ForEach-Object { "--build-dart-define=$_" })
+          fastforge package --platform windows --targets exe --flutter-build-args="dart-define-from-file=pili_release.json,no-pub" --skip-clean @defines --hook-pre "python third_party/flutter_engine/package.py install-windows --target windows-x64 --output build/windows/x64/runner/Release"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed' }
+          $expected = ($configuration | ConvertFrom-Json).identity.binarySha256
+          $actual = (Get-FileHash build/windows/x64/runner/Release/flutter_windows.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'Packaged Windows engine differs from verified artifact' }
 
       - name: Package Windows portable and installer
         shell: pwsh

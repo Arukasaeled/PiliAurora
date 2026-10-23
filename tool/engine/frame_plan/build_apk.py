@@ -1,4 +1,4 @@
-"""Build an isolated arm64 Profile or dev Release APK with the frame-plan engine."""
+"""Build a Profile, dev Release or official Release APK with the frame-plan engine."""
 import argparse
 import hashlib
 import json
@@ -47,7 +47,8 @@ def main():
     parser.add_argument("--flutter-sdk", type=Path, required=True)
     parser.add_argument("--engine-library", type=Path, required=True)
     parser.add_argument("--android-sdk", type=Path, required=True)
-    parser.add_argument("--mode", choices=("profile", "dev-release"), default="profile")
+    parser.add_argument("--mode", choices=("profile", "dev-release", "release"), default="profile")
+    parser.add_argument("--abi", choices=("arm64-v8a", "armeabi-v7a", "x86_64"), default="arm64-v8a")
     parser.add_argument("--target", default="lib/main.dart")
     parser.add_argument("--dart-define", action="append", default=[])
     parser.add_argument("--skip-build", action="store_true")
@@ -56,6 +57,8 @@ def main():
     parser.add_argument("--skip-patch", action="store_true")
     parser.add_argument("--skip-pub-get", action="store_true")
     args = parser.parse_args()
+    if args.mode == "dev-release" and args.abi != "arm64-v8a":
+        parser.error("dev-release requires arm64-v8a; use release for other ABIs")
     if args.skip_build != (args.source_apk is not None):
         parser.error("--skip-build and --source-apk must be used together")
     try:
@@ -64,15 +67,19 @@ def main():
         parser.error(str(error))
     repo = Path(__file__).resolve().parents[3]
     sdk = args.flutter_sdk.resolve()
-    mode = "release" if args.mode == "dev-release" else "profile"
-    package = f"io.github.wallpap.piliaurora.{'dev' if mode == 'release' else 'profile'}"
-    default_output = ("build/android-test/PiliAurora-dev-arm64-v8a-release.apk"
+    mode = "profile" if args.mode == "profile" else "release"
+    architecture, target_platform = {"arm64-v8a": ("arm64", "android-arm64"),
+        "armeabi-v7a": ("arm", "android-arm"), "x86_64": ("x64", "android-x64")}[args.abi]
+    package = "io.github.wallpap.piliaurora" if args.mode == "release" else f"io.github.wallpap.piliaurora.{'dev' if mode == 'release' else 'profile'}"
+    default_output = (f"build/android-test/PiliAurora-dev-{args.abi}-release.apk"
                       if mode == "release" else
-                      "build/android-frame-plan/PiliAurora-frame-plan-arm64-profile.apk")
+                      f"build/android-frame-plan/PiliAurora-frame-plan-{args.abi}-profile.apk")
+    if args.mode == "release":
+        default_output = f"build/release/PiliAurora-{args.abi}-release.apk"
     output = (repo / (args.output or default_output)).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     library = args.engine_library.resolve()
-    engine = engine_identity.validate_engine(library, profile="androidFramePlan", mode=mode, sdk=sdk)
+    engine = engine_identity.validate_engine(library, profile="androidFramePlan", mode=mode, sdk=sdk, architecture=architecture)
     engine_digest = engine_identity.identity_digest(engine)
     generated_defines = engine_identity.dart_defines("androidFramePlan", engine)
     source_hash = engine_identity.source_fingerprint(repo, args.target)
@@ -81,13 +88,13 @@ def main():
         raise ValueError(f"SDK engine mismatch: {pinned_engine}")
     if sdk == (repo / ".fvm/flutter_sdk").resolve():
         raise ValueError("Use an isolated SDK checkout")
-    flutter = sdk / "bin/flutter.bat"
+    flutter = sdk / ("bin/flutter.bat" if os.name == "nt" else "bin/flutter")
     log_path = output.with_suffix(".build.log")
     manifest_path = output.with_suffix(".json")
     env = {**os.environ, "FLUTTER_ROOT": str(sdk),
            "PATH": str(sdk / "bin") + os.pathsep + os.environ["PATH"],
            "JAVA_OPTS": os.environ.get("JAVA_OPTS", "") + " --enable-native-access=ALL-UNNAMED",
-           "PILIAURORA_TEST_RELEASE": "true" if mode == "release" else "false",
+           "PILIAURORA_TEST_RELEASE": "true" if args.mode == "dev-release" else "false",
            "TEMP": str(repo / ".gradle-tmp"), "TMP": str(repo / ".gradle-tmp")}
     (repo / ".gradle-tmp").mkdir(exist_ok=True)
     tracked_state = [repo / "android/local.properties", repo / ".dart_tool/package_config.json"]
@@ -121,13 +128,13 @@ def main():
                     run([flutter, "pub", "get", "--offline", "--enforce-lockfile"])
                 if not args.skip_patch:
                     run(["pwsh", "-NoProfile", "-File", "lib/scripts/patch.ps1", "android", "-SkipPubGet"])
-                run([sdk / "bin/cache/dart-sdk/bin/dart.exe", "--packages=.dart_tool/package_config.json",
+                run([sdk / ("bin/cache/dart-sdk/bin/dart.exe" if os.name == "nt" else "bin/cache/dart-sdk/bin/dart"), "--packages=.dart_tool/package_config.json",
                      "tool/check_dependencies.dart"])
-                run([flutter, "build", "apk", f"--{mode}", "--no-pub", "--target-platform=android-arm64",
+                run([flutter, "build", "apk", f"--{mode}", "--no-pub", f"--target-platform={target_platform}",
                      f"--target={args.target}",
                      *[f"--dart-define={value}" for value in generated_defines],
                      *[f"--dart-define={value}" for value in args.dart_define]])
-            verified_engine = engine_identity.validate_engine(library, profile="androidFramePlan", mode=mode, sdk=sdk)
+            verified_engine = engine_identity.validate_engine(library, profile="androidFramePlan", mode=mode, sdk=sdk, architecture=architecture)
             if engine_identity.identity_digest(verified_engine) != engine_digest:
                 raise ValueError("Engine identity changed during application compilation")
             if engine_identity.source_fingerprint(repo, args.target) != source_hash:
@@ -136,9 +143,9 @@ def main():
             with zipfile.ZipFile(source) as src, zipfile.ZipFile(intermediate, "w") as dst:
                 for entry in src.infolist():
                     name = entry.filename
-                    if name.startswith("META-INF/") or name in {"lib/arm64-v8a/libflutter.so", "assets/piliaurora-engine-identity.json"}:
+                    if name.startswith("META-INF/") or name in {f"lib/{args.abi}/libflutter.so", "assets/piliaurora-engine-identity.json"}:
                         continue
-                    if name.startswith("lib/") and not name.startswith("lib/arm64-v8a/"):
+                    if name.startswith("lib/") and not name.startswith(f"lib/{args.abi}/"):
                         continue
                     if name.endswith(("/libpacing.so", "/wrap.sh")):
                         raise ValueError(f"Unexpected preload probe in input APK: {name}")
@@ -146,26 +153,26 @@ def main():
                 dst.writestr("assets/piliaurora-engine-identity.json", json.dumps({
                     **engine, "identityDigest": engine_digest,
                 }, sort_keys=True))
-                dst.write(library, "lib/arm64-v8a/libflutter.so", compress_type=zipfile.ZIP_DEFLATED)
+                dst.write(library, f"lib/{args.abi}/libflutter.so", compress_type=zipfile.ZIP_DEFLATED)
             tools = args.android_sdk / "build-tools/37.0.0"
             aligned = output.with_suffix(".aligned.apk")
-            run([tools / "zipalign.exe", "-f", "-P", "16", "4", intermediate, aligned])
+            run([tools / ("zipalign.exe" if os.name == "nt" else "zipalign"), "-f", "-P", "16", "4", intermediate, aligned])
             if mode == "release":
                 run(["java", Path(__file__).with_name("ReleaseApkSigner.java"), repo,
                      tools / "lib/apksigner.jar", aligned, output])
             else:
-                run([tools / "apksigner.bat", "sign", "--ks",
-                     Path(os.environ["USERPROFILE"]) / ".android/debug.keystore",
+                run([tools / ("apksigner.bat" if os.name == "nt" else "apksigner"), "sign", "--ks",
+                     Path.home() / ".android/debug.keystore",
                      "--ks-key-alias", "androiddebugkey", "--ks-pass", "pass:android",
                      "--key-pass", "pass:android", "--out", output, aligned])
             run(["java", "--enable-native-access=ALL-UNNAMED", "-jar",
                  tools / "lib/apksigner.jar", "verify", output])
-            engine_identity.verify_packaged_engine(output, library)
+            engine_identity.verify_packaged_engine(output, library, args.abi)
             engine_identity.write_json(manifest_path, {
                 **engine, "identityDigest": engine_digest,
                 "application": {
                     "sourceSha256": source_hash, "apkSha256": sha256(output),
-                    "target": args.target, "abi": "arm64-v8a", "package": package,
+                    "target": args.target, "abi": args.abi, "package": package,
                     "dartDefines": args.dart_define,
                     "tickerSha256": sha256(repo / "third_party/canvas_danmaku/lib/frame_rate_ticker.dart"),
                 },

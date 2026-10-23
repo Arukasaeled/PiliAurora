@@ -59,4 +59,4 @@ pwsh -NoProfile -File tool/build.ps1 -Platform windows -Mode profile -WindowsEng
 应用构建核对模式、固定提交、当前补丁、DLL 摘要和原生回归结果，构建普通入口后装配
 自编引擎，并在应用输出目录保留 `engine-identity.json`。Release 需要先用 `--mode release`
 编译同模式引擎，再将应用构建的 `-Mode` 改为 `release`。
-省略 `-WindowsEngineLibrary` 使用 FVM 引擎，并清除应用输出目录的旧身份文件；构建流程不改写 FVM 引擎缓存。当前发布与 CI 构建仍使用 FVM 引擎。
+省略 `-WindowsEngineLibrary` 使用 FVM 引擎，并清除应用输出目录的旧身份文件；构建流程不改写 FVM 引擎缓存。正式发布与 CI 使用 [Git 跟踪的 Release 预编译引擎](../../../third_party/flutter_engine/README.md)。
