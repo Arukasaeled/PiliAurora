@@ -25,6 +25,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <mutex>
+#include <unordered_map>
 
 // |ANGLESurfaceManager| provides an abstraction around ANGLE to easily draw
 // OpenGL ES 2.0 content & read as D3D 11 texture using shared |HANDLE|.
@@ -127,8 +129,9 @@ class ANGLESurfaceManager {
       EGL_NONE,
   };
 
-  // Number of active instances of ANGLESurfaceManager.
-  static int32_t instance_count_;
+  // 不同插件实例各有输出线程；共享 display 的初始化与最后终止须同步。
+  static std::mutex display_mutex_;
+  static std::unordered_map<EGLDisplay, size_t> display_ref_counts_;
 };
 
 #endif  // ANGLE_SURFACE_MANAGER_H_

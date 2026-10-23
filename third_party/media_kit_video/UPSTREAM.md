@@ -1,6 +1,6 @@
 # media_kit_video 本地版本
 
-- 本地版本：`1.2.5+piliaurora.4`；来源包版本：`1.2.5`。
+- 本地版本：`1.2.5+piliaurora.8`；来源包版本：`1.2.5`。
 - 来源仓库：https://github.com/My-Responsitories/media-kit.git
 - 来源提交：`73771ec38176be2d984a3049c28177bce23b54a0`。
 - 来源子目录：`media_kit_video`。
@@ -45,3 +45,5 @@ Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频�
 2026-10-22：新增带输出 token、采样代次、阶段和序号的视频帧通道。Android 监听注册冻结身份，请求完成与实际新 buffer 取图共同确认候选；重配、暂停和 seek 关闭采样，恢复点后的新帧确认再开启活动代次。Windows 消费回调携带已渲染纹理的身份与采样代次，经 render 队列验证后发布。首帧和健康证据继续走独立消费进度入口。同 token 重配保留批次序号，移除旧的无类型 Android 请求回调。
 
 2026-10-23：采样开关回执返回 render／Surface 临界区冻结的代次状态。运行时等待当前操作回执，隔离先前开关的迟到状态；活动状态早于回执交付时按代次保留并在确认后处理。seek 完成后等待该 seek 的媒体时钟确认，再进入平台新帧预备窗口。Windows 新 token 重置采样准入，序号仍在同 token 重配期间连续。
+
+2026-10-23（piliaurora.8）：Windows ANGLE 构造失败时回滚 mutex、D3D device/context、纹理与已初始化的 EGL 资源；纹理交由 ComPtr 单引用持有，旧 Windows adapter/factory 使用作用域回收并核对创建结果。共享 EGLDisplay 按 display 计数，不同插件输出线程通过同一把锁协调初始化、登记和最后终止。`tool/probes/windows/windows_angle_rollback_probe.py` 编译生产类与方法，注入各创建阶段失败，核对共享／独立 display、跨线程实例和 resize 后的资源回收。

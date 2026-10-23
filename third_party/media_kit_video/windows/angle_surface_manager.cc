@@ -22,20 +22,29 @@
     FAIL(message);             \
   }
 
-int ANGLESurfaceManager::instance_count_ = 0;
+std::mutex ANGLESurfaceManager::display_mutex_;
+std::unordered_map<EGLDisplay, size_t> ANGLESurfaceManager::display_ref_counts_;
 
 ANGLESurfaceManager::ANGLESurfaceManager(int32_t width, int32_t height)
     : width_(width), height_(height) {
   mutex_ = ::CreateMutex(NULL, FALSE, NULL);
-  Create();
-  instance_count_++;
+  if (mutex_ == nullptr) {
+    throw std::runtime_error("Unable to create ANGLE surface mutex.");
+  }
+  try {
+    Create();
+  } catch (...) {
+    // 构造失败不会调用本类析构，回退软件输出前须归还已取得的资源。
+    CleanUp(true);
+    ::CloseHandle(mutex_);
+    mutex_ = nullptr;
+    throw;
+  }
 }
 
 ANGLESurfaceManager::~ANGLESurfaceManager() {
   CleanUp(true);
-  ::ReleaseMutex(mutex_);
   ::CloseHandle(mutex_);
-  instance_count_--;
 }
 
 void ANGLESurfaceManager::SetSize(int32_t width, int32_t height) {
@@ -99,19 +108,35 @@ void ANGLESurfaceManager::Create() {
 }
 
 void ANGLESurfaceManager::CleanUp(bool release_context) {
+  if (display_ != EGL_NO_DISPLAY) {
+    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+  }
+  if (surface_ != EGL_NO_SURFACE) {
+    eglDestroySurface(display_, surface_);
+    surface_ = EGL_NO_SURFACE;
+  }
   if (release_context) {
     if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) {
       eglDestroyContext(display_, context_);
       context_ = EGL_NO_CONTEXT;
     }
-    if (surface_ != EGL_NO_SURFACE) {
-      eglDestroySurface(display_, surface_);
-      surface_ = EGL_NO_SURFACE;
-    }
-    if (instance_count_ == 1) {
-      eglTerminate(display_);
+    {
+      std::lock_guard<std::mutex> lock(display_mutex_);
+      const auto display = display_ref_counts_.find(display_);
+      if (display != display_ref_counts_.end() && --display->second == 0) {
+        eglTerminate(display_);
+        display_ref_counts_.erase(display);
+      }
     }
     display_ = EGL_NO_DISPLAY;
+    config_ = nullptr;
+  }
+  // ComPtr 各持有一个引用，部分创建失败与正常释放使用同一路径。
+  internal_d3d_11_texture_2D_.Reset();
+  d3d_11_texture_2D_.Reset();
+  internal_handle_ = nullptr;
+  handle_ = nullptr;
+  if (release_context) {
     // Release D3D device & context if the instance is being destroyed.
     if (d3d_11_device_context_) {
       d3d_11_device_context_->Release();
@@ -121,22 +146,6 @@ void ANGLESurfaceManager::CleanUp(bool release_context) {
       d3d_11_device_->Release();
       d3d_11_device_ = nullptr;
     }
-  } else {
-    // Clear context & destroy existing |surface_|.
-    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, context_);
-    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
-      eglDestroySurface(display_, surface_);
-    }
-    surface_ = EGL_NO_SURFACE;
-  }
-  // Release D3D 11 texture(s).
-  if (internal_d3d_11_texture_2D_) {
-    internal_d3d_11_texture_2D_->Release();
-    internal_d3d_11_texture_2D_ = nullptr;
-  }
-  if (d3d_11_texture_2D_) {
-    d3d_11_texture_2D_->Release();
-    d3d_11_texture_2D_ = nullptr;
   }
 }
 
@@ -150,26 +159,26 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
         D3D_FEATURE_LEVEL_9_3,
     };
 
-    IDXGIAdapter* adapter = nullptr;
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
     D3D_DRIVER_TYPE driver_type = D3D_DRIVER_TYPE_UNKNOWN;
 
     // NOTE: Automatically selecting adapter on Windows 10 RTM or greater.
     if (Utils::IsWindows10RTMOrGreater()) {
-      adapter = NULL;
       driver_type = D3D_DRIVER_TYPE_HARDWARE;
     } else {
-      IDXGIFactory* dxgi = nullptr;
-      ::CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&dxgi);
+      Microsoft::WRL::ComPtr<IDXGIFactory> dxgi;
+      auto hr = ::CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&dxgi);
+      CHECK_HRESULT("CreateDXGIFactory");
       // As far as my experience goes, this is the safest approach. Passing NULL
       // (so-called default) seems to cause issues on Windows 7 or maybe some
       // older graphics drivers. First adapter is the default.
       // D3D_DRIVER_TYPE_UNKNOWN| must be passed with manual adapter selection.
-      dxgi->EnumAdapters(0, &adapter);
-      dxgi->Release();
+      hr = dxgi->EnumAdapters(0, &adapter);
+      CHECK_HRESULT("IDXGIFactory::EnumAdapters");
     }
 
     auto hr = ::D3D11CreateDevice(
-        adapter, driver_type, 0, 0, feature_levels.begin(),
+        adapter.Get(), driver_type, 0, 0, feature_levels.begin(),
         static_cast<UINT>(feature_levels.size()), D3D11_SDK_VERSION,
         &d3d_11_device_, 0, &d3d_11_device_context_);
     CHECK_HRESULT("D3D11CreateDevice");
@@ -217,7 +226,6 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
   // Retrieve the shared |HANDLE| for interop.
   hr = resource->GetSharedHandle(&internal_handle_);
   CHECK_HRESULT("IDXGIResource::GetSharedHandle");
-  internal_d3d_11_texture_2D_->AddRef();
 
   // External.
   hr = d3d_11_device_->CreateTexture2D(&d3d11_texture2D_desc, nullptr,
@@ -228,38 +236,31 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
   // Retrieve the shared |HANDLE| for interop.
   hr = resource->GetSharedHandle(&handle_);
   CHECK_HRESULT("IDXGIResource::GetSharedHandle");
-  d3d_11_texture_2D_->AddRef();
 
   return true;
 }
 
 bool ANGLESurfaceManager::CreateEGLDisplay() {
   if (display_ == EGL_NO_DISPLAY) {
+    std::lock_guard<std::mutex> lock(display_mutex_);
     auto eglGetPlatformDisplayEXT =
         reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
             eglGetProcAddress("eglGetPlatformDisplayEXT"));
     if (eglGetPlatformDisplayEXT) {
-      display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                          EGL_DEFAULT_DISPLAY,
-                                          kD3D11DisplayAttributes);
-      if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-        display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                            EGL_DEFAULT_DISPLAY,
-                                            kD3D11_9_3DisplayAttributes);
-        if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-          display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                              EGL_DEFAULT_DISPLAY,
-                                              kD3D9DisplayAttributes);
-          if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-            display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                                EGL_DEFAULT_DISPLAY,
-                                                kWrapDisplayAttributes);
-            if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-              FAIL("eglGetPlatformDisplayEXT");
-            }
-          }
+      const EGLint* configurations[] = {
+          kD3D11DisplayAttributes, kD3D11_9_3DisplayAttributes,
+          kD3D9DisplayAttributes, kWrapDisplayAttributes};
+      for (const auto* attributes : configurations) {
+        const auto display = eglGetPlatformDisplayEXT(
+            EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, attributes);
+        if (display != EGL_NO_DISPLAY &&
+            eglInitialize(display, 0, 0) != EGL_FALSE) {
+          display_ = display;
+          ++display_ref_counts_[display_];
+          return true;
         }
       }
+      FAIL("eglGetPlatformDisplayEXT");
     } else {
       FAIL("eglGetProcAddress");
     }
