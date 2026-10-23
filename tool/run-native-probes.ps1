@@ -56,4 +56,6 @@ foreach ($probe in @('SurfaceFrameFenceProbe', 'VideoFrameSamplesProbe', 'Output
 }
 & python (Join-Path $probeRoot 'video_output_release_probe.py')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Write-Host 'Android host probes completed successfully (7 probes).'
+& python (Join-Path $probeRoot 'video_output_surface_creation_probe.py')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host 'Android host probes completed successfully (8 probes).'

@@ -430,7 +430,8 @@ public class VideoOutput {
                 }
             } catch (Throwable e) {
                 diagnostic("surface.native-error", e);
-                e.printStackTrace();
+                // 保留未确认释放的引用，交由后续释放流程回收。
+                throw new IllegalStateException("Failed to release previous Android video Surface", e);
             }
             // Create new android.view.Surface & object reference.
             try {

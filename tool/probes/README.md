@@ -85,6 +85,8 @@ pwsh -NoProfile -File tool/run-native-probes.ps1
 
 入口随后运行 `android/video_output_release_probe.py`：从生产 `VideoOutput.java` 提取释放及回执方法，编译到主机 JVM 夹具，检查 JNI 删除后的即时回执、重复释放、无引用输出和 JNI 删除失败。该探针使用 Python 标准库，产物在 `build/probe-validation/android-release/`；它不执行真实 JNI 或 GPU。
 
+`android/video_output_surface_creation_probe.py` 提取同一生产类的 Surface 重建与释放方法，检查旧 Surface／JNI 引用释放失败时终止重建、保留旧句柄，以及故障解除后的完整释放。产物在 `build/probe-validation/android-surface-creation/`，支持 `--source` 指定生产源码用于对照。
+
 缺失 SDK 源码、编译或断言失败均返回非零退出码；产物留在 `build/probe-validation/android/`。Android 桩位于探针目录，不加入生产编译。探针不创建 GL、原生 Surface 或真实消息循环，也未模拟 platform/UI 合并线程的全部行为。采样顺序与 monitor 等待由主机检查，平台 API 由 Android 构建检查，实际 Scene 与呈现由目标设备检查。
 
 ## Android 帧时间采集
