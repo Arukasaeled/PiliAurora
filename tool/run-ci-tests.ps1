@@ -21,6 +21,13 @@ $ciTests = @(
     "test/services/settings/settings_backup_test.dart",
     "test/services/settings/webdav_sync_test.dart",
     # 页面退出、音频归属与播放会话
+    "test/common/widgets/image/image_lifecycle_test.dart",
+    "test/common/widgets/image/cached_image_transition_test.dart",
+    "test/common/widgets/image/image_resume_inflight_test.dart",
+    "test/common/widgets/image/decode_budget_cancel_test.dart",
+    "test/common/widgets/image/network_thumbnail_test.dart",
+    "test/pages/home/controller_lifecycle_test.dart",
+    "test/router/get_route_lifecycle_test.dart",
     "test/app/desktop_playback_launch_test.dart",
     "test/pages/video/playback_lifecycle_test.dart",
     "test/pages/live_room/controller_test.dart",

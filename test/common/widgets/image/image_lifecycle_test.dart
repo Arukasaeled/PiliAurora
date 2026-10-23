@@ -320,6 +320,48 @@ void main() {
   );
 
   testWidgets(
+    'finite animations retain frame duration and stop after their final frame',
+    (tester) async {
+      final provider = CachedImageProvider(
+        'https://example.test/finite.webp',
+        cacheManager: manager,
+      );
+      final codec = _TrackedCodec(source, frameCount: 2);
+      final stream = provider.loadImage(provider, (
+        buffer, {
+        getTargetSize,
+      }) {
+        buffer.dispose();
+        return Future.value(codec);
+      });
+      var frames = 0;
+      final listener = ImageStreamListener((info, _) {
+        info.dispose();
+        frames++;
+      });
+      stream.addListener(listener);
+      try {
+        for (var attempt = 0; attempt < 50 && frames == 0; attempt++) {
+          await _flushDecoding(tester);
+          await tester.pump();
+        }
+        expect(frames, 1);
+        await _flushDecoding(tester);
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(frames, 1);
+        await tester.pump(const Duration(milliseconds: 50));
+        expect(frames, 2);
+        expect(codec.disposed, isTrue);
+        await tester.pump(const Duration(seconds: 1));
+        expect(codec.decodedFrames, 2);
+      } finally {
+        stream.removeListener(listener);
+        await tester.pumpAndSettle();
+      }
+    },
+  );
+
+  testWidgets(
     'long thumbnails stay within their pixel budget and the viewer keeps full resolution',
     (tester) async {
       await tester.runAsync(() async {

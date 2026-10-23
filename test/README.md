@@ -2,6 +2,8 @@
 
 从仓库根目录运行 `fvm flutter test`。传入文件或目录可选择对应范围，环境与平台验证要求见[构建与测试说明](../doc/build-and-test.md)。
 
+`common/widgets/image/` 覆盖图片恢复时的单次取帧、原生取消后的解码名额归还、动画时长与有限循环、CDN 缩略尺寸及淡入过渡。`pages/home/controller_lifecycle_test.dart` 检查 Get 删除时的诊断源与 Ticker 释放；`router/get_route_lifecycle_test.dart` 检查真实出栈后路由引用清理及永久依赖保留。这些回归已接入 `tool/run-ci-tests.ps1`。
+
 | 目录 | 范围 |
 | --- | --- |
 | `architecture/` | 依赖政策、模块边界和发布工作流约束。 |
