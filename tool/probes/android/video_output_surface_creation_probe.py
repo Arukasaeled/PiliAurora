@@ -32,14 +32,19 @@ public class SurfaceCreationProbe {
 
   static class Entry {
     final List<Surface> surfaces = new ArrayList<>();
-    boolean released;
+    boolean released, failConstruction, failNewSurfaceRelease;
     Object surfaceTexture() { return this; }
     void release() { released = true; }
   }
 
   static class Surface {
     boolean released, failRelease;
-    Surface(Object entry) { ((Entry) entry).surfaces.add(this); }
+    Surface(Object value) {
+      Entry entry = (Entry) value;
+      if (entry.failConstruction) throw new IllegalStateException("injected Surface construction failure");
+      failRelease = entry.failNewSurfaceRelease;
+      entry.surfaces.add(this);
+    }
     void release() {
       if (failRelease) throw new IllegalStateException("injected Surface.release failure");
       released = true;
@@ -58,11 +63,12 @@ public class SurfaceCreationProbe {
   }
 
   class NewReference {
-    boolean fail;
+    boolean fail, returnZero;
     int attempts;
     Object invoke(Object unused, Surface value) {
       attempts++;
       if (fail) throw new IllegalStateException("injected JNI allocation failure");
+      if (returnZero) return 0L;
       liveReferences.put(456L, value);
       return 456L;
     }
@@ -93,11 +99,11 @@ public class SurfaceCreationProbe {
     if (!value) throw new AssertionError(message);
   }
 
-  static void expectRuntimeException(Runnable action, String message) {
+  static RuntimeException expectRuntimeException(Runnable action, String message) {
     try {
       action.run();
     } catch (RuntimeException expected) {
-      return;
+      return expected;
     }
     throw new AssertionError(message);
   }
@@ -178,12 +184,63 @@ public class SurfaceCreationProbe {
     disposeAndCheck(output, "combined failure recovery");
   }
 
+  static void surfaceConstructionFailure() {
+    SurfaceCreationProbe output = new SurfaceCreationProbe();
+    output.surfaceTextureEntry.failConstruction = true;
+    expectRuntimeException(() -> output.createSurface(new OutputOperationToken()),
+        "Surface construction failure must escape createSurface");
+    check(output.surface == null && output.wid == 0 && output.liveReferences.isEmpty(),
+        "Surface construction failure must leave no published Surface or reference");
+    check(output.newGlobalObjectRef.attempts == 0,
+        "failed Surface construction must not allocate a JNI reference");
+    disposeAndCheck(output, "Surface construction failure");
+  }
+
+  static void newReferenceFailure(boolean returnZero) {
+    SurfaceCreationProbe output = new SurfaceCreationProbe();
+    output.newGlobalObjectRef.fail = !returnZero;
+    output.newGlobalObjectRef.returnZero = returnZero;
+    expectRuntimeException(() -> output.createSurface(new OutputOperationToken()),
+        "failed or zero JNI allocation must escape createSurface");
+    check(output.surface == null && output.wid == 0 && output.liveReferences.isEmpty(),
+        "failed JNI allocation must leave no published Surface or reference");
+    check(output.surfaceTextureEntry.surfaces.size() == 2 &&
+        output.surfaceTextureEntry.surfaces.stream().allMatch(s -> s.released),
+        "failed JNI allocation must immediately release the newly allocated Surface");
+    output.newGlobalObjectRef.fail = false;
+    output.newGlobalObjectRef.returnZero = false;
+    long recovered = output.createSurface(new OutputOperationToken());
+    check(recovered != 0 && output.liveReferences.get(recovered) == output.surface &&
+        !output.surface.released, "creation can recover after failed JNI allocation");
+    disposeAndCheck(output, "JNI allocation recovery");
+  }
+
+  static void rollbackReleaseFailure() {
+    SurfaceCreationProbe output = new SurfaceCreationProbe();
+    output.newGlobalObjectRef.fail = true;
+    output.surfaceTextureEntry.failNewSurfaceRelease = true;
+    RuntimeException failure = expectRuntimeException(
+        () -> output.createSurface(new OutputOperationToken()),
+        "failed JNI allocation and rollback must escape createSurface");
+    check(output.wid == 0 && output.liveReferences.isEmpty() &&
+        output.surface != null && !output.surface.released,
+        "failed rollback must retain ownership of the unreleased Surface");
+    check(failure.getCause() != null && failure.getCause().getSuppressed().length == 1,
+        "creation failure must retain the rollback error");
+    output.surface.failRelease = false;
+    disposeAndCheck(output, "rollback release recovery");
+  }
+
   public static void main(String[] args) {
     normalReplacementAndDisposal();
     surfaceReleaseFailure();
     jniDeleteFailure();
     simultaneousDeleteAndCreationFailure();
-    System.out.println("PASS: Surface replacement, cleanup failures and recovery");
+    surfaceConstructionFailure();
+    newReferenceFailure(false);
+    newReferenceFailure(true);
+    rollbackReleaseFailure();
+    System.out.println("PASS: Surface replacement, cleanup failures, creation rollback and recovery");
   }
 }
 """

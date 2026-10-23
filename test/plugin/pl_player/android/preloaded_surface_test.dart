@@ -243,6 +243,39 @@ void main() {
     expect(completed, isTrue);
   });
 
+  test('Surface 创建失败中止挂载，输出仍可释放', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return switch (call.method) {
+        'VideoOutputManager.CreateSurface' => throw PlatformException(
+          code: 'surface-create-failed',
+        ),
+        'VideoOutputManager.BeginOutputOperation' ||
+        'VideoOutputManager.InvalidateOutputGeneration' => true,
+        _ => null,
+      };
+    });
+    await controller.beginOutputForLoad(
+      const OutputOperationToken(
+        runtimeId: 1,
+        loadId: 2,
+        outputEpoch: 2,
+        configRevision: 0,
+      ),
+    );
+    await expectLater(
+      Future<void>.sync(() async => await player.onLoadHooks.single()),
+      throwsA(isA<PlatformException>()),
+    );
+    expect(player.options, isEmpty);
+    await controller.releaseOutput();
+    expect(player.options, [('vo', 'null'), ('wid', '0')]);
+    expect(
+      calls.where((call) => call.method == 'VideoOutputManager.Dispose'),
+      hasLength(1),
+    );
+  });
+
   test('已确认无视频轨的媒体不挂载 Surface', () async {
     final api = _HookApi(const []);
     final selection = await controller.prepareForLoad(

@@ -434,15 +434,29 @@ public class VideoOutput {
                 throw new IllegalStateException("Failed to release previous Android video Surface", e);
             }
             // Create new android.view.Surface & object reference.
+            Surface nextSurface = null;
+            final long nextWid;
             try {
-                waitUntilFirstFrameRenderedNotify = false;
-                surface = new Surface(surfaceTextureEntry.surfaceTexture());
-                wid = (long) newGlobalObjectRef.invoke(null, surface);
-                diagnostic("surface.native-created", null);
+                nextSurface = new Surface(surfaceTextureEntry.surfaceTexture());
+                nextWid = (long) newGlobalObjectRef.invoke(null, nextSurface);
+                if (nextWid == 0) throw new IllegalStateException("Could not create JNI Surface reference");
             } catch (Throwable e) {
+                if (nextSurface != null) {
+                    try {
+                        nextSurface.release();
+                    } catch (Throwable releaseError) {
+                        // 回滚未完成的 Surface 留给输出的释放流程继续回收。
+                        surface = nextSurface;
+                        e.addSuppressed(releaseError);
+                    }
+                }
                 diagnostic("surface.native-error", e);
-                e.printStackTrace();
+                throw new IllegalStateException("Failed to create Android video Surface", e);
             }
+            surface = nextSurface;
+            wid = nextWid;
+            waitUntilFirstFrameRenderedNotify = false;
+            diagnostic("surface.native-created", null);
             return wid;
         }
     }

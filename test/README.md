@@ -31,7 +31,7 @@
 
 `plugin/pl_player/android/raster_scheduling_test.dart` 检查 Raster CPU 亲和性的重复取得、恢复及其它策略／线程接管；实际调度和呈现间隔使用 `tool/probes/android/playback_jank.dart` 的亲和性对照模式验证。
 
-`plugin/pl_player/playback/native_load_readiness_test.dart` 覆盖输出就绪前 EOF、等待几何时断流、迟到输出与直播几何等待预算。`preloaded_surface_test.dart` 还覆盖 preloaded 时 selected=false、FILE_LOADED 选轨确认和 VO/wid 解绑到原生释放回执的顺序；`tool/run-native-probes.ps1` 的释放探针运行生产 Java 释放方法，检查无固定延迟、幂等回执及 JNI 删除失败。
+`plugin/pl_player/playback/native_load_readiness_test.dart` 覆盖输出就绪前 EOF、等待几何时断流、迟到输出与直播几何等待预算。`preloaded_surface_test.dart` 还覆盖 preloaded 时 selected=false、FILE_LOADED 选轨确认、Surface 创建失败后的挂载中止与清理，以及 VO/wid 解绑到原生释放回执的顺序；`tool/run-native-probes.ps1` 的主机探针运行生产 Java Surface 创建和释放方法，检查失败回滚、即时与幂等回执及 JNI 删除失败。
 
 CI 显式选择弹幕生产链路与帧计划的核心回归，完整弹幕测试按需运行 `fvm flutter test --no-pub test/pages/danmaku/`。`frame_sync_fixture.dart` 供相位测试和帧率矩阵共用请求时间换算，两种模型都采用引擎的目标帧时钟；Android 模型由视频额外驱动 Dart 帧，隔离模型用于检查 ticker 自行唤醒。`frame_rate_diagnostics_test.dart` 检查实际更新、请求和定时器累计计数、单调时间及停止后的释放；相位测试同时检查稳定锁相状态。
 
