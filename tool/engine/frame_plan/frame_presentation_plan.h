@@ -21,6 +21,32 @@ struct FrameTimeline {
 // 每个 waiter 独立反馈；UI 选择计划，Raster/GPU 完成后更新预算。
 class FramePresentationFeedback {
  public:
+  bool IsEnabled() const {
+    std::scoped_lock lock(mutex_);
+    return fallback_reason_ == nullptr;
+  }
+
+  const char* FallbackReason() const {
+    std::scoped_lock lock(mutex_);
+    return fallback_reason_;
+  }
+
+  void Disable(const char* reason) {
+    std::scoped_lock lock(mutex_);
+    if (!fallback_reason_) {
+      fallback_reason_ = reason;
+    }
+  }
+
+  void RecordSelection(bool valid) {
+    std::scoped_lock lock(mutex_);
+    if (valid) {
+      failed_selections_ = 0;
+    } else if (++failed_selections_ >= 3 && !fallback_reason_) {
+      fallback_reason_ = "invalidFrameTimeline";
+    }
+  }
+
   int64_t Budget(int64_t period_ns) const {
     std::scoped_lock lock(mutex_);
     return std::clamp(budget_ns_, period_ns * 2, period_ns * 4);
@@ -38,6 +64,9 @@ class FramePresentationFeedback {
  private:
   mutable std::mutex mutex_;
   int64_t budget_ns_ = 0;
+  int failed_selections_ = 0;
+  // 同一引擎实例保持回退；新建引擎时再探测，避免故障设备反复切换。
+  const char* fallback_reason_ = nullptr;
 };
 
 struct FramePresentationPlan {
@@ -64,14 +93,20 @@ inline std::optional<FramePresentationPlan> SelectFramePresentationPlan(
     const std::vector<FrameTimeline>& timelines,
     const std::shared_ptr<FramePresentationFeedback>& feedback,
     int64_t last_expected_ns = 0) {
+  if (!feedback->IsEnabled()) {
+    return std::nullopt;
+  }
   if (period_ns <= 0 || timelines.empty()) {
+    feedback->RecordSelection(false);
     return std::nullopt;
   }
   const auto ready_ns = now_ns + feedback->Budget(period_ns) + period_ns / 4;
   const FrameTimeline* selected = nullptr;
   for (const auto& timeline : timelines) {
     // 不同回调对同一显示槽位的预测可能略有抖动，需跨过半屏周期。
-    if (timeline.expected_ns <= last_expected_ns + period_ns / 2 ||
+    if (timeline.vsync_id <= 0 ||
+        timeline.expected_ns > now_ns + period_ns * 8 ||
+        timeline.expected_ns <= last_expected_ns + period_ns / 2 ||
         timeline.deadline_ns <= now_ns ||
         timeline.expected_ns <= timeline.deadline_ns) {
       continue;
@@ -82,6 +117,7 @@ inline std::optional<FramePresentationPlan> SelectFramePresentationPlan(
       break;
     }
   }
+  feedback->RecordSelection(selected != nullptr);
   if (!selected) {
     return std::nullopt;
   }

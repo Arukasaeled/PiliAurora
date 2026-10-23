@@ -45,6 +45,11 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tool/run-native-probes.ps1
 
+      - name: Test frame-plan selection and fallback
+        run: |
+          c++ -std=c++17 -pthread tool/engine/frame_plan/frame_presentation_plan_test.cc -o "$RUNNER_TEMP/frame-plan-test"
+          "$RUNNER_TEMP/frame-plan-test"
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:

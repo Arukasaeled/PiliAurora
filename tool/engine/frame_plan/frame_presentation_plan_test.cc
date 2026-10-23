@@ -39,5 +39,25 @@ int main() {
        {21, period * 5, period * 4}},
       std::make_shared<flutter::FramePresentationFeedback>(), period * 4);
   assert(next_slot && next_slot->vsync_id == 21);
+  const auto broken = std::make_shared<flutter::FramePresentationFeedback>();
+  for (int i = 0; i < 3; ++i) {
+    assert(!flutter::SelectFramePresentationPlan(0, 0, period, {}, broken));
+  }
+  // 连续拿不到计划后，即使晚到一个好候选也保持旧回调，避免反复切换。
+  assert(!flutter::SelectFramePresentationPlan(0, 0, period, timelines, broken));
+  const auto transient = std::make_shared<flutter::FramePresentationFeedback>();
+  assert(!flutter::SelectFramePresentationPlan(0, 0, period, {}, transient));
+  assert(flutter::SelectFramePresentationPlan(0, 0, period, timelines, transient));
+  for (const char* reason : {"presentationTimeUnavailable", "gpuFenceUnavailable",
+                             "gpuFenceTimeout", "swapFailed"}) {
+    const auto failed = std::make_shared<flutter::FramePresentationFeedback>();
+    const auto queued = flutter::SelectFramePresentationPlan(
+        0, 0, period, timelines, failed);
+    assert(queued);
+    failed->Disable(reason);
+    assert(!queued->feedback->IsEnabled());
+    failed->Observe(period);
+    assert(!flutter::SelectFramePresentationPlan(0, 0, period, timelines, failed));
+  }
   std::cout << "frame presentation plan: passed\n";
 }
