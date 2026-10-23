@@ -73,7 +73,7 @@ fvm flutter test
 
 常规分析覆盖应用、测试和工具代码。本地依赖包有各自的依赖上下文；更新依赖包时，按[依赖维护流程](../third_party/README.md)单独检查。无路径参数的全仓库分析还可能扫描本地实验和上游源码，其结果需按来源区分。
 
-PR 检查由 `.github/workflows/checks.yml` 独立执行，以只读仓库权限运行依赖验收、CI 测试、Android 主机探针和采集器单元测试。严格分析范围为 `lib/plugin/pl_player lib/pages/danmaku test tool`；全量分析还应手动运行上述命令，当前 `lib/common/widgets/flutter/` 的上游控件副本存在既存提示。
+PR 检查由 `.github/workflows/checks.yml` 独立执行，以只读仓库权限运行依赖验收、CI 测试、Android 主机探针、采集器单元测试、呈现引擎身份与 APK 装配回归及 Windows 采样门控主机探针。严格分析范围为 `lib/plugin/pl_player lib/pages/danmaku test tool`；全量分析还应手动运行上述命令，当前 `lib/common/widgets/flutter/` 的上游控件副本存在既存提示。
 
 ```powershell
 fvm flutter analyze --no-pub lib/plugin/pl_player lib/pages/danmaku test tool
