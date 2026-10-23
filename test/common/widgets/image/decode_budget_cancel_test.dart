@@ -131,7 +131,16 @@ void main() {
           stream.removeListener(listener);
           handle.dispose();
         });
-        for (var i = 0; i < 100 && !freshStarted; i++) {
+        // 一个名额归还就能启动新图片，另一个原生请求可能仍未结束。
+        for (
+          var i = 0;
+          i < 100 &&
+              (!freshStarted ||
+                  codecs.any(
+                    (codec) => codec.completed != 2 || !codec.disposed,
+                  ));
+          i++
+        ) {
           await tick();
         }
         expect(freshStarted, isTrue);
