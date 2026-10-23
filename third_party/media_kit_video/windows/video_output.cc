@@ -143,42 +143,48 @@ void VideoOutput::ReleaseRenderContext() {
 
 void VideoOutput::ResetRenderer(std::function<void(bool)> on_ready) {
   thread_pool_ref_->Post([this, on_ready]() {
-    if (destroyed_.load(std::memory_order_acquire)) {
-      on_ready(false);
-      return;
-    }
-    // 软件输出没有 D3D11 纹理分配池。
-    if (!surface_manager_) {
-      on_ready(true);
-      return;
-    }
-    texture_update_pending_ = true;
-    TransitionSampling("blocked");
-    renderer_reset_pending_ = true;
-    if (render_context_ != nullptr) {
-      mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
-    }
-    renderer_reset_width_ = width();
-    renderer_reset_height_ = height();
-    frame_seen_token_.reset();
-    rendered_frame_token_.reset();
-    attached_token_notified_.reset();
-    const auto old_texture_id = texture_id_;
-    texture_id_ = 0;
-    if (old_texture_id) {
-      UnregisterTexture(old_texture_id, [this, on_ready]() {
-        ResetRendererAfterTextureRelease(on_ready);
-      });
-    } else {
-      ResetRendererAfterTextureRelease(on_ready);
-    }
+    queued_renderer_resets_.push_back(on_ready);
+    ProcessPendingTextureOperations();
   });
+}
+
+void VideoOutput::StartRendererReset(std::function<void(bool)> on_ready) {
+  renderer_reset_in_progress_ = true;
+  if (destroyed_.load(std::memory_order_acquire)) {
+    FinishRendererReset(on_ready, false);
+    return;
+  }
+  // 软件输出没有 D3D11 纹理分配池。
+  if (!surface_manager_) {
+    FinishRendererReset(on_ready, true);
+    return;
+  }
+  texture_update_pending_ = true;
+  TransitionSampling("blocked");
+  renderer_reset_pending_ = true;
+  if (render_context_ != nullptr) {
+    mpv_render_context_set_update_callback(render_context_, nullptr, nullptr);
+  }
+  renderer_reset_width_ = width();
+  renderer_reset_height_ = height();
+  frame_seen_token_.reset();
+  rendered_frame_token_.reset();
+  attached_token_notified_.reset();
+  const auto old_texture_id = texture_id_;
+  texture_id_ = 0;
+  if (old_texture_id) {
+    UnregisterTexture(old_texture_id, [this, on_ready]() {
+      ResetRendererAfterTextureRelease(on_ready);
+    });
+  } else {
+    ResetRendererAfterTextureRelease(on_ready);
+  }
 }
 
 void VideoOutput::ResetRendererAfterTextureRelease(
     std::function<void(bool)> on_ready) {
   if (destroyed_.load(std::memory_order_acquire)) {
-    on_ready(false);
+    FinishRendererReset(on_ready, false);
     return;
   }
   auto output_width = renderer_reset_width_;
@@ -194,21 +200,41 @@ void VideoOutput::ResetRendererAfterTextureRelease(
         output_width = (std::min)(output_width, int64_t{SW_RENDERING_MAX_WIDTH});
         output_height = (std::min)(output_height, int64_t{SW_RENDERING_MAX_HEIGHT});
       }
-      Resize(output_width, output_height, [this, on_ready](bool resized) {
-        if (resized && !destroyed_.load(std::memory_order_acquire)) {
-          SetRenderUpdateCallback();
-          Render();
-          on_ready(true);
-        } else {
-          on_ready(false);
-        }
-      });
-      return;
+      // 重建持有同一个纹理操作槽；旧纹理已注销，直接配置新后端。
+      ready = ApplyResize(output_width, output_height);
+      if (ready) {
+        SetRenderUpdateCallback();
+        Render();
+      }
     }
   } catch (...) {
     ready = false;
   }
-  on_ready(ready);
+  FinishRendererReset(on_ready,
+                      ready && !destroyed_.load(std::memory_order_acquire));
+}
+
+void VideoOutput::FinishRendererReset(std::function<void(bool)> on_ready,
+                                      bool success) {
+  renderer_reset_in_progress_ = false;
+  on_ready(success);
+  ProcessPendingTextureOperations();
+}
+
+void VideoOutput::ProcessPendingTextureOperations() {
+  // texture_id_ 在注销等待期间为 0；操作槽持续持有到 Flutter 回执处理完成。
+  if (resize_in_progress_ || renderer_reset_in_progress_) return;
+  if (!queued_renderer_resets_.empty()) {
+    auto on_ready = std::move(queued_renderer_resets_.front());
+    queued_renderer_resets_.pop_front();
+    StartRendererReset(std::move(on_ready));
+  } else if (queued_resize_.has_value()) {
+    const auto next = *queued_resize_;
+    queued_resize_.reset();
+    resize_completions_ = std::move(queued_resize_completions_);
+    queued_resize_completions_.clear();
+    Resize(next.first, next.second);
+  }
 }
 
 VideoOutput::~VideoOutput() {
@@ -753,7 +779,7 @@ void VideoOutput::CheckAndResize() {
 void VideoOutput::Resize(int64_t required_width,
                          int64_t required_height,
                          std::function<void(bool)> on_complete) {
-  if (resize_in_progress_) {
+  if (resize_in_progress_ || renderer_reset_in_progress_) {
     queued_resize_ = std::make_pair(required_width, required_height);
     if (on_complete) {
       queued_resize_completions_.push_back(std::move(on_complete));
@@ -911,20 +937,14 @@ void VideoOutput::FinishResize(int64_t required_width,
   for (auto& completion : completions) completion(success);
   if (queued_resize_.has_value()) {
     const auto next = *queued_resize_;
-    queued_resize_.reset();
     if (next.first == required_width && next.second == required_height) {
+      queued_resize_.reset();
       auto queued_completions = std::move(queued_resize_completions_);
       queued_resize_completions_.clear();
       for (auto& completion : queued_completions) completion(success);
-    } else if (!destroyed_.load(std::memory_order_acquire)) {
-      resize_completions_ = std::move(queued_resize_completions_);
-      queued_resize_completions_.clear();
-      Resize(next.first, next.second);
-    } else {
-      for (auto& completion : queued_resize_completions_) completion(false);
-      queued_resize_completions_.clear();
     }
   }
+  ProcessPendingTextureOperations();
 }
 
 void VideoOutput::UnregisterTexture(int64_t id,

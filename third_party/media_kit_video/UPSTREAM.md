@@ -1,6 +1,6 @@
 # media_kit_video 本地版本
 
-- 本地版本：`1.2.5+piliaurora.8`；来源包版本：`1.2.5`。
+- 本地版本：`1.2.5+piliaurora.9`；来源包版本：`1.2.5`。
 - 来源仓库：https://github.com/My-Responsitories/media-kit.git
 - 来源提交：`73771ec38176be2d984a3049c28177bce23b54a0`。
 - 来源子目录：`media_kit_video`。
@@ -47,3 +47,6 @@ Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频�
 2026-10-23：采样开关回执返回 render／Surface 临界区冻结的代次状态。运行时等待当前操作回执，隔离先前开关的迟到状态；活动状态早于回执交付时按代次保留并在确认后处理。seek 完成后等待该 seek 的媒体时钟确认，再进入平台新帧预备窗口。Windows 新 token 重置采样准入，序号仍在同 token 重配期间连续。
 
 2026-10-23（piliaurora.8）：Windows ANGLE 构造失败时回滚 mutex、D3D device/context、纹理与已初始化的 EGL 资源；纹理交由 ComPtr 单引用持有，旧 Windows adapter/factory 使用作用域回收并核对创建结果。共享 EGLDisplay 按 display 计数，不同插件输出线程通过同一把锁协调初始化、登记和最后终止。`tool/probes/windows/windows_angle_rollback_probe.py` 编译生产类与方法，注入各创建阶段失败，核对共享／独立 display、跨线程实例和 resize 后的资源回收。
+
+
+2026-10-23（piliaurora.9）：Windows resize 与 ResetRenderer 共用持续到 Flutter 纹理注销回执完成的操作屏障；重建请求依次排队，尺寸请求继续合并，重建持有操作槽直到新后端配置完成。连续重建、失败和销毁均排空已接受请求的回执。`tool/probes/windows/windows_renderer_release_probe.py` 使用完整生产 VideoOutput 与线程池，通过延迟注销回执检查双向交错、连续重建、resize 失败、软件回退及销毁后的回调次数和资源释放。

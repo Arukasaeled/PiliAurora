@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <future>
 #include <memory>
@@ -159,6 +160,12 @@ class VideoOutput {
 
   void ResetRendererAfterTextureRelease(std::function<void(bool)> on_ready);
 
+  void StartRendererReset(std::function<void(bool)> on_ready);
+
+  void FinishRendererReset(std::function<void(bool)> on_ready, bool success);
+
+  void ProcessPendingTextureOperations();
+
   int64_t GetVideoWidth();
 
   int64_t GetVideoHeight();
@@ -229,6 +236,8 @@ class VideoOutput {
   std::optional<OutputOperationToken> attached_token_notified_ = std::nullopt;
 
   bool resize_in_progress_ = false;
+  bool renderer_reset_in_progress_ = false;
+  std::deque<std::function<void(bool)>> queued_renderer_resets_;
   std::optional<std::pair<int64_t, int64_t>> queued_resize_ = std::nullopt;
   std::vector<std::function<void(bool)>> resize_completions_;
   std::vector<std::function<void(bool)>> queued_resize_completions_;
