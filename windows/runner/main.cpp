@@ -1,6 +1,7 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
+#include <shobjidl.h>
 
 #include "app_links/app_links_plugin_c_api.h"
 #include "flutter_window.h"
@@ -42,6 +43,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins.
   const ScopedCOM com;
   if (!com.initialized()) {
+    return EXIT_FAILURE;
+  }
+
+  // 主窗口和播放子进程共用应用标识，让 Windows 将其归入同一应用组。
+  if (FAILED(::SetCurrentProcessExplicitAppUserModelID(L"PiliAurora.Desktop"))) {
     return EXIT_FAILURE;
   }
 

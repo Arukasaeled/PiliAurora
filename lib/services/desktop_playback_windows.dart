@@ -27,6 +27,7 @@ class _PlaybackWindow {
   final ready = Completer<void>();
   WebSocket? socket;
   Process? process;
+  Future<Process>? startingProcess;
 }
 
 /// 每个播放进程拥有独立播放器；主进程负责排列、声音切换和保存几何信息。
@@ -51,6 +52,7 @@ class DesktopPlaybackWindows with WindowListener {
   double? initialVolume;
   Directory? cacheDirectory;
   bool _closing = false;
+  Future<void>? _shutdown;
   Future<void>? _showPlayerWindow;
   Map<String, dynamic>? _diagnosticSettings;
   int _flushSequence = 0;
@@ -176,6 +178,7 @@ class DesktopPlaybackWindows with WindowListener {
 
   Future<void> open(DesktopPlaybackRequest request, {double? volume}) async {
     if (isPlayerWindow) throw StateError('请从主窗口打开新的播放窗口');
+    if (_shutdown != null) throw StateError('应用正在退出');
     await _diagnosticsResumed?.future;
     final server = await _ensureServer();
     final snapshot = await GStorage.playbackSnapshot();
@@ -222,7 +225,8 @@ class DesktopPlaybackWindows with WindowListener {
     _windows[id] = window;
     try {
       await _diagnosticsResumed?.future;
-      window.process = await Process.start(
+      if (_shutdown != null) throw StateError('应用正在退出');
+      window.process = await (window.startingProcess = Process.start(
         Platform.resolvedExecutable,
         [argument],
         workingDirectory: File(Platform.resolvedExecutable).parent.path,
@@ -231,7 +235,7 @@ class DesktopPlaybackWindows with WindowListener {
           'PILIAURORA_WINDOW_PORT': '${server.port}',
           'PILIAURORA_WINDOW_TOKEN': token,
         },
-      );
+      ));
       // 子窗口日志由其诊断模块处理，管道持续消费以免阻塞进程。
       unawaited(window.process!.stdout.drain<void>());
       unawaited(window.process!.stderr.drain<void>());
@@ -262,6 +266,35 @@ class DesktopPlaybackWindows with WindowListener {
     }
   }
 
+  Future<void> closeAll() => _shutdown ??= _closeAll();
+
+  Future<void> _closeAll() async {
+    // 并行关闭，让多个小窗共用同一段退出等待时间。
+    await Future.wait(
+      _windows.values.toList().map((window) async {
+        final Process? process;
+        try {
+          process = window.process ?? await window.startingProcess;
+        } catch (_) {
+          // 启动失败由 open 的清理流程处理。
+          return;
+        }
+        if (process == null) return;
+        if (window.socket?.readyState == WebSocket.open) {
+          window.socket!.add(jsonEncode({'type': 'close'}));
+          try {
+            await process.exitCode.timeout(const Duration(seconds: 8));
+            return;
+          } on TimeoutException {
+            // 原生播放器或插件释放超时后，结束该小窗进程。
+          }
+        }
+        process.kill();
+        await process.exitCode;
+      }),
+    );
+  }
+
   Future<({DesktopPlaybackRequest request, Map<String, Uint8List> storage})>
   connectPlayer() async {
     final port = int.parse(Platform.environment['PILIAURORA_WINDOW_PORT']!);
@@ -278,6 +311,8 @@ class DesktopPlaybackWindows with WindowListener {
           initialization.complete(message);
         } else {
           switch (message['type']) {
+            case 'close':
+              unawaited(onWindowClose());
             case 'diagnosticControl':
               unawaited(_handleDiagnosticControl(message));
             case 'diagnosticSettings':

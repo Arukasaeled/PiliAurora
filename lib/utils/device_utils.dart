@@ -1,4 +1,5 @@
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
+import 'package:pili_aurora/services/desktop_playback_windows.dart';
 
 import 'dart:io' show Platform, exit;
 
@@ -9,6 +10,9 @@ import 'package:win32/win32.dart' as kernel32;
 
 abstract final class DeviceUtils {
   static Future<void> exitApp() async {
+    if (Platform.isWindows) {
+      await DesktopPlaybackWindows.instance.closeAll();
+    }
     await Diagnostics.instance.flush();
     if (Platform.isWindows) {
       // WebView2 的退出清理可能阻塞，沿用主窗口的原生退出方式。

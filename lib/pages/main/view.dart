@@ -16,6 +16,7 @@ import 'package:pili_aurora/pages/main/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/controller.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_contracts.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/playback_session.dart';
+import 'package:pili_aurora/services/desktop_playback_windows.dart';
 import 'package:pili_aurora/utils/android/android_helper.dart';
 import 'package:pili_aurora/utils/app_scheme.dart';
 import 'package:pili_aurora/utils/device_utils.dart';
@@ -176,6 +177,10 @@ class _MainAppState extends PopScopeState<MainApp>
     if (_isClosing) return;
     _isClosing = true;
     _disposeTray();
+    if (Platform.isWindows) {
+      // 小窗关闭会回传播放进度和窗口位置，先处理完再关闭存储。
+      await DesktopPlaybackWindows.instance.closeAll();
+    }
     await GStorage.compact();
     await GStorage.close();
     await DeviceUtils.exitApp();
