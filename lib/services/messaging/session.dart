@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:pili_aurora/http/loading_state.dart';
+import 'package:pili_aurora/models/common/msg/msg_unread_type.dart';
 import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 
@@ -11,9 +12,10 @@ typedef AccountSessionKey = ({int mid, int generation});
 enum MessagingChangeKind { sessions, conversation, unread, settings }
 
 class MessagingChange {
-  const MessagingChange(this.kind, {this.talkerId});
+  const MessagingChange(this.kind, {this.talkerId, this.readType});
   final MessagingChangeKind kind;
   final int? talkerId;
+  final MsgUnReadType? readType;
 }
 
 const messagingUnknownResultCode = -10001;
@@ -72,8 +74,16 @@ class MessagingSession {
         : const Error('账号已切换', code: messagingInactiveCode);
   }
 
-  void notifyChanged(MessagingChangeKind kind, {int? talkerId}) {
-    if (isActive) _changes.add(MessagingChange(kind, talkerId: talkerId));
+  void notifyChanged(
+    MessagingChangeKind kind, {
+    int? talkerId,
+    MsgUnReadType? readType,
+  }) {
+    if (isActive) {
+      _changes.add(
+        MessagingChange(kind, talkerId: talkerId, readType: readType),
+      );
+    }
   }
 
   void dispose() {

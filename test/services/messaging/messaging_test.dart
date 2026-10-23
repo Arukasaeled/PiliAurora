@@ -256,6 +256,78 @@ void main() {
     expect(overview.state.value.counts[MsgUnReadType.reply], 0);
   });
 
+  test('点赞阅读成功立即清除角标，不等待未读查询', () async {
+    final pending = Completer<UnreadQueryResult>();
+    var calls = 0;
+    final overview = UnreadOverview(
+      session,
+      query: () async {
+        if (calls++ == 0) {
+          return const UnreadQueryResult({
+            MsgUnReadType.like: 4,
+            MsgUnReadType.reply: 2,
+          });
+        }
+        return pending.future;
+      },
+    );
+    addTearDown(overview.dispose);
+    await overview.refresh();
+    final feed = LikeFeedHandle(
+      session: session,
+      request: (account, cursor) async =>
+          Success(LikeFeedPage(latest: const [], total: const [])),
+      delete: (account, id) async => const Success(null),
+      setNoticeRequest: (account, id, state) async => const Success(null),
+    );
+    addTearDown(feed.dispose);
+    await feed.refresh();
+    expect(overview.state.value.counts[MsgUnReadType.like], 0);
+    expect(overview.state.value.counts[MsgUnReadType.reply], 2);
+    pending.complete(const UnreadQueryResult({MsgUnReadType.like: 0}));
+    await settle();
+  });
+
+  test('系统已读确认退出页面后成功仍清角标，失败保留未读', () async {
+    final pending = Completer<UnreadQueryResult>();
+    var queries = 0;
+    final overview = UnreadOverview(
+      session,
+      query: () async => queries++ == 0
+          ? const UnreadQueryResult({MsgUnReadType.sysMsg: 3})
+          : pending.future,
+    );
+    addTearDown(overview.dispose);
+    await overview.refresh();
+    final acknowledgements = <Completer<LoadingState<void>>>[];
+    FeedHandle<int> createFeed() => FeedHandle<int>(
+      session: session,
+      idOf: (item) => item,
+      notifyUnreadOnRefresh: true,
+      readType: MsgUnReadType.sysMsg,
+      request: (account, cursor) async => Success(FeedPage(items: const [1])),
+      acknowledge: (account, page) {
+        final result = Completer<LoadingState<void>>();
+        acknowledgements.add(result);
+        return result.future;
+      },
+    );
+    final failed = createFeed();
+    await failed.refresh();
+    acknowledgements[0].complete(const Error('失败'));
+    await settle();
+    expect(overview.state.value.counts[MsgUnReadType.sysMsg], 3);
+    failed.dispose();
+    final succeeded = createFeed();
+    await succeeded.refresh();
+    succeeded.dispose();
+    acknowledgements[1].complete(const Success(null));
+    await settle();
+    expect(overview.state.value.counts[MsgUnReadType.sysMsg], 0);
+    pending.complete(const UnreadQueryResult({MsgUnReadType.sysMsg: 0}));
+    await settle();
+  });
+
   test('查询失败保留旧数值，缺失分类保持未知', () async {
     int count = 0;
     final overview = UnreadOverview(

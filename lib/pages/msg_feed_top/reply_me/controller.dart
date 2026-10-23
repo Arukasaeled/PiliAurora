@@ -1,3 +1,4 @@
+import 'package:pili_aurora/models/common/msg/msg_unread_type.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/models/remote/msg/msg_reply/item.dart';
 import 'package:pili_aurora/services/messaging/feed.dart';
@@ -19,5 +20,6 @@ class ReplyMeFeedNotifier extends FeedNotifier<MsgReplyItem> {
     idOf: (item) => item.id,
     delete: MessagingFeedAdapters.deleteReply,
     notifyUnreadOnRefresh: true,
+    readType: MsgUnReadType.reply,
   );
 }

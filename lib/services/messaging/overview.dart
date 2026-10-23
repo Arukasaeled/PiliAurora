@@ -50,7 +50,16 @@ typedef UnreadQuery = Future<UnreadQueryResult> Function();
 class UnreadOverview {
   UnreadOverview(this.session, {this.query}) {
     _subscription = session.changes.listen((change) {
-      if (change.kind == MessagingChangeKind.unread) invalidate();
+      if (change.kind == MessagingChangeKind.unread) {
+        if (change.readType case final type?) {
+          state.value = UnreadSnapshot(
+            counts: {...state.value.counts, type: 0},
+            errors: {...state.value.errors}..remove(type),
+            updatedAt: DateTime.now(),
+          );
+        }
+        invalidate();
+      }
     });
   }
   final MessagingSession session;

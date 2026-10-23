@@ -1,3 +1,4 @@
+import 'package:pili_aurora/models/common/msg/msg_unread_type.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pili_aurora/models/remote/msg/msg_sys/data.dart';
 import 'package:pili_aurora/services/messaging/feed.dart';
@@ -20,5 +21,6 @@ class SystemMessageFeedNotifier extends FeedNotifier<MsgSysItem> {
     delete: MessagingFeedAdapters.deleteSystem,
     acknowledge: MessagingFeedAdapters.acknowledgeSystem,
     notifyUnreadOnRefresh: true,
+    readType: MsgUnReadType.sysMsg,
   );
 }

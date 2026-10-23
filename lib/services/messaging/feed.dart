@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:pili_aurora/http/loading_state.dart';
+import 'package:pili_aurora/models/common/msg/msg_unread_type.dart';
 import 'package:pili_aurora/models/remote/msg/msg_like/item.dart';
 import 'package:pili_aurora/services/messaging/session.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
@@ -73,6 +74,7 @@ class FeedHandle<T> {
     this.delete,
     this.acknowledge,
     this.notifyUnreadOnRefresh = false,
+    this.readType,
     this.maxItems,
   }) : state = ValueNotifier(
          FeedSnapshot(loadingState: LoadingState.loading()),
@@ -84,6 +86,7 @@ class FeedHandle<T> {
   final FeedDelete? delete;
   final FeedAcknowledge<T>? acknowledge;
   final bool notifyUnreadOnRefresh;
+  final MsgUnReadType? readType;
   final int? maxItems;
   final ValueNotifier<FeedSnapshot<T>> state;
 
@@ -134,9 +137,12 @@ class FeedHandle<T> {
         );
         if (notifyUnreadOnRefresh && response.notifyUnread) {
           if (acknowledge == null) {
-            session.notifyChanged(MessagingChangeKind.unread);
+            session.notifyChanged(
+              MessagingChangeKind.unread,
+              readType: readType,
+            );
           } else {
-            unawaited(_acknowledge(generation, response));
+            unawaited(_acknowledge(response));
           }
         }
       case Error():
@@ -146,13 +152,14 @@ class FeedHandle<T> {
     }
   }
 
-  Future<void> _acknowledge(int generation, FeedPage<T> page) async {
+  Future<void> _acknowledge(FeedPage<T> page) async {
     final result = await session.run(
       (account) => acknowledge!(account, page),
     );
     // ACK 失败保留列表与未读数，手动刷新时再次确认。
-    if (_isCurrent(generation) && result.isSuccess) {
-      session.notifyChanged(MessagingChangeKind.unread);
+    // 已发出的 ACK 属于账号；退出页面后仍需同步共享角标。
+    if (session.isActive && result.isSuccess) {
+      session.notifyChanged(MessagingChangeKind.unread, readType: readType);
     }
   }
 
@@ -376,7 +383,10 @@ class LikeFeedHandle {
           ),
           isEnd: response.isEnd || response.total.isEmpty,
         );
-        session.notifyChanged(MessagingChangeKind.unread);
+        session.notifyChanged(
+          MessagingChangeKind.unread,
+          readType: MsgUnReadType.like,
+        );
       case Error():
         state.value = LikeFeedSnapshot(loadingState: response);
       case Loading():
