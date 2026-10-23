@@ -11,6 +11,36 @@ PiliAurora 是面向 Android 和 Windows x64 的 Bilibili 第三方客户端，�
 
 [下载](https://github.com/wallpap/PiliAurora/releases/latest) · [更新日志](doc/releases/v1.5.1.md) · [问题反馈](https://github.com/wallpap/PiliAurora/issues) · [许可证](LICENSE)
 
+## 界面预览
+
+### Windows
+
+多窗口播放可以弹出视频或直播小窗，并在主窗口继续浏览或者同时看另外的小窗，图中展示的式多个小窗并行播放。弹幕设置可调整显示效果和帧率。
+
+<p align="center">
+  <img src="assets/display/windows-multiwindow-showcase.png" alt="Windows 多窗口播放" width="800">
+  <br>
+  <em>Windows 多窗口播放</em>
+</p>
+
+<p align="center">
+  <img src="assets/display/windows-live-player.jpg" alt="Windows 直播界面" width="800">
+  <br>
+  <em>Windows 直播界面</em>
+</p>
+
+### Android
+
+<p align="center">
+  <img src="assets/display/android-playback-settings.jpg" alt="Android 播放器设置面板" width="840">
+  <br>
+  <em>Android 首页</em>
+  </br>
+  <img src="assets/display/android-home.jpg" alt="Android 主页" width="280">
+  <img src="assets/display/android-danmaku-motion-settings.jpg" alt="Android 弹幕密度&帧率控制" width="280">
+  <img src="assets/display/android-danmaku-filter-settings.jpg" alt="Android 弹幕合并" width="280">
+</p>
+
 ## 适配平台与下载
 
 | 平台 | 发布包 |

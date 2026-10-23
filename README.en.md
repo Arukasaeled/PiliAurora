@@ -11,6 +11,36 @@ It retains upstream browsing, playback, social features, and multi-account suppo
 
 [Download](https://github.com/wallpap/PiliAurora/releases/latest) · [Changelog](doc/releases/v1.5.1.md) · [Report an issue](https://github.com/wallpap/PiliAurora/issues) · [License](LICENSE)
 
+## Screenshots
+
+### Windows
+
+Pop out videos or live streams into separate windows while continuing to browse in the main window or watch other windows at the same time. The image shows several playback windows running side by side. Danmaku settings let you adjust their appearance and frame rate.
+
+<p align="center">
+  <img src="assets/display/windows-multiwindow-showcase.png" alt="Windows multi-window playback" width="800">
+  <br>
+  <em>Windows multi-window playback</em>
+</p>
+
+<p align="center">
+  <img src="assets/display/windows-live-player.jpg" alt="Windows live-stream player" width="800">
+  <br>
+  <em>Windows live-stream player</em>
+</p>
+
+### Android
+
+<p align="center">
+  <img src="assets/display/android-playback-settings.jpg" alt="Android playback settings panel" width="840">
+  <br>
+  <em>Android home screen</em>
+  <br>
+  <img src="assets/display/android-home.jpg" alt="Android home screen" width="280">
+  <img src="assets/display/android-danmaku-motion-settings.jpg" alt="Android danmaku density and frame-rate controls" width="280">
+  <img src="assets/display/android-danmaku-filter-settings.jpg" alt="Android danmaku merging" width="280">
+</p>
+
 ## Supported platforms and downloads
 
 | Platform | Packages |
