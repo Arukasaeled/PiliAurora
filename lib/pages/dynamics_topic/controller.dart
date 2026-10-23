@@ -5,14 +5,14 @@ import 'package:pili_aurora/models/remote/dynamic/dyn_topic_feed/item.dart';
 import 'package:pili_aurora/models/remote/dynamic/dyn_topic_feed/topic_card_list.dart';
 import 'package:pili_aurora/models/remote/dynamic/dyn_topic_feed/topic_sort_by_conf.dart';
 import 'package:pili_aurora/models/remote/dynamic/dyn_topic_top/top_details.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
+import 'package:pili_aurora/pages/common/discovery_list_controller.dart';
 import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/extension/scroll_controller_ext.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 
 class DynTopicController
-    extends CommonListController<TopicCardList?, TopicCardItem> {
+    extends DiscoveryListController<TopicCardList?, TopicCardItem> {
   final topicId = Get.parameters['id']!;
   String topicName = Get.parameters['name'] ?? '';
 
@@ -50,6 +50,7 @@ class DynTopicController
   @override
   List<TopicCardItem>? getDataList(TopicCardList? response) {
     if (response != null) {
+      if (offset != null && response.offset == offset) isEnd = true;
       offset = response.offset;
       topicSortByConf.value = response.topicSortByConf;
       sortBy = response.topicSortByConf?.showSortBy ?? 0;
@@ -140,7 +141,7 @@ class DynTopicController
       if (response?.items case final items? when items.isNotEmpty) {
         loadingState.value.data!
           ..removeLast()
-          ..addAll(items);
+          ..addAll(filterCandidates(items, existing: loadingState.value.data!));
         loadingState.refresh();
       }
     }

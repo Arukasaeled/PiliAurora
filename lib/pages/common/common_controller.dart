@@ -45,25 +45,69 @@ abstract class CommonController<R, T> extends GetxController
 
   Future<LoadingState<R>> customGetData();
 
+  Future<void>? prepareQuery() => null;
+
+  Future<void>? prepareResponse(R response, bool Function() isCurrent) => null;
+
+  Object? get queryContext => null;
+
+  /// 过滤后的补位需求；普通数据请求在首个响应后结束。
+  int remainingItemsToLoad(int remaining) => 0;
+
   /// 刷新替换当前查询；加载更多串行执行，不让旧响应写回新的页面状态。
   /// 不假装取消 HTTP 请求，只取消其对当前控制器的写回资格。
   Future<void> queryData([bool isRefresh = true]) async {
     if (_disposed || (!isRefresh && (isLoading || !canLoadMore))) return;
     final version = ++_requestVersion;
+    final context = queryContext;
     _isLoading = true;
     try {
-      final response = await customGetData();
-      if (_disposed || version != _requestVersion) return;
-      switch (response) {
-        case Success<R>():
-          applyResponse(isRefresh, response);
-        case Error(:final errMsg):
-          if (isRefresh && !handleError(errMsg)) {
-            loadingState.value = response;
-          }
-        case Loading():
-          // 请求实现没有返回终态时，保留页面当前状态而不是强制转换成 Error。
-          break;
+      final preparation = prepareQuery();
+      if (preparation != null) await preparation;
+      var refresh = isRefresh;
+      var remaining = 0;
+      // 单次操作最多读取五页，避免来源持续返回被屏蔽内容时无休止请求。
+      for (var attempt = 0; attempt < 5; attempt++) {
+        if (_disposed ||
+            version != _requestVersion ||
+            !identical(context, queryContext)) {
+          return;
+        }
+        final response = await customGetData();
+        if (_disposed ||
+            version != _requestVersion ||
+            !identical(context, queryContext)) {
+          return;
+        }
+        switch (response) {
+          case Success<R>():
+            final preparation = prepareResponse(
+              response.response,
+              () =>
+                  !_disposed &&
+                  version == _requestVersion &&
+                  identical(context, queryContext),
+            );
+            if (preparation != null) {
+              await preparation;
+              if (_disposed ||
+                  version != _requestVersion ||
+                  !identical(context, queryContext)) {
+                return;
+              }
+            }
+            applyResponse(refresh, response);
+            remaining = remainingItemsToLoad(remaining);
+            if (remaining <= 0 || !canLoadMore) return;
+            refresh = false;
+          case Error(:final errMsg):
+            if (refresh && !handleError(errMsg)) {
+              loadingState.value = response;
+            }
+            return;
+          case Loading():
+            return;
+        }
       }
     } finally {
       // 旧请求完成时不能释放后来请求的加载标记。

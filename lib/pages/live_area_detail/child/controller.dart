@@ -5,11 +5,11 @@ import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/remote/live/live_feed_index/card_data_list_item.dart';
 import 'package:pili_aurora/models/remote/live/live_second_list/data.dart';
 import 'package:pili_aurora/models/remote/live/live_second_list/tag.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
+import 'package:pili_aurora/pages/common/discovery_list_controller.dart';
 import 'package:get/get.dart';
 
 class LiveAreaChildController
-    extends CommonListController<LiveSecondData, CardLiveItem> {
+    extends DiscoveryListController<LiveSecondData, CardLiveItem> {
   LiveAreaChildController(this.areaId, this.parentAreaId);
   final dynamic areaId;
   final dynamic parentAreaId;

@@ -23,6 +23,7 @@ class RcmdVideoItemAppModel extends BaseRcmdVideoItemModel {
     title = json['title'];
     goto = json['card_goto'];
     owner = RcmdOwner.fromJson(json, goto);
+    authors = VideoAuthors.fromJson(json);
     rcmdReason = json['rcmd_reason'];
     if (rcmdReason == '竖屏') rcmdReason = null;
     //     json['bottom_rcmd_reason'] ??

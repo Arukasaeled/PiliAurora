@@ -35,6 +35,7 @@ import 'package:pili_aurora/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:pili_aurora/plugin/pl_player/models/hwdec_type.dart';
 import 'package:pili_aurora/plugin/pl_player/models/play_repeat.dart';
 import 'package:pili_aurora/utils/device_utils.dart';
+import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/extension/iterable_ext.dart';
 import 'package:pili_aurora/utils/global_data.dart';
 import 'package:pili_aurora/utils/login_utils.dart';
@@ -50,6 +51,14 @@ import 'package:hive_ce/hive.dart';
 import 'package:material_ui/material_ui.dart';
 
 abstract final class Pref {
+  static bool get checkCooperativeAuthors => _setting.get(
+    SettingBoxKey.checkCooperativeAuthors,
+    defaultValue: true,
+  );
+  static bool get filterBlockedAuthors => _setting.get(
+    SettingBoxKey.filterBlockedAuthors,
+    defaultValue: true,
+  );
   static bool get hideInvalidSubscriptionVideos => _setting.get(
     SettingBoxKey.hideInvalidSubscriptionVideos,
     defaultValue: false,
@@ -79,26 +88,39 @@ abstract final class Pref {
     ),
   );
 
+  static Map get _blackMidsByAccount => _localCache.get(
+    LocalCacheKey.blackMidsByAccount,
+    defaultValue: const {},
+  );
+
   static Set<int> get blackMids =>
-      _localCache.get(LocalCacheKey.blackMids, defaultValue: <int>{});
+      (_blackMidsByAccount[Accounts.main.mid.toString()] as Iterable?)
+          ?.cast<int>()
+          .toSet() ??
+      <int>{};
 
   static set blackMids(Set<int> blackMidsSet) =>
-      _localCache.put(LocalCacheKey.blackMids, blackMidsSet);
+      _localCache.put(LocalCacheKey.blackMidsByAccount, {
+        ..._blackMidsByAccount,
+        Accounts.main.mid.toString(): blackMidsSet.toList(),
+      });
 
   static RuleFilter get danmakuFilterRule => _localCache.get(
     LocalCacheKey.danmakuFilterRules,
     defaultValue: RuleFilter.empty(),
   );
 
-  static void setBlackMid(int mid) => _localCache.put(
-    LocalCacheKey.blackMids,
-    GlobalData().blackMids..add(mid),
-  );
+  static void setBlackMid(int mid) {
+    final data = GlobalData();
+    data.blackMids = {...data.blackMids, mid};
+    blackMids = data.blackMids;
+  }
 
-  static void removeBlackMid(int mid) => _localCache.put(
-    LocalCacheKey.blackMids,
-    GlobalData().blackMids..remove(mid),
-  );
+  static void removeBlackMid(int mid) {
+    final data = GlobalData();
+    data.blackMids = {...data.blackMids}..remove(mid);
+    blackMids = data.blackMids;
+  }
 
   static MemberTabType get memberTab =>
       MemberTabType.values[_setting.get(

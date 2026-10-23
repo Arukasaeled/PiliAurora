@@ -6,13 +6,13 @@ import 'package:pili_aurora/models/remote/live/live_feed_index/card_list.dart';
 import 'package:pili_aurora/models/remote/live/live_feed_index/data.dart';
 import 'package:pili_aurora/models/remote/live/live_second_list/data.dart';
 import 'package:pili_aurora/models/remote/live/live_second_list/tag.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
+import 'package:pili_aurora/pages/common/discovery_list_controller.dart';
 import 'package:pili_aurora/services/account_service.dart';
 import 'package:pili_aurora/utils/extension/scroll_controller_ext.dart';
 import 'package:flutter/widgets.dart' show ScrollController;
 import 'package:get/get.dart';
 
-class LiveController extends CommonListController with AccountMixin {
+class LiveController extends DiscoveryListController with AccountMixin {
   @override
   void onInit() {
     super.onInit();
@@ -52,12 +52,12 @@ class LiveController extends CommonListController with AccountMixin {
 
   @override
   bool customHandleResponse(bool isRefresh, Success response) {
+    final result = response.response;
+    if (result is LiveIndexData && result.hasMore == 0) isEnd = true;
     if (isRefresh) {
       final res = response.response;
       if (res is LiveIndexData) {
-        if (res.hasMore == 0) {
-          isEnd = true;
-        }
+        _filterFollowedRooms(res.followItem);
         topState.value = Pair(
           first: res.followItem,
           second: res.areaItem,
@@ -72,6 +72,14 @@ class LiveController extends CommonListController with AccountMixin {
       }
     }
     return false;
+  }
+
+  void _filterFollowedRooms(LiveCardList? item) {
+    final cardData = item?.cardData?.myIdolV1;
+    final list = cardData?.list;
+    if (list != null) {
+      cardData!.list = filterCandidates(list).cast<CardLiveItem>();
+    }
   }
 
   @override
@@ -102,6 +110,7 @@ class LiveController extends CommonListController with AccountMixin {
   Future<void> queryTop() async {
     final res = await LiveHttp.liveFeedIndex(pn: page, moduleSelect: true);
     if (res case Success(:final response)) {
+      _filterFollowedRooms(response.followItem);
       topState.value = Pair(
         first: response.followItem,
         second: response.areaItem,

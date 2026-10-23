@@ -2,6 +2,8 @@ import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/models/search/result.dart';
 import 'package:pili_aurora/models/search/search_esports.dart';
 import 'package:pili_aurora/pages/search_panel/video/controller.dart';
+import 'package:pili_aurora/services/blocked_authors.dart';
+import 'package:pili_aurora/utils/storage_pref.dart';
 
 class SearchAllController extends SearchVideoController with SearchVideoMixin {
   SearchAllController({
@@ -20,7 +22,11 @@ class SearchAllController extends SearchVideoController with SearchVideoMixin {
     final res = response.response;
     if (isRefresh) {
       searchType_ = .video;
-      searchUser = res.searchUser;
+      searchUser = Pref.filterBlockedAuthors
+          ? res.searchUser
+                ?.where((item) => !BlockedAuthors.contains(item.mid))
+                .toList()
+          : res.searchUser;
       searchMedia = res.searchMedia;
       searchActivity = res.searchActivity;
       searchEsports = res.searchEsports;

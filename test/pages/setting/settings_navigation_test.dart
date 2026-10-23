@@ -7,6 +7,7 @@ import 'package:pili_aurora/models/common/video/cdn_type.dart';
 import 'package:pili_aurora/pages/setting/common_setting.dart';
 import 'package:pili_aurora/pages/setting/models/model.dart';
 import 'package:pili_aurora/pages/setting/models/play_settings.dart';
+import 'package:pili_aurora/pages/setting/models/privacy_settings.dart';
 import 'package:pili_aurora/pages/setting/models/video_settings.dart';
 import 'package:pili_aurora/pages/setting/view.dart';
 import 'package:pili_aurora/utils/storage.dart';
@@ -21,6 +22,36 @@ void main() {
   });
   setUp(settings._values.clear);
   tearDown(Get.reset);
+
+  testWidgets('增强黑名单屏蔽默认开启并支持切换保存', (tester) async {
+    final item = privacySettings.whereType<SwitchModel>().single;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: item.widget)));
+    expect(Pref.filterBlockedAuthors, isTrue);
+    await tester.tap(find.text('增强黑名单屏蔽'));
+    await tester.pumpAndSettle();
+    expect(Pref.filterBlockedAuthors, isFalse);
+    await tester.tap(find.text('增强黑名单屏蔽'));
+    await tester.pumpAndSettle();
+    expect(Pref.filterBlockedAuthors, isTrue);
+  });
+
+  testWidgets('黑名单合作作者子开关默认开启并独立保存', (tester) async {
+    final item = privacySettings.whereType<SwitchModel>().single;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: item.widget)));
+    expect(Pref.checkCooperativeAuthors, isTrue);
+    expect(find.text('检查合作视频作者'), findsOneWidget);
+    await tester.tap(find.text('检查合作视频作者'));
+    await tester.pumpAndSettle();
+    expect(Pref.checkCooperativeAuthors, isFalse);
+    expect(Pref.filterBlockedAuthors, isTrue);
+    await tester.tap(find.text('增强黑名单屏蔽'));
+    await tester.pumpAndSettle();
+    expect(find.text('检查合作视频作者'), findsNothing);
+    await tester.tap(find.text('增强黑名单屏蔽'));
+    await tester.pumpAndSettle();
+    expect(Pref.checkCooperativeAuthors, isFalse);
+    expect(find.text('检查合作视频作者'), findsOneWidget);
+  });
 
   testWidgets('弹幕帧率提供固定档位并支持恢复跟随屏幕', (tester) async {
     final item = danmakuExtraSettings.whereType<NormalModel>().singleWhere(

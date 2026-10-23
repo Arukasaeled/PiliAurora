@@ -1,6 +1,8 @@
 // ignore_for_file: constant_identifier_names
 
 abstract final class SettingBoxKey {
+  static const filterBlockedAuthors = 'filterBlockedAuthors';
+  static const checkCooperativeAuthors = 'checkCooperativeAuthors';
   static const hideInvalidSubscriptionVideos = 'hideInvalidSubscriptionVideos';
   static const playerDiagnosticLogLevel = 'playerDiagnosticLogLevel';
   static const diagnosticLogLevel = 'diagnosticLogLevel',
@@ -266,6 +268,7 @@ abstract final class LocalCacheKey {
   static const String historyPause = 'historyPause',
       recentEmotes = 'recentEmotes',
       blackMids = 'blackMids',
+      blackMidsByAccount = 'blackMidsByAccount',
       danmakuFilterRules = 'danmakuFilterRules',
       mixinKey = 'mixinKey',
       timeStamp = 'timeStamp',

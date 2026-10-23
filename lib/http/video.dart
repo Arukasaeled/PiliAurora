@@ -32,7 +32,6 @@ import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/utils/app_sign.dart';
 import 'package:pili_aurora/utils/extension/string_ext.dart';
-import 'package:pili_aurora/utils/global_data.dart';
 import 'package:pili_aurora/utils/id_utils.dart';
 import 'package:pili_aurora/utils/recommend_filter.dart';
 import 'package:pili_aurora/utils/request_utils.dart';
@@ -40,6 +39,7 @@ import 'package:pili_aurora/utils/storage.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:pili_aurora/utils/subtitle_utils.dart';
 import 'package:pili_aurora/utils/utils.dart';
+import 'package:pili_aurora/services/blocked_authors.dart';
 import 'package:pili_aurora/utils/wbi_sign.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show compute;
@@ -70,10 +70,8 @@ abstract final class VideoHttp {
     if (res.data['code'] == 0) {
       List<RcmdVideoItemModel> list = <RcmdVideoItemModel>[];
       for (final i in res.data['data']['item']) {
-        //过滤掉live与ad，以及拉黑用户
-        if (i['goto'] == 'av' &&
-            (i['owner'] != null &&
-                !GlobalData().blackMids.contains(i['owner']['mid']))) {
+        // 过滤非视频卡片；作者屏蔽由发现列表统一处理，以保留补位所需数量。
+        if (i['goto'] == 'av' && i['owner'] != null) {
           RcmdVideoItemModel videoItem = RcmdVideoItemModel.fromJson(i);
           if (!RecommendFilter.filter(videoItem)) {
             list.add(videoItem);
@@ -141,13 +139,12 @@ abstract final class VideoHttp {
     if (res.data['code'] == 0) {
       final list = <RcmdVideoItemAppModel>[];
       for (final i in res.data['data']['items']) {
-        // 屏蔽推广和拉黑用户
+        // 屏蔽推广卡片。
         if (i['card_goto'] != 'ad_av' &&
             i['card_goto'] != 'ad_web_s' &&
             i['ad_info'] == null &&
             i['can_play'] == 1 &&
-            (i['args'] != null &&
-                !GlobalData().blackMids.contains(i['args']['up_id']))) {
+            i['args'] != null) {
           if (enableFilter &&
               i['args']?['tname'] != null &&
               zoneRegExp.hasMatch(i['args']['tname'])) {
@@ -177,8 +174,7 @@ abstract final class VideoHttp {
     if (res.data['code'] == 0) {
       List<HotVideoItemModel> list = <HotVideoItemModel>[];
       for (final i in res.data['data']['list']) {
-        if (!GlobalData().blackMids.contains(i['owner']['mid']) &&
-            !RecommendFilter.filterTitle(i['title']) &&
+        if (!RecommendFilter.filterTitle(i['title']) &&
             !RecommendFilter.filterLikeRatio(
               i['stat']['like'],
               i['stat']['view'],
@@ -295,10 +291,19 @@ abstract final class VideoHttp {
   // 视频信息 标题、简介
   static Future<LoadingState<VideoDetailData>> videoIntro({
     required String bvid,
+    Account? account,
   }) async {
     final res = await Request().get(
       Api.videoIntro,
       queryParameters: await WbiSign.makSign({'bvid': bvid}),
+      options: account == null
+          ? null
+          : Options(
+              extra: {
+                'account': account,
+                'noRetry': true,
+              },
+            ),
     );
     if (res.data['code'] == 0) {
       return Success(VideoDetailData.fromJson(res.data['data']));
@@ -652,15 +657,15 @@ abstract final class VideoHttp {
       ),
     );
     if (res.data['code'] == 0) {
-      if (account != null && !identical(account, Accounts.main)) {
+      if (!identical(requestAccount, Accounts.main)) {
         return const Error('账号已切换');
       }
       if (act == 5) {
         // block
-        Pref.setBlackMid(mid);
+        BlockedAuthors.setBlocked(mid, true);
       } else if (act == 6) {
         // unblock
-        Pref.removeBlackMid(mid);
+        BlockedAuthors.setBlocked(mid, false);
       }
       return const Success(null);
     } else {
@@ -866,8 +871,7 @@ abstract final class VideoHttp {
   }
 
   static bool _canAddRank(Map i) {
-    if (!GlobalData().blackMids.contains(i['owner']['mid']) &&
-        !RecommendFilter.filterTitle(i['title']) &&
+    if (!RecommendFilter.filterTitle(i['title']) &&
         !RecommendFilter.filterLikeRatio(
           i['stat']['like'],
           i['stat']['view'],

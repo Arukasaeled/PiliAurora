@@ -5,6 +5,7 @@ import 'package:pili_aurora/models/common/dynamic/dynamics_type.dart';
 import 'package:pili_aurora/models/dynamics/article_content_model.dart';
 import 'package:pili_aurora/models/model_avatar.dart';
 import 'package:pili_aurora/models/model_owner.dart';
+import 'package:pili_aurora/models/model_video.dart' show VideoAuthors;
 import 'package:pili_aurora/models/remote/live/live_feed_index/watched_show.dart';
 import 'package:pili_aurora/utils/extension/iterable_ext.dart';
 import 'package:pili_aurora/utils/parse_bool.dart';
@@ -1050,6 +1051,7 @@ class DynamicTopicModel {
 }
 
 class DynamicArchiveModel {
+  VideoAuthors authors = VideoAuthors();
   DynamicArchiveModel({
     this.id,
     this.aid,
@@ -1079,6 +1081,7 @@ class DynamicArchiveModel {
   int? seasonId;
 
   DynamicArchiveModel.fromJson(Map<String, dynamic> json) {
+    authors = VideoAuthors.fromJson(json);
     id = safeToInt(json['id']);
     aid = safeToInt(json['aid']);
     badge = json['badge'] == null ? null : Badge.fromJson(json['badge']);

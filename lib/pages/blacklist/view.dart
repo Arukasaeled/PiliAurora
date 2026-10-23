@@ -9,8 +9,6 @@ import 'package:pili_aurora/models/common/image_type.dart';
 import 'package:pili_aurora/models/remote/blacklist/list.dart';
 import 'package:pili_aurora/pages/blacklist/controller.dart';
 import 'package:pili_aurora/utils/date_utils.dart';
-import 'package:pili_aurora/utils/global_data.dart';
-import 'package:pili_aurora/utils/storage_pref.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -23,16 +21,6 @@ class BlackListPage extends StatefulWidget {
 
 class _BlackListPageState extends State<BlackListPage> {
   final _blackListController = Get.put(BlackListController());
-
-  @override
-  void dispose() {
-    if (_blackListController.loadingState.value case Success(:final response)) {
-      final blackMids = response?.map((e) => e.mid!).toSet() ?? {};
-      GlobalData().blackMids = blackMids;
-      Pref.blackMids = blackMids;
-    }
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {

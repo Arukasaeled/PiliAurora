@@ -31,6 +31,7 @@ class HotVideoItemModel extends HorizontalVideoModel with MultiSelectData {
     state = json["state"];
     duration = json["duration"];
     owner = Owner.fromJson(json["owner"]);
+    authors = VideoAuthors.fromJson(json);
     stat = HotStat.fromJson(json['stat']);
     dimension = json['dimension'] == null
         ? null

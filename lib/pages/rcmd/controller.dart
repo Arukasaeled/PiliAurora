@@ -1,9 +1,9 @@
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/http/video.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
+import 'package:pili_aurora/pages/common/discovery_list_controller.dart';
 import 'package:pili_aurora/utils/storage_pref.dart';
 
-class RcmdController extends CommonListController {
+class RcmdController extends DiscoveryListController {
   late bool enableSaveLastData = Pref.enableSaveLastData;
   final bool appRcmd = Pref.appRcmd;
 
@@ -40,11 +40,8 @@ class RcmdController extends CommonListController {
           if (savedRcmdTip) {
             lastRefreshAt = dataList.length;
           }
-          if (response.length > 200) {
-            dataList.addAll(response.take(50));
-          } else {
-            dataList.addAll(response);
-          }
+          final saved = response.length > 200 ? response.take(50) : response;
+          dataList.addAll(filterCandidates(saved, existing: dataList));
         }
       }
     }

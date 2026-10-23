@@ -1,4 +1,5 @@
 import 'package:pili_aurora/utils/storage_pref.dart';
+import 'package:pili_aurora/utils/accounts.dart';
 
 class GlobalData {
   int imgQuality = Pref.picQuality;
@@ -11,7 +12,21 @@ class GlobalData {
     }
   }
 
-  Set<int> blackMids = Pref.blackMids;
+  int? _blackMidsOwner;
+  Set<int> _blackMids = {};
+
+  Set<int> get blackMids {
+    if (_blackMidsOwner != Accounts.main.mid) {
+      _blackMidsOwner = Accounts.main.mid;
+      _blackMids = Pref.blackMids;
+    }
+    return _blackMids;
+  }
+
+  set blackMids(Set<int> value) {
+    _blackMidsOwner = Accounts.main.mid;
+    _blackMids = value;
+  }
 
   bool dynamicsWaterfallFlow = Pref.dynamicsWaterfallFlow;
 

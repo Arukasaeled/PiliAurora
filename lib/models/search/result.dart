@@ -8,7 +8,6 @@ import 'package:pili_aurora/utils/duration_utils.dart';
 import 'package:pili_aurora/utils/em.dart';
 import 'package:pili_aurora/utils/extension/iterable_ext.dart';
 import 'package:pili_aurora/utils/extension/string_ext.dart';
-import 'package:pili_aurora/utils/global_data.dart';
 import 'package:pili_aurora/utils/parse_int.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
@@ -52,9 +51,7 @@ class SearchVideoData extends SearchNumData<SearchVideoItemModel> {
           case 'bili_user':
             if (item['data'] case List users when users.isNotEmpty) {
               for (final e in users) {
-                if (!GlobalData().blackMids.contains(e['mid'])) {
-                  (searchUser ??= <SearchUser>[]).add(SearchUser.fromJson(e));
-                }
+                (searchUser ??= <SearchUser>[]).add(SearchUser.fromJson(e));
               }
             }
           case 'media_bangumi' || 'media_ft':
@@ -204,6 +201,7 @@ class SearchVideoItemModel extends HorizontalVideoModel {
     ctime = json['senddate'];
     duration = DurationUtils.parseDuration(json['duration']);
     owner = SearchOwner.fromJson(json);
+    authors = VideoAuthors.fromJson(json);
     stat = SearchStat.fromJson(json);
     switch (json['type']) {
       case 'ketang':

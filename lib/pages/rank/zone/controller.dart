@@ -1,8 +1,11 @@
 import 'package:pili_aurora/http/loading_state.dart';
 import 'package:pili_aurora/http/video.dart';
-import 'package:pili_aurora/pages/common/common_list_controller.dart';
+import 'package:pili_aurora/pages/common/discovery_list_controller.dart';
 
-class ZoneController extends CommonListController {
+class ZoneController extends DiscoveryListController {
+  @override
+  bool get supportsPagination => false;
+
   ZoneController({this.rid, this.seasonType});
 
   int? rid;

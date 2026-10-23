@@ -8,8 +8,25 @@ import 'package:pili_aurora/pages/setting/widgets/multi_select_dialog.dart';
 import 'package:pili_aurora/utils/accounts.dart';
 import 'package:pili_aurora/utils/accounts/account.dart';
 import 'package:pili_aurora/utils/utils.dart';
+import 'package:pili_aurora/utils/storage_key.dart';
 
 List<SettingsModel> get privacySettings => [
+  const SwitchModel(
+    title: '增强黑名单屏蔽',
+    subtitle: '信息流中过滤已拉黑作者的视频、专栏、动态和直播，并继续加载内容补位；刷新后生效',
+    leading: Icon(Icons.hide_source_outlined),
+    setKey: SettingBoxKey.filterBlockedAuthors,
+    defaultVal: true,
+    children: [
+      SwitchModel(
+        title: '检查合作视频作者',
+        subtitle: '对列表标明的合作视频补查作者，任一作者被拉黑即屏蔽；会增加请求和加载时间，结果会缓存；刷新后生效',
+        leading: Icon(Icons.group_outlined),
+        setKey: SettingBoxKey.checkCooperativeAuthors,
+        defaultVal: true,
+      ),
+    ],
+  ),
   NormalModel(
     onTap: (context, setState) {
       if (!Accounts.main.isLogin) {
