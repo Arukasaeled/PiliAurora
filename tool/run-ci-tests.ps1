@@ -33,6 +33,7 @@ $ciTests = @(
     "test/plugin/pl_player/playback/native_media_clock_sampling_test.dart",
     "test/plugin/pl_player/playback/native_load_readiness_test.dart",
     "test/plugin/pl_player/playback/video_frame_timings_test.dart",
+    "test/plugin/pl_player/playback/presentation_profile_test.dart",
     "test/plugin/pl_player/playback/shader_updates_test.dart",
     # 原生输出、首帧与切换
     "test/plugin/pl_player/android/preloaded_surface_test.dart",
