@@ -8,6 +8,9 @@ class RouterReportManager<T> {
   /// created to manage the memory.
   static final Map<Route?, List<String>> _routesKey = {};
 
+  @visibleForTesting
+  static int get debugRouteKeyCount => _routesKey.length;
+
   /// Stores the onClose() references of instances created with `Get.create()`
   /// using the `Get.reference`.
   /// Experimental feature to keep the lifecycle and memory management with
@@ -104,5 +107,7 @@ class RouterReportManager<T> {
     }
 
     keysToRemove.clear();
+    // 依赖可能为永久实例，路由销毁后仍需解除其静态引用。
+    _routesKey.remove(routeName);
   }
 }

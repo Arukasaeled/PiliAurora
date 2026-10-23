@@ -776,7 +776,7 @@ packages:
       path: "third_party/get"
       relative: true
     source: path
-    version: "4.7.2+piliaurora.1"
+    version: "4.7.2+piliaurora.2"
   glob:
     dependency: transitive
     description:

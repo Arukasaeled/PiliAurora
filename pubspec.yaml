@@ -66,7 +66,7 @@ dependencies:
   flutter_svg: 2.3.0
   flutter_volume_controller: 2.0.2
   font_awesome_flutter: 11.0.0
-  get: 4.7.2+piliaurora.1
+  get: 4.7.2+piliaurora.2
   hive_ce: 2.20.1
   html: 0.15.7
   http2: 2.3.1
