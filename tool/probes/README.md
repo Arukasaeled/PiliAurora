@@ -270,7 +270,10 @@ Windows 的 `nativeTextureAttachReceipt` 表示该 load token 已收到原生纹
 输入为本地样片，不读取账号；音频输出使用 `ao=null`。
 
 构建时传入 `DEVICE_MEDIA`、`DEVICE_REPORT`；可选 `DEVICE_AUDIO`（独立音轨）、
-`DEVICE_SHADER`（Windows 本地 shader）和 `DEVICE_SOAK_SECONDS`（默认 60 秒）。
+`DEVICE_SHADER`（Windows 本地 shader）、`DEVICE_SOAK_SECONDS`（默认 60 秒）和
+`DEVICE_SEEK_MS`（暂停 seek 目标，默认 2400 毫秒）。Android 单视频沿用关键帧跳转策略，
+应先用 `ffprobe` 确认样片关键帧，再将 `DEVICE_SEEK_MS` 设为对应时刻。
+探针等待 seek 完成后核对位置，并检查播放时采样激活、暂停 seek 后相位样本清空。
 Android 可使用独立 debug 包，将样片及报告置于该包的外部私有 `files/` 目录，
 无需授予共享媒体权限；外部目录受设备限制时，可用 `run-as` 将样片及报告放到
 debug 包的内部 `cache/`，并同步修改构建参数中的路径。
