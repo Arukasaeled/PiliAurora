@@ -32,13 +32,13 @@ Pop out videos or live streams into separate windows while continuing to browse 
 ### Android
 
 <p align="center">
-  <img src="assets/display/android-playback-settings.jpg" alt="Android playback settings panel" width="840">
+  <img src="assets/display/android-playback-settings.jpg" alt="Android playback settings panel" width="800">
   <br>
   <em>Android home screen</em>
   <br>
-  <img src="assets/display/android-home.jpg" alt="Android home screen" width="280">
-  <img src="assets/display/android-danmaku-motion-settings.jpg" alt="Android danmaku density and frame-rate controls" width="280">
-  <img src="assets/display/android-danmaku-filter-settings.jpg" alt="Android danmaku merging" width="280">
+  <img src="assets/display/android-home.jpg" alt="Android home screen" width="230">
+  <img src="assets/display/android-danmaku-motion-settings.jpg" alt="Android danmaku density and frame-rate controls" width="230">
+  <img src="assets/display/android-danmaku-filter-settings.jpg" alt="Android danmaku merging" width="230">
 </p>
 
 ## Supported platforms and downloads
