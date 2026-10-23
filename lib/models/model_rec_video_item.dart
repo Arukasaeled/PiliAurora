@@ -26,27 +26,6 @@ class RcmdVideoItemModel extends BaseRcmdVideoItemModel {
     authors = VideoAuthors.fromJson(json);
     stat = Stat.fromJson(json["stat"]);
     isFollowed = json["is_followed"] == 1;
-    // rcmdReason = json["rcmd_reason"] != null
-    //     ? RcmdReason.fromJson(json["rcmd_reason"])
-    //     : RcmdReason(content: '');
     rcmdReason = json["rcmd_reason"]?['content'];
   }
-
-  // @override
-  // String? get desc => null;
 }
-
-// @HiveType(typeId: 2)
-// class RcmdReason {
-//   RcmdReason({
-//     this.reasonType,
-//     this.content,
-//   });
-// //   int? reasonType;
-// //   String? content;
-//
-//   RcmdReason.fromJson(Map<String, dynamic> json) {
-//     reasonType = json["reason_type"];
-//     content = json["content"] ?? '';
-//   }
-// }

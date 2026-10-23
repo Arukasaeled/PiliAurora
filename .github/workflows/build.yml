@@ -1,14 +1,6 @@
 name: Build Android and Windows x64
 
 on:
-    # pull_request:
-    #     types:
-    #         - opened
-    #         - synchronize
-    #         - reopened
-    #         - ready_for_review
-    #     paths-ignore:
-    #         - "**.md"
     workflow_dispatch:
         inputs:
             build_android:
@@ -64,7 +56,6 @@ jobs:
 
             - name: Set up Flutter
               uses: subosito/flutter-action@v2
-              id: flutter-action
               with:
                   channel: stable
                   flutter-version-file: pubspec.yaml

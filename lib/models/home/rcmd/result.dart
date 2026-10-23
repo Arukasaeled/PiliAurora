@@ -19,15 +19,12 @@ class RcmdVideoItemAppModel extends BaseRcmdVideoItemModel {
     stat = RcmdStat.fromJson(json);
     // 改用player_args中的duration作为原始数据（秒数）
     duration = json['player_args']?['duration'] ?? 0;
-    //duration = json['cover_right_text'];
     title = json['title'];
     goto = json['card_goto'];
     owner = RcmdOwner.fromJson(json, goto);
     authors = VideoAuthors.fromJson(json);
     rcmdReason = json['rcmd_reason'];
     if (rcmdReason == '竖屏') rcmdReason = null;
-    //     json['bottom_rcmd_reason'] ??
-    //     json['top_rcmd_reason'];
     if (rcmdReason != null && rcmdReason!.contains('赞')) {
       // 有时能在推荐原因里获得点赞数
       (stat as RcmdStat).like = NumUtils.parseNum(rcmdReason!);
@@ -73,14 +70,10 @@ class RcmdOwner extends BaseOwner {
 class ThreePoint {
   List<Reason>? dislikeReasons;
   List<Reason>? feedbacks;
-  // int? watchLater;
 
   ThreePoint.fromJson(List json) {
     for (final elem in json) {
       switch (elem['type']) {
-        // case 'watch_later':
-        //   watchLater = 1;
-        //   break;
         case 'feedback':
           feedbacks = (elem['reasons'] as List?)
               ?.map((i) => Reason.fromJson(i))

@@ -53,7 +53,7 @@ python -m unittest discover -s tool/experiments/android -p '*_test.py' -v
 
 ## 贯通帧计划与异步媒体时钟
 
-`frame_plan_pacing_probe.cpp`、`frame_plan_probe.dart.in` 和 `frame_plan_surface.java.in` 构成单播放器、单视图、120Hz 的隔离夹具。原生探针以 trace 的 PipelineProduce／DrawToSurfaces 边界传递帧计划，核对 PipelineItem 身份；Dart 通过 FFI 读取同一 expected 时间推进弹幕。模式8选择 preferred 后一条 timeline；模式9选择接近 frame-start 后四个屏幕周期的 timeline，二者均在 expected 前留1ms。固定预算用于机制对照。
+`frame_plan_pacing_probe.cpp`、`frame_plan_probe.dart.in` 和从当前 `VideoSurfaceTexture.java` 注入采样后生成的 Java 副本构成单播放器、单视图、120Hz 的隔离夹具。原生探针以 trace 的 PipelineProduce／DrawToSurfaces 边界传递帧计划，核对 PipelineItem 身份；Dart 通过 FFI 读取同一 expected 时间推进弹幕。模式8选择 preferred 后一条 timeline；模式9选择接近 frame-start 后四个屏幕周期的 timeline，二者均在 expected 前留1ms。固定预算用于机制对照。
 
 ```powershell
 python tool/experiments/android/prepare_frame_plan_probe.py

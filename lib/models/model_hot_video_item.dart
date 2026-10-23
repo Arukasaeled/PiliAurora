@@ -73,18 +73,3 @@ class HotStat extends Stat {
     vv = json["vv"];
   }
 }
-
-// class RcmdReason {
-//   RcmdReason({
-//     this.rcornerMark,
-//     this.content,
-//   });
-
-//   int? rcornerMark;
-//   String? content = '';
-
-//   RcmdReason.fromJson(Map<String, dynamic> json) {
-//     rcornerMark = json["corner_mark"];
-//     content = json["content"] ?? '';
-//   }
-// }

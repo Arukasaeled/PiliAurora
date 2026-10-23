@@ -1,4 +1,4 @@
-import 'package:canvas_danmaku/canvas_danmaku.dart';
+import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -47,37 +47,35 @@ void main() {
     expect(stableTicks, closeTo(360, 3));
   });
 
-  for (final fps in [120]) {
-    testWidgets('$fps FPS 在 vsync 前关闭接收本帧请求时仍保持目标更新率', (tester) async {
-      tester.view.display.refreshRate = 120.00000762939453;
-      addTearDown(tester.view.display.resetRefreshRate);
-      final started = tester.binding.clock.now().microsecondsSinceEpoch;
-      var ticks = 0;
-      final ticker = _DeadlineTicker(
-        (_) => ticks++,
-        fps,
-        () => tester.binding.clock.now().microsecondsSinceEpoch,
-      )..start();
-      await tester.pump();
-      final initial = ticks;
-      for (var slot = 1; slot <= 480; slot++) {
-        final deadline = started + slot * 8333 - 500;
-        await tester.binding.delayed(
-          Duration(
-            microseconds:
-                deadline - tester.binding.clock.now().microsecondsSinceEpoch,
-          ),
-        );
-        final requestedBeforeVsync = tester.binding.hasScheduledFrame;
-        await tester.binding.delayed(const Duration(microseconds: 500));
-        // 临近 vsync 才发起的请求由下一次 vsync 承载。
-        if (requestedBeforeVsync) await tester.pump();
-      }
-      ticker.dispose();
-      await tester.pump();
-      expect(ticks - initial, closeTo(fps * 4, 2));
-    });
-  }
+  testWidgets('120 FPS 在 vsync 前关闭接收本帧请求时仍保持目标更新率', (tester) async {
+    tester.view.display.refreshRate = 120.00000762939453;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final started = tester.binding.clock.now().microsecondsSinceEpoch;
+    var ticks = 0;
+    final ticker = _DeadlineTicker(
+      (_) => ticks++,
+      120,
+      () => tester.binding.clock.now().microsecondsSinceEpoch,
+    )..start();
+    await tester.pump();
+    final initial = ticks;
+    for (var slot = 1; slot <= 480; slot++) {
+      final deadline = started + slot * 8333 - 500;
+      await tester.binding.delayed(
+        Duration(
+          microseconds:
+              deadline - tester.binding.clock.now().microsecondsSinceEpoch,
+        ),
+      );
+      final requestedBeforeVsync = tester.binding.hasScheduledFrame;
+      await tester.binding.delayed(const Duration(microseconds: 500));
+      // 临近 vsync 才发起的请求由下一次 vsync 承载。
+      if (requestedBeforeVsync) await tester.pump();
+    }
+    ticker.dispose();
+    await tester.pump();
+    expect(ticks - initial, closeTo(480, 2));
+  });
 
   testWidgets('使用所属视图的已知刷新率，屏幕降频后限制目标帧率', (tester) async {
     // 首个视图为 60 Hz，弹幕所在视图的刷新率由调用者提供。
@@ -151,33 +149,6 @@ void main() {
     expect(ticks.length, 2);
     expect(tester.binding.hasScheduledFrame, isFalse);
     ticker.dispose();
-  });
-
-  testWidgets('移动端弹幕屏幕在 TickerMode 静音后停止请求帧', (tester) async {
-    late DanmakuController<void> controller;
-    Widget screen(bool enabled) => Directionality(
-      textDirection: TextDirection.ltr,
-      child: MediaQuery(
-        data: const MediaQueryData(),
-        child: TickerMode(
-          enabled: enabled,
-          child: DanmakuScreen<void>(
-            option: const DanmakuOption(),
-            size: const Size(800, 600),
-            frameRate: 30,
-            createdController: (value) => controller = value,
-          ),
-        ),
-      ),
-    );
-    await tester.pumpWidget(screen(true));
-    controller.addDanmaku(DanmakuContentItem<void>('moving'));
-    await tester.pump();
-    await tester.pumpWidget(screen(false));
-    await tester.pump(const Duration(seconds: 1));
-    expect(tester.binding.hasScheduledFrame, isFalse);
-    await tester.pumpWidget(const SizedBox.shrink());
-    expect(tester.takeException(), isNull);
   });
 
   for (final fps in [30, 120]) {

@@ -397,4 +397,90 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('旧 Canvas 弹幕屏幕在 TickerMode 静音后停止请求帧', (tester) async {
+    late DanmakuController<void> controller;
+    Widget screen(bool enabled) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: MediaQuery(
+        data: const MediaQueryData(),
+        child: TickerMode(
+          enabled: enabled,
+          child: DanmakuScreen<void>(
+            option: const DanmakuOption(),
+            size: const Size(800, 600),
+            frameRate: 30,
+            createdController: (value) => controller = value,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(screen(true));
+    controller.addDanmaku(DanmakuContentItem<void>('moving'));
+    await tester.pump();
+    await tester.pumpWidget(screen(false));
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('并存图层使用各自 DPI，密度变化重新栅格且保留表情资源', (tester) async {
+    final controllers = <int, DanmakuController<void>>{};
+    final recorder = ui.PictureRecorder();
+    ui.Canvas(recorder).drawColor(const Color(0xFFFF0000), ui.BlendMode.src);
+    final picture = recorder.endRecording();
+    final emote = picture.toImageSync(8, 8);
+    picture.dispose();
+    Widget layer(int id, double ratio) => MediaQuery(
+      data: MediaQueryData(devicePixelRatio: ratio),
+      child: SizedBox(
+        width: 300,
+        height: 120,
+        child: DanmakuScreen<void>(
+          key: ValueKey(id),
+          size: const Size(300, 120),
+          option: const DanmakuOption(fontSize: 20),
+          createdController: (controller) => controllers[id] = controller,
+        ),
+      ),
+    );
+    Future<void> mount(double ratio) => tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Row(children: [layer(1, 1), layer(2, ratio)]),
+      ),
+    );
+    await mount(2);
+    controllers[1]!.addDanmaku(DanmakuContentItem<void>('same'));
+    controllers[2]!.addDanmaku(DanmakuContentItem<void>('same'));
+    await tester.pump();
+    final a = controllers[1]!.scrollDanmaku.first.single;
+    final b = controllers[2]!.scrollDanmaku.first.single;
+    expect(a.width, b.width);
+    expect(a.image!.width, a.width.ceil());
+    expect(b.image!.width, (b.width * 2).ceil());
+    controllers[2]!.addDanmaku(
+      DanmakuContentItem<void>(
+        '[e]',
+        inlineImages: [
+          DanmakuInlineImage(
+            placeholder: '[e]',
+            image: emote,
+            width: 8,
+            height: 8,
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    controllers[2]!.pause();
+    await mount(1);
+    await tester.pump();
+    expect(b.image!.width, b.width.ceil());
+    expect(emote.debugDisposed, isFalse);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(emote.debugDisposed, isTrue);
+  });
 }
