@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:canvas_danmaku/frame_rate_ticker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:pili_aurora/pages/danmaku/frame_scheduler.dart';
@@ -20,10 +21,6 @@ void main() {
     final frames = ValueNotifier<List<int>>([fixture.now]);
     addTearDown(frames.dispose);
     binding.frameDispatcher.number = 40;
-    // 固定 SDK 在 onBeginFrame 返回后、drawFrame 之前更新 FrameData。
-    binding.addPersistentFrameCallback((_) {
-      binding.frameDispatcher.number++;
-    });
     final ticker = _IdentityTicker(fixture, frames)..start();
     addTearDown(ticker.dispose);
     await tester.pump();
@@ -52,6 +49,123 @@ void main() {
     tester.platformDispatcher.onReportTimings!([timing(42)]);
     expect(ticker.diagnostics['presentationLeadUs'], isNull);
     await tester.pump();
+  });
+
+  for (final badLead in [8333, 0, -8333, 200000]) {
+    testWidgets('帧计划提前量 $badLead 连续异常后回退，恢复通知不反复切换', (tester) async {
+      tester.view.display.refreshRate = 120;
+      addTearDown(tester.view.display.resetRefreshRate);
+      final fixture = FrameSyncFixture(tester, 120);
+      final frames = ValueNotifier<List<int>>([]);
+      addTearDown(frames.dispose);
+      final updates = <int>[];
+      final elapsed = <int>[];
+      final ticker = _IdentityTicker(
+        fixture,
+        frames,
+        onTick: (duration) {
+          updates.add(binding.currentSystemFrameTimeStamp.inMicroseconds);
+          elapsed.add(duration.inMicroseconds);
+        },
+      )..start();
+      addTearDown(ticker.dispose);
+      await tester.pump();
+      Future<void> step(int slot, int lead) async {
+        await fixture.elapseToSlot(slot);
+        frames.value = [fixture.now];
+        await fixture.pump(hasVideo: false);
+        final target = binding.currentSystemFrameTimeStamp.inMicroseconds;
+        tester.platformDispatcher.onReportTimings!([
+          ui.FrameTiming(
+            vsyncStart: target - lead,
+            buildStart: target - lead + 100,
+            buildFinish: target - lead + 200,
+            rasterStart: target - lead + 300,
+            rasterFinish: target - lead + 400,
+            rasterFinishWallTime: target,
+            frameNumber: binding.frameDispatcher.number,
+          ),
+        ]);
+      }
+
+      await step(1, 33332);
+      await step(2, badLead);
+      // 一次异常后有正常证据，重新累计，避免瞬时抖动触发回退。
+      await step(3, 33332);
+      await step(4, badLead);
+      await step(5, badLead);
+      expect(ticker.diagnostics['videoPhaseFallback'], isNull);
+      await step(6, badLead);
+      expect(ticker.diagnostics['videoPhaseFallback'], isNotNull);
+      expect(ticker.diagnostics['preserveVideoPhase'], isFalse);
+      expect(ticker.diagnostics['presentationLeadUs'], isNull);
+      for (var slot = 7; slot <= 246; slot++) {
+        await step(slot, 33332);
+      }
+      expect(ticker.diagnostics['mode'], 'independent');
+      expect(updates.length, inInclusiveRange(122, 125));
+      expect(elapsed.last - elapsed.first, updates.last - updates.first);
+      expect([
+        for (var i = 1; i < updates.length; i++) updates[i] - updates[i - 1],
+      ], everyElement(inInclusiveRange(8333, 16667)));
+      ticker
+        ..invalidatePhase()
+        ..configureVideoPhase(
+          continuousVideoVsync: true,
+          preserveVideoPhase: true,
+        )
+        ..stop()
+        ..start();
+      expect(ticker.diagnostics['preserveVideoPhase'], isFalse);
+      ticker.stop();
+      await tester.pump();
+      await tester.binding.delayed(const Duration(seconds: 2));
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+  }
+
+  testWidgets('缺少同帧 timing 超时后回退，延迟批次正常时保持增强策略', (tester) async {
+    tester.view.display.refreshRate = 120;
+    addTearDown(tester.view.display.resetRefreshRate);
+    final fixture = FrameSyncFixture(tester, 120);
+    final frames = ValueNotifier<List<int>>([]);
+    addTearDown(frames.dispose);
+    final ticker = _IdentityTicker(fixture, frames)..start();
+    addTearDown(ticker.dispose);
+    await tester.pump();
+    final timings = <ui.FrameTiming>[];
+    for (var slot = 1; slot <= 840; slot++) {
+      await fixture.elapseToSlot(slot);
+      frames.value = [fixture.now];
+      await fixture.pump(hasVideo: false);
+      final target = binding.currentSystemFrameTimeStamp.inMicroseconds;
+      timings.add(
+        ui.FrameTiming(
+          vsyncStart: target - 33332,
+          buildStart: target - 33232,
+          buildFinish: target - 33132,
+          rasterStart: target - 33032,
+          rasterFinish: target - 32932,
+          rasterFinishWallTime: target,
+          frameNumber: binding.frameDispatcher.number,
+        ),
+      );
+      if (slot <= 360 && slot % 120 == 0) {
+        tester.platformDispatcher.onReportTimings!(List.of(timings));
+        timings.clear();
+        expect(ticker.diagnostics['videoPhaseFallback'], isNull);
+      }
+      if (slot == 719) {
+        expect(ticker.diagnostics['videoPhaseFallback'], isNull);
+      }
+    }
+    expect(ticker.diagnostics['videoPhaseFallback'], 'missingFrameTiming');
+    tester.platformDispatcher.onReportTimings!(timings);
+    expect(ticker.diagnostics['preserveVideoPhase'], isFalse);
+    ticker.stop();
+    await tester.pump();
+    await tester.binding.delayed(const Duration(seconds: 2));
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
   testWidgets('显示调度合并一次性刷新，连续帧每帧一次，隐藏和释放撤销订阅', (tester) async {
     final source = _Source();
@@ -163,6 +277,11 @@ void main() {
 }
 
 class _FrameDataBinding extends AutomatedTestWidgetsFlutterBinding {
+  _FrameDataBinding() {
+    // 固定 SDK 在 onBeginFrame 返回后、drawFrame 之前更新 FrameData。
+    addPersistentFrameCallback((_) => frameDispatcher.number++);
+  }
+
   _FrameDispatcher? _dispatcher;
 
   _FrameDispatcher get frameDispatcher => _dispatcher ??= _FrameDispatcher();
@@ -189,14 +308,17 @@ class _NumberedFrame implements ui.FrameData {
 }
 
 class _IdentityTicker extends FrameRateTicker {
-  _IdentityTicker(this.fixture, ValueNotifier<List<int>> frames)
-    : super(
-        (_) {},
-        frameRate: 60,
-        videoFrameTimings: frames,
-        continuousVideoVsync: true,
-        preserveVideoPhase: true,
-      );
+  _IdentityTicker(
+    this.fixture,
+    ValueNotifier<List<int>> frames, {
+    TickerCallback? onTick,
+  }) : super(
+         onTick ?? (_) {},
+         frameRate: 60,
+         videoFrameTimings: frames,
+         continuousVideoVsync: true,
+         preserveVideoPhase: true,
+       );
 
   final FrameSyncFixture fixture;
 
