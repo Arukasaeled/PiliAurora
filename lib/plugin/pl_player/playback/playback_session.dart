@@ -1583,6 +1583,10 @@ class PlaybackSession implements PlaybackMediaClock {
         if (_phase != PlaybackPhase.ready || _pendingAction != null) return;
         final owner = _activeOwner;
         if (owner == null) return;
+        // 播完后停止页面的播放意图，返回重载时保持停止；连播由页面显式发起。
+        owner._playing = false;
+        _intentRevision++;
+        _settlePlayingWaiters(const CommandResult.superseded());
         _phase = PlaybackPhase.ended;
         _stage = PlaybackStage.observing;
         _pendingAction = PlaybackAction(

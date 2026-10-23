@@ -593,6 +593,45 @@ void main() {
     await runtime.released;
   });
 
+  for (final ended in [false, true]) {
+    test('A${ended ? '播完' : '暂停'}后经过B/C/D返回仍保持停止，显式播放可恢复', () async {
+      final runtime = _FakeRuntime();
+      final session = PlaybackSession(runtime: runtime);
+      final a = session.attach();
+      await a.load(_plan('A'), start: PlaybackStartPolicy.play);
+      if (ended) {
+        runtime._events.add(
+          PlaybackRuntimeEnded(
+            runtimeId: runtime.runtimeId,
+            loadId: session.loadId,
+          ),
+        );
+        expect(session.currentSnapshot.phase, PlaybackPhase.ended);
+      } else {
+        await a.setPlaying(false);
+      }
+      final token = a.acquireInhibitor(PlaybackInhibitorSource.system)!;
+      final pages = <PlaybackOwner>[];
+      for (final key in ['B', 'C', 'D']) {
+        final owner = session.attach();
+        pages.add(owner);
+        await owner.load(_plan(key), start: PlaybackStartPolicy.play);
+      }
+      for (final owner in pages.reversed) {
+        owner.close();
+      }
+      a.activate();
+      await a.load(_plan('A'));
+      await a.releaseInhibitor(token);
+      expect(session.currentSnapshot.intent.playing, isFalse);
+      expect(runtime.playCalls.last, isFalse);
+      await a.setPlaying(true);
+      expect(runtime.playCalls.last, isTrue);
+      a.close();
+      await runtime.released;
+    });
+  }
+
   test('页面关闭但媒体租约尚未释放时，原生播放器立即暂停', () async {
     final runtime = _FakeRuntime();
     final session = PlaybackSession(runtime: runtime);
