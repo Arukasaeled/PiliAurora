@@ -4,6 +4,7 @@
 /// All rights reserved.
 /// Use of this source code is governed by MIT license that can be found in the LICENSE file.
 import 'dart:io';
+import 'package:media_kit_video/src/video_controller/video_frame_sampling.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/services.dart';
@@ -210,6 +211,7 @@ class AndroidVideoController extends PlatformVideoController {
               configRevision: 0,
             );
         _operationToken = token;
+        bindFrameOutput(token);
         _loadSelection = null;
         _selectedTrackMetadata = null;
         _preloadedPreparedToken = null;
@@ -220,7 +222,6 @@ class AndroidVideoController extends PlatformVideoController {
         _fixedSize.reset();
         _appliedSize = null;
         _attached = false;
-        configuration.onAndroidFrameTimings?.call(const []);
         _diagnostic('surface.load');
 
         // Give every file identity a fresh Android Surface, even when the URI
@@ -845,6 +846,7 @@ class AndroidVideoController extends PlatformVideoController {
 
   @override
   Future<void> invalidateOutputGeneration(OutputOperationToken token) async {
+    if (token == _operationToken) bindFrameOutput(null);
     if (token == _pendingOperationToken) _pendingOperationToken = null;
     if (token == _operationToken) {
       _operationToken = null;
@@ -904,6 +906,7 @@ class AndroidVideoController extends PlatformVideoController {
     }
     _runtimeManagedLoads = true;
     _highWaterToken = token;
+    bindFrameOutput(token);
     _pendingOperationToken = token;
     _ensureOutputAttachWaiter(token);
     _lastOutputAttachToken = null;
@@ -940,6 +943,25 @@ class AndroidVideoController extends PlatformVideoController {
   }
 
   @override
+  Future<VideoFrameSamplingState?> setVideoFrameSampling(
+    OutputOperationToken token,
+    bool enabled,
+  ) async {
+    final args = await _channel.invokeMapMethod<Object?, Object?>(
+      'VideoOutputManager.SetFrameSampling',
+      {
+        'handle': player.handle.toString(),
+        ...token.toPlatformArguments(),
+        'enabled': enabled,
+      },
+    );
+    return args == null
+        ? null
+        : VideoFrameEvent.fromPlatformArguments(args)
+              as VideoFrameSamplingState;
+  }
+
+  @override
   Future<void> releaseOutput() => _dispose();
 
   /// {@macro android_video_controller}
@@ -965,10 +987,11 @@ class AndroidVideoController extends PlatformVideoController {
 
     final data = await _channel.invokeMethod('VideoOutputManager.Create', {
       'handle': handle.toString(),
-      'reportTimings': configuration.onAndroidFrameTimings != null,
+      'reportTimings': true,
     });
     debugPrint(data.toString());
 
+    controller.frameTimelineSupported = data['frameTimelineSupported'] == true;
     final int? id = data['id'];
 
     // ----------------------------------------------
@@ -1076,11 +1099,22 @@ class AndroidVideoController extends PlatformVideoController {
         'com.alexmercerind/media_kit_video',
       )..setMethodCallHandler((MethodCall call) async {
         try {
-          if (call.method != 'VideoOutput.FrameTimings') {
+          if (call.method != 'VideoOutput.FrameSampling') {
             debugPrint(call.method.toString());
             debugPrint(call.arguments.toString());
           }
           switch (call.method) {
+            case 'VideoOutput.FrameSampling':
+              final args = call.arguments as Map;
+              final controller =
+                  _controllers[int.parse(args['handle'].toString())];
+              if (controller != null && controller._disposeFuture == null) {
+                controller.emitFrameEvent(
+                  VideoFrameEvent.fromPlatformArguments(args),
+                );
+              }
+              break;
+
             case 'VideoOutput.ConsumedFrames':
               {
                 final arguments = Map<Object?, Object?>.from(
@@ -1104,17 +1138,6 @@ class AndroidVideoController extends PlatformVideoController {
                         arguments['consumedAtMonotonicUs'] as List,
                       ),
                     ),
-                  );
-                }
-                break;
-              }
-            case 'VideoOutput.FrameTimings':
-              {
-                final int handle = call.arguments['handle'];
-                final controller = _controllers[handle];
-                if (controller != null && controller._attached) {
-                  controller.configuration.onAndroidFrameTimings?.call(
-                    List<int>.from(call.arguments['frames'] as List),
                   );
                 }
                 break;

@@ -18,3 +18,5 @@ export 'package:media_kit_video/src/video_controller/android_video_controller/su
 
 export 'package:media_kit_video/src/video_controller/android_video_controller/fixed_surface_size.dart';
 export 'package:media_kit_video/src/video_output_size_policy.dart';
+
+export 'src/video_controller/video_frame_sampling.dart';

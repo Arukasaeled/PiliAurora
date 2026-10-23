@@ -2,6 +2,8 @@
 
 从仓库根目录运行 `fvm flutter test`。传入文件或目录可选择对应范围，环境与平台验证要求见[构建与测试说明](../doc/build-and-test.md)。
 
+`common/widgets/image/` 覆盖图片恢复时的单次取帧、原生取消后的解码名额归还、动画时长与有限循环、CDN 缩略尺寸及淡入过渡。`pages/home/controller_lifecycle_test.dart` 检查 Get 删除时的诊断源与 Ticker 释放；`router/get_route_lifecycle_test.dart` 检查真实出栈后路由引用清理及永久依赖保留。这些回归已接入 `tool/run-ci-tests.ps1`。
+
 | 目录 | 范围 |
 | --- | --- |
 | `architecture/` | 依赖政策、模块边界和发布工作流约束。 |
@@ -21,7 +23,7 @@
 
 `pages/live_room/loading_test.dart` 在直播请求持续未返回时检查加载动画、控件、刷新与失败提示；`app/desktop_playback_launch_test.dart` 检查小窗显示不等待播放流就绪。前者使用内存设置和挂起的 HTTP 响应，后者模拟窗口平台调用；实际纹理、声音交接和窗口显示仍需设备验证。
 
-`plugin/pl_player/playback/video_frame_timings_test.dart` 覆盖刷新请求与消费批次交错、独立的消费证据和新加载首帧状态；`plugin/pl_player/android/preloaded_surface_test.dart` 使用实际 Android 输出控制器与模拟平台通道，检查临时 Surface 的解码前挂载、FILE_LOADED 几何确认及同尺寸输出复用。
+`plugin/pl_player/playback/video_frame_timings_test.dart` 覆盖请求／消费阶段、输出身份、失效代次、序号高水位与独立消费证据；`pages/danmaku/frame_plan_identity_test.dart` 另检查共用调度的合帧、订阅释放、同一 view 换屏／变频和迟到 timing 隔离；`plugin/pl_player/android/preloaded_surface_test.dart` 使用实际 Android 输出控制器与模拟平台通道，检查临时 Surface 的解码前挂载、FILE_LOADED 几何确认及同尺寸输出复用。
 
 `plugin/pl_player/playback/native_media_clock_sampling_test.dart` 覆盖异步媒体时钟采样的通知合并、在途结果失效、冻结锚点时刻、读取失败恢复，以及释放前等待原生读取完成；属性一致性由 `native_media_clock_test.dart` 覆盖。
 
@@ -29,11 +31,13 @@
 
 `plugin/pl_player/android/raster_scheduling_test.dart` 检查 Raster CPU 亲和性的重复取得、恢复及其它策略／线程接管；实际调度和呈现间隔使用 `tool/probes/android/playback_jank.dart` 的亲和性对照模式验证。
 
-`plugin/pl_player/playback/native_load_readiness_test.dart` 覆盖输出就绪前 EOF、等待几何时断流、迟到输出与直播几何等待预算。`preloaded_surface_test.dart` 还覆盖 preloaded 时 selected=false、FILE_LOADED 选轨确认和 VO/wid 解绑到原生释放回执的顺序；`tool/run-native-probes.ps1` 的释放探针运行生产 Java 释放方法，检查无固定延迟、幂等回执及 JNI 删除失败。
+`plugin/pl_player/playback/native_load_readiness_test.dart` 覆盖输出就绪前 EOF、等待几何时断流、迟到输出与直播几何等待预算。`preloaded_surface_test.dart` 还覆盖 preloaded 时 selected=false、FILE_LOADED 选轨确认、Surface 创建失败后的挂载中止与清理，以及 VO/wid 解绑到原生释放回执的顺序；`tool/run-native-probes.ps1` 的主机探针运行生产 Java Surface 创建和释放方法，检查失败回滚、即时与幂等回执及 JNI 删除失败。
 
 CI 显式选择弹幕生产链路与帧计划的核心回归，完整弹幕测试按需运行 `fvm flutter test --no-pub test/pages/danmaku/`。`frame_sync_fixture.dart` 供相位测试和帧率矩阵共用请求时间换算，两种模型都采用引擎的目标帧时钟；Android 模型由视频额外驱动 Dart 帧，隔离模型用于检查 ticker 自行唤醒。`frame_rate_diagnostics_test.dart` 检查实际更新、请求和定时器累计计数、单调时间及停止后的释放；相位测试同时检查稳定锁相状态。
 
 `pages/danmaku/frame_plan_identity_test.dart` 模拟 BeginFrame 返回后递增 FrameData 的顺序，集中检查帧末编号与呈现目标的关联、无关和重复 timing 的隔离，以及停止后待匹配计划的清理。
+
+同一文件注入旧回调、零值／负值／过大提前量和缺失 timing，检查异常连续确认、正常批次清除异常计数、回退后的更新间隔，以及暂停、重配和迟到批次不会反复切换。按秒批量报告的正常 timing 保持增强策略。
 
 同一组件的场景集中在对应文件，诊断记录存储及突发写入位于 `services/diagnostics/record_store_test.dart`。页面测试与服务测试分开组织；`pages/danmaku/window_screen_test.dart` 覆盖生产点播的媒体锚点、暂停准备及期限唤醒，`live_layer_test.dart` 覆盖共用窗口上的直播运动、暂停、到期和隐藏释放。`window_renderer_test.dart` 对照实验基线检查 DPR、普通与高级弹幕透明度和重叠像素，并覆盖表情共享图片及资源预算；`window_interaction_test.dart` 检查局部来源失效后的选择、句柄和活动资源保留。旧 Windows 实现及其专属回归位于 `tool/experiments/danmaku/baseline/`。
 

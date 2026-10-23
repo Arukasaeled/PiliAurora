@@ -60,6 +60,66 @@ public class VideoOutput {
     private SurfaceFrameFence frameFence;
     private MethodChannel.Result frameResult;
     private final VideoFrameSamples frameSamples;
+    private final VideoSurfaceTexture texture;
+    private long samplingGeneration, requestSequence;
+    private String samplingAdmission = "blocked";
+    private boolean samplingEnabled, samplingResourceReady;
+    private long samplingValidAfterNs;
+
+    private HashMap<String, Object> samplingData() {
+        final OutputOperationToken token = operationGate.activeToken();
+        final HashMap<String, Object> data = new HashMap<>();
+        final HashMap<String, Object> identity = new HashMap<>();
+        identity.put("runtimeId", token.runtimeId);
+        identity.put("loadId", token.loadId);
+        identity.put("outputEpoch", token.outputEpoch);
+        identity.put("configRevision", token.configRevision);
+        data.put("handle", handle);
+        data.put("token", identity);
+        data.put("samplingGeneration", samplingGeneration);
+        return data;
+    }
+
+    private void transitionSampling(String admission) {
+        samplingGeneration++;
+        samplingAdmission = admission;
+        samplingValidAfterNs = Math.max(samplingValidAfterNs, System.nanoTime());
+        if (frameSamples != null) frameSamples.clear();
+        mainHandler.removeCallbacks(reportFrameSamples);
+        frameReportPending = false;
+        texture.configureSampling(admission.equals("active") ? new VideoSurfaceTexture.Context(
+                operationGate.activeToken(), samplingGeneration, surfaceGeneration,
+                samplingValidAfterNs, bufferWidth, bufferHeight) : null);
+        if (operationGate.activeToken() == null) return;
+        final HashMap<String, Object> data = samplingData();
+        data.put("admission", admission);
+        data.put("validAfterUs", samplingValidAfterNs / 1000);
+        // 在同一主线程队列中先发布状态，再交付该代次的批次。
+        mainHandler.post(() -> channelReference.invokeMethod("VideoOutput.FrameSampling", data));
+    }
+
+    public HashMap<String, Object> setFrameSampling(OutputOperationToken token, boolean enabled) {
+        synchronized (lock) {
+            if (!isCurrentToken(token)) return null;
+            samplingEnabled = enabled;
+            transitionSampling(enabled && samplingResourceReady ? "priming" : "blocked");
+            final HashMap<String, Object> receipt = samplingData();
+            receipt.put("admission", samplingAdmission);
+            receipt.put("validAfterUs", samplingValidAfterNs / 1000);
+            return receipt;
+        }
+    }
+
+    private void blockResourceSampling() {
+        samplingResourceReady = false;
+        transitionSampling("blocked");
+    }
+
+    private void primeResourceSampling() {
+        samplingResourceReady = true;
+        transitionSampling(samplingEnabled ? "priming" : "blocked");
+    }
+
     private boolean frameReportPending;
     private final Runnable reportFrameSamples = this::reportFrameSamples;
     private final VideoFrameSamples consumedFrameSamples = new VideoFrameSamples();
@@ -68,13 +128,14 @@ public class VideoOutput {
     private void reportFrameSamples() {
         synchronized (lock) {
             frameReportPending = false;
-            if (disposed || frameSamples == null) return;
+            if (disposed || frameSamples == null || !samplingAdmission.equals("active")) return;
             final java.util.ArrayList<Long> samples = frameSamples.drain();
             if (samples.isEmpty()) return;
-            final HashMap<String, Object> data = new HashMap<>();
-            data.put("handle", handle);
-            data.put("frames", samples);
-            channelReference.invokeMethod("VideoOutput.FrameTimings", data);
+            final HashMap<String, Object> data = samplingData();
+            data.put("kind", "refreshRequested");
+            data.put("sequence", ++requestSequence);
+            data.put("monotonicUs", samples);
+            channelReference.invokeMethod("VideoOutput.FrameSampling", data);
         }
     }
 
@@ -110,18 +171,21 @@ public class VideoOutput {
         }
     }
 
-    private void onFrameRequested() {
-        final long requestedNs = System.nanoTime();
+    private void onFrameRequested(VideoSurfaceTexture.Sample sample) {
         synchronized (lock) {
-            if (disposed || frameSamples == null) return;
-            frameSamples.add(requestedNs);
+            final VideoSurfaceTexture.Context context = sample.context;
+            if (disposed || frameSamples == null || !samplingAdmission.equals("active") ||
+                    !isCurrentToken(context.output) || context.generation != samplingGeneration ||
+                    context.resourceGeneration != surfaceGeneration ||
+                    context.width != bufferWidth || context.height != bufferHeight ||
+                    sample.bufferTimestamp <= samplingValidAfterNs) return;
+            frameSamples.add(sample.requestedNs);
             if (!frameReportPending) {
                 frameReportPending = true;
                 mainHandler.postDelayed(reportFrameSamples, 250);
             }
         }
     }
-
 
     private void diagnostic(String event, Throwable error) {
         final long now = android.os.SystemClock.elapsedRealtimeNanos();
@@ -174,7 +238,7 @@ public class VideoOutput {
             throw new RuntimeException("Failed to initialize com.alexmercerind.media_kit_video.VideoOutput.");
         }
 
-        final VideoSurfaceTexture texture = new VideoSurfaceTexture(
+        texture = new VideoSurfaceTexture(
                 reportTimings ? this::onFrameRequested : null);
         try {
             surfaceTextureEntry = textureRegistryReference.registerSurfaceTexture(texture);
@@ -207,6 +271,12 @@ public class VideoOutput {
                         consumedFrameReportPending = true;
                         mainHandler.postDelayed(reportConsumedFrameProgress, 250);
                     }
+                }
+                if (newTimestamp && timestamp > samplingValidAfterNs &&
+                        SurfaceFrameFence.hasAutomaticEglClock(timestamp, consumedAtNs) &&
+                        samplingAdmission.equals("priming") && samplingEnabled && samplingResourceReady) {
+                    // 此帧用于确认；活动注册从后续通知开始采样。
+                    transitionSampling("active");
                 }
                 lastConsumedTimestamp = timestamp;
                 if (!waitUntilFirstFrameRenderedNotify && timestamp > 0) {
@@ -247,6 +317,7 @@ public class VideoOutput {
             disposeResults.add(result);
             if (disposed) return;
             disposed = true;
+            transitionSampling("blocked");
             operationGate.revoke();
             resetFrameSamples();
             surfaceGeneration++;
@@ -300,7 +371,12 @@ public class VideoOutput {
 
     public boolean beginOutputOperation(OutputOperationToken token) {
         synchronized (lock) {
+            final OutputOperationToken previous = operationGate.activeToken();
             if (disposed || !operationGate.begin(token)) return false;
+            if (previous != null && previous.sameAs(token)) return true;
+            requestSequence = 0;
+            samplingEnabled = false;
+            blockResourceSampling();
             configuredAtNs = System.nanoTime();
             consumedFrameSamples.clear();
             surfaceGeneration++;
@@ -311,6 +387,8 @@ public class VideoOutput {
 
     public boolean invalidateOutputGeneration(OutputOperationToken token) {
         synchronized (lock) {
+            if (!operationGate.isCurrent(token)) return operationGate.invalidate(token);
+            blockResourceSampling();
             if (!operationGate.invalidate(token)) return false;
             consumedFrameSamples.clear();
             mainHandler.removeCallbacks(reportConsumedFrameProgress);
@@ -334,6 +412,7 @@ public class VideoOutput {
     public long createSurface(OutputOperationToken token) {
         synchronized (lock) {
             if (!isCurrentToken(token)) throw new IllegalStateException("Stale output generation");
+            blockResourceSampling();
             surfaceGeneration++;
             lastConsumedTimestamp = 0;
             resetFrameSamples();
@@ -351,18 +430,33 @@ public class VideoOutput {
                 }
             } catch (Throwable e) {
                 diagnostic("surface.native-error", e);
-                e.printStackTrace();
+                // 保留未确认释放的引用，交由后续释放流程回收。
+                throw new IllegalStateException("Failed to release previous Android video Surface", e);
             }
             // Create new android.view.Surface & object reference.
+            Surface nextSurface = null;
+            final long nextWid;
             try {
-                waitUntilFirstFrameRenderedNotify = false;
-                surface = new Surface(surfaceTextureEntry.surfaceTexture());
-                wid = (long) newGlobalObjectRef.invoke(null, surface);
-                diagnostic("surface.native-created", null);
+                nextSurface = new Surface(surfaceTextureEntry.surfaceTexture());
+                nextWid = (long) newGlobalObjectRef.invoke(null, nextSurface);
+                if (nextWid == 0) throw new IllegalStateException("Could not create JNI Surface reference");
             } catch (Throwable e) {
+                if (nextSurface != null) {
+                    try {
+                        nextSurface.release();
+                    } catch (Throwable releaseError) {
+                        // 回滚未完成的 Surface 留给输出的释放流程继续回收。
+                        surface = nextSurface;
+                        e.addSuppressed(releaseError);
+                    }
+                }
                 diagnostic("surface.native-error", e);
-                e.printStackTrace();
+                throw new IllegalStateException("Failed to create Android video Surface", e);
             }
+            surface = nextSurface;
+            wid = nextWid;
+            waitUntilFirstFrameRenderedNotify = false;
+            diagnostic("surface.native-created", null);
             return wid;
         }
     }
@@ -372,6 +466,7 @@ public class VideoOutput {
             if (!isCurrentToken(token) || width <= 0 || height <= 0) {
                 throw new IllegalStateException("Invalid or disposed video surface");
             }
+            blockResourceSampling();
             finishFrameWait(false);
             surfaceTextureEntry.surfaceTexture().setDefaultBufferSize(width, height);
             resetFrameSamples();
@@ -381,6 +476,12 @@ public class VideoOutput {
             bufferWidth = width;
             bufferHeight = height;
             diagnostic("surface.buffer-configured", null);
+        }
+    }
+
+    public void confirmSurfaceConfigured(OutputOperationToken token) {
+        synchronized (lock) {
+            if (isCurrentToken(token)) primeResourceSampling();
         }
     }
 
@@ -416,6 +517,7 @@ public class VideoOutput {
             frameFence = new SurfaceFrameFence(
                     request, width, height, surfaceGeneration, System.nanoTime(), token);
             frameResult = result;
+            primeResourceSampling();
         }
     }
 

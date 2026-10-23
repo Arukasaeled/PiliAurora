@@ -108,8 +108,9 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                         try {
                             final VideoOutput videoOutput = videoOutputManager.create(Long.parseLong(handle),
                                     Boolean.TRUE.equals(call.argument("reportTimings")));
-                            final HashMap<String, Long> data = new HashMap<>();
+                            final HashMap<String, Object> data = new HashMap<>();
                             data.put("id", videoOutput.id);
+                            data.put("frameTimelineSupported", android.os.Build.VERSION.SDK_INT >= 33);
                             result.success(data);
                         } catch (RuntimeException e) {
                             result.error("video-output-unavailable", e.getMessage(), null);
@@ -117,6 +118,18 @@ public class MediaKitVideoPlugin implements FlutterPlugin, MethodCallHandler, Ac
                     } else {
                         result.success(null);
                     }
+                    break;
+                }
+                case "VideoOutputManager.SetFrameSampling": {
+                    final String handle = call.argument("handle");
+                    result.success(videoOutputManager.setFrameSampling(Long.parseLong(handle), outputToken(call),
+                            Boolean.TRUE.equals(call.argument("enabled"))));
+                    break;
+                }
+                case "VideoOutputManager.ConfirmSurfaceConfigured": {
+                    final String handle = call.argument("handle");
+                    videoOutputManager.confirmSurfaceConfigured(Long.parseLong(handle), outputToken(call));
+                    result.success(null);
                     break;
                 }
                 case "VideoOutputManager.CreateSurface": {

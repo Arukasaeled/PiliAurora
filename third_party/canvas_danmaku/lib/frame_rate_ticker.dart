@@ -19,6 +19,8 @@ class FrameRateTicker extends Ticker {
     ValueListenable<bool>? videoDisplaySyncActive,
     double Function()? screenRefreshRate,
     int? wakeLeadMicros,
+    void Function()? beforeFrame,
+    void Function()? beforeTimings,
     // 共用视频输出 Surface 时稳定提交节奏，位置更新仍按 frameRate 推进。
     bool continuousVideoVsync = false,
     // 按内容合成时，视频与弹幕仍需共用更新相位。
@@ -29,6 +31,8 @@ class FrameRateTicker extends Ticker {
         _videoDisplaySyncActive = videoDisplaySyncActive,
         _screenRefreshRate = screenRefreshRate,
         _wakeLeadMicros = wakeLeadMicros,
+        _beforeFrame = beforeFrame,
+        _beforeTimings = beforeTimings,
         _continuousVideoVsync = continuousVideoVsync,
         _preserveVideoPhase = preserveVideoPhase;
 
@@ -59,8 +63,14 @@ class FrameRateTicker extends Ticker {
   ValueListenable<bool>? _videoDisplaySyncActive;
   final double Function()? _screenRefreshRate;
   final int? _wakeLeadMicros;
-  final bool _continuousVideoVsync;
-  final bool _preserveVideoPhase;
+  bool _continuousVideoVsync;
+  bool _preserveVideoPhase;
+  String? _videoPhaseFallback;
+  int _invalidPresentationTimings = 0;
+  int? _lastPresentationTimingUs;
+  bool get _useVideoPhase => _preserveVideoPhase && _videoPhaseFallback == null;
+  final void Function()? _beforeFrame;
+  final void Function()? _beforeTimings;
   final _frameTargets = <int, int>{};
   int _frameTargetEpoch = 0;
   int? _presentationLeadUs;
@@ -94,6 +104,8 @@ class FrameRateTicker extends Ticker {
                         ? 'locked'
                         : 'independent',
         'nativePeriodUs': _nativePeriod,
+        'preserveVideoPhase': _useVideoPhase,
+        'videoPhaseFallback': _videoPhaseFallback,
         if (_preserveVideoPhase) 'presentationLeadUs': _presentationLeadUs,
         'syncPeriodUs': _syncPeriod,
         'stableIntervals': _stableIntervals,
@@ -144,6 +156,34 @@ class FrameRateTicker extends Ticker {
     _videoFrameTimings = value;
     _clearPhase();
     if (_observing) value?.addListener(_onVideoFrames);
+  }
+
+  /// 输出或视图失效时一并撤销帧匹配和旧槽位；新样本不改变已有截止。
+  void invalidatePhase() {
+    _clearPhase();
+    _frameTargetEpoch++;
+    _frameTargets.clear();
+    _presentationLeadUs = null;
+    _invalidPresentationTimings = 0;
+    _lastPresentationTimingUs = null;
+    _previousUpdateFrameUs = null;
+    _nextFrameTime = null;
+    _resetSlots();
+    _timer?.cancel();
+    _timer = null;
+    if (isActive && !muted && scheduled) {
+      unscheduleTick();
+      scheduleTick();
+    }
+  }
+
+  void configureVideoPhase(
+      {required bool continuousVideoVsync, required bool preserveVideoPhase}) {
+    if (_continuousVideoVsync == continuousVideoVsync &&
+        _preserveVideoPhase == preserveVideoPhase) return;
+    _continuousVideoVsync = continuousVideoVsync;
+    _preserveVideoPhase = preserveVideoPhase;
+    invalidatePhase();
   }
 
   void _clearPhase() {
@@ -214,9 +254,8 @@ class FrameRateTicker extends Ticker {
   /// 与引擎帧时间使用相同的单调时钟；测试宿主可替换为其虚拟时钟。
   int get clockMicroseconds => Timeline.now;
 
-  int get _presentationLead => _preserveVideoPhase
-      ? _presentationLeadUs ?? _screenPeriod
-      : _screenPeriod;
+  int get _presentationLead =>
+      _useVideoPhase ? _presentationLeadUs ?? _screenPeriod : _screenPeriod;
 
   double? get _screenRate {
     final views = SchedulerBinding.instance.platformDispatcher.views;
@@ -263,13 +302,26 @@ class FrameRateTicker extends Ticker {
   }
 
   void _onTimings(List<FrameTiming> frames) {
-    if (_preserveVideoPhase) {
+    _beforeTimings?.call();
+    if (_useVideoPhase) {
       for (final frame in frames) {
         final target = _frameTargets.remove(frame.frameNumber);
         if (target == null) continue;
         final lead =
             target - frame.timestampInMicroseconds(FramePhase.vsyncStart);
-        if (lead > 0) _presentationLeadUs = lead;
+        _lastPresentationTimingUs = clockMicroseconds;
+        // 帧计划至少预留两屏预算；一屏提前量表示引擎已退回旧回调。
+        // 连续证据触发后保持兼容节奏，暂停、重配不重新试探故障路径。
+        final legacy = lead > 0 && lead <= _screenPeriod * 3 ~/ 2;
+        if (legacy || lead <= 0 || lead > _screenPeriod * 8) {
+          if (++_invalidPresentationTimings >= 3) {
+            _fallbackVideoPhase(legacy ? 'legacyVsync' : 'invalidFrameTiming');
+            break;
+          }
+        } else {
+          _invalidPresentationTimings = 0;
+          _presentationLeadUs = lead;
+        }
       }
     }
     if (!isActive ||
@@ -297,6 +349,11 @@ class FrameRateTicker extends Ticker {
       if (frame.buildDuration != Duration.zero) continue;
       _acceptNativeFrame(stamp);
     }
+  }
+
+  void _fallbackVideoPhase(String reason) {
+    _videoPhaseFallback = reason;
+    invalidatePhase();
   }
 
   void _resetSlots() {
@@ -421,7 +478,7 @@ class FrameRateTicker extends Ticker {
   int? get _syncPeriod {
     // 持续合成时各屏幕槽位均已承载视频，位移预算保持自身节奏，
     // 无需再为视频合帧移动更新相位。
-    if (_continuousVideoVsync && !_preserveVideoPhase && _requestEveryVsync)
+    if (_continuousVideoVsync && !_useVideoPhase && _requestEveryVsync)
       return null;
     final period = _nativePeriod;
     if (_frameRate <= 0 ||
@@ -528,11 +585,20 @@ class FrameRateTicker extends Ticker {
   }
 
   void _tickFrame(Duration timestamp) {
+    _callbackId = null;
+    _beforeFrame?.call();
     _frameCallbacks++;
     _frameStartedAt = clockMicroseconds;
     _lastFrame = timestamp;
     _lastSystemFrame = SchedulerBinding.instance.currentSystemFrameTimeStamp;
-    if (_preserveVideoPhase) {
+    if (_useVideoPhase) {
+      _lastPresentationTimingUs ??= clockMicroseconds;
+      if (clockMicroseconds - _lastPresentationTimingUs! >
+          _timingWindowMicros * 2) {
+        _fallbackVideoPhase('missingFrameTiming');
+      }
+    }
+    if (_useVideoPhase) {
       final target = _lastSystemFrame.inMicroseconds;
       final epoch = _frameTargetEpoch;
       // 固定 SDK 在 BeginFrame 返回后发布本帧编号，帧末再关联目标。
@@ -546,7 +612,6 @@ class FrameRateTicker extends Ticker {
       });
     }
     _trackSlots();
-    _callbackId = null;
     final next = _nextFrameTime;
     final due = _slotPeriod != null
         ? _scheduledUpdateSlot == null || _slot >= _scheduledUpdateSlot!
@@ -598,6 +663,8 @@ class FrameRateTicker extends Ticker {
     _frameTargetEpoch++;
     _frameTargets.clear();
     _presentationLeadUs = null;
+    _invalidPresentationTimings = 0;
+    _lastPresentationTimingUs = null;
     _resetSlots();
     _timer?.cancel();
     _timer = null;

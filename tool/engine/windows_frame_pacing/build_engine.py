@@ -17,6 +17,8 @@ import urllib.request
 ENGINE = 'af7e796e161ae0bb1ff0758c71a7105418bd9ded'
 DEPOT_TOOLS = 'b1c2e86792a7f2b6576c181b7327ddd53b1a42a8'
 PATCH = Path(__file__).with_name('engine.patch')
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import engine_identity
 
 
 def run(command, *, cwd, env, capture=False, check=True):
@@ -82,7 +84,7 @@ def prepare(root, sdk, env, jobs, skip_sync):
              env=env, capture=True, check=False).returncode != 0:
         raise ValueError('引擎补丁与当前文件冲突；已有修改已保留。')
     diff = run(['git', 'diff', '--binary'], cwd=checkout, env=env, capture=True).stdout
-    if diff.strip() != PATCH.read_text(encoding='utf-8').strip():
+    if not engine_identity.patch_matches(diff, PATCH.read_text(encoding='utf-8')):
         raise ValueError('引擎还包含补丁之外的修改，无法登记准确的构建身份。')
     return checkout, depot
 
@@ -145,10 +147,10 @@ def main():
              '--gtest_filter=FlutterWindowsEngineTest.*Vsync*:FlutterWindowsViewTest.*VSync*:TaskRunnerTest.*'],
             cwd=output, env=env)
     library = output / 'flutter_windows.dll'
-    identity = {'engineCommit': ENGINE, 'depotToolsCommit': DEPOT_TOOLS, 'mode': args.mode,
-                'architecture': 'x64', 'patchSha256': sha256(PATCH), 'sha256': sha256(library),
-                'nativeTestsPassed': not args.skip_tests,
-                'windowsSdkVersion': env['WINDOWSSDKVERSION']}
+    identity = engine_identity.create_identity(
+        library, profile='windowsDwmPaced', mode=args.mode, sdk=sdk,
+        native_tests_passed=not args.skip_tests, depotToolsCommit=DEPOT_TOOLS,
+        windowsSdkVersion=env['WINDOWSSDKVERSION'])
     (output / 'engine-identity.json').write_text(json.dumps(identity, indent=2) + '\n', encoding='utf-8')
     print('Windows engine:', library)
 

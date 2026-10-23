@@ -27,9 +27,22 @@ Future<void> main() async {
     configuration: hardwareVideoConfiguration(
       enabled: true,
       configured: 'mediacodec',
-      onAndroidFrameTimings: (value) => frames.value = value,
     ),
   );
+  video.frameEvents.listen((event) {
+    if (event is VideoFrameBatch &&
+        event.kind == VideoFrameSampleKind.refreshRequested) {
+      frames.value = event.monotonicUs;
+    } else if (event is VideoFrameSamplingState) {
+      frames.value = const [];
+    }
+  });
+  OutputOperationToken? samplingOutput;
+  video.outputProgress.listen((progress) {
+    if (samplingOutput == progress.token) return;
+    samplingOutput = progress.token;
+    unawaited(video.setVideoFrameSampling(progress.token, true));
+  });
   runApp(
     MaterialApp(
       home: _Probe(video: video, frames: frames),

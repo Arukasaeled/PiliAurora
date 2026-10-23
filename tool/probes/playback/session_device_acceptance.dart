@@ -27,6 +27,10 @@ Future<void> main() async {
     'DEVICE_SOAK_SECONDS',
     defaultValue: 60,
   );
+  const seekTargetMs = int.fromEnvironment(
+    'DEVICE_SEEK_MS',
+    defaultValue: 2400,
+  );
   if (media.isEmpty || output.isEmpty) throw ArgumentError('需要媒体和报告路径');
   final configFile = File('$output.config.json');
   final config = configFile.existsSync()
@@ -47,6 +51,7 @@ Future<void> main() async {
   final report = <String, Object?>{
     'platform': Platform.operatingSystem,
     'requestedDecoder': decoder,
+    'seekTargetMs': seekTargetMs,
   };
   final cases = <Map<String, Object?>>[];
   report['cases'] = cases;
@@ -388,15 +393,44 @@ Future<void> main() async {
       await waitFor(() => runtime.player!.state.position.inMilliseconds > 500);
       return advancing();
     });
+    await test('sampling-active', () async {
+      await waitFor(
+        () => runtime.frameSource.frameState.value.videoSamples != null,
+      );
+      final state = runtime.frameSource.frameState.value;
+      check(state.admission.name == 'active', 'sampling did not become active');
+      check(
+        state.videoSamples!.output == state.output,
+        'sampling output differs',
+      );
+      return {
+        'epoch': state.epoch,
+        'generation': state.samplingGeneration,
+        'kind': state.videoSamples!.kind.name,
+      };
+    });
     await test('paused-seek', () async {
       await owner.setPlaying(false);
-      final result = await owner.seek(const Duration(milliseconds: 2400));
+      final result = await owner.seek(
+        const Duration(milliseconds: seekTargetMs),
+      );
       check(result.outcome == CommandOutcome.applied, 'seek failed');
+      // seek 过渡期间可短暂报告请求位置，完成后再核对实际落点。
+      await waitFor(() => runtime.player!.getProperty('seeking') == 'no');
       await waitFor(
         () =>
-            (runtime.player!.state.position.inMilliseconds - 2400).abs() < 500,
+            (runtime.player!.state.position.inMilliseconds - seekTargetMs)
+                .abs() <
+            500,
       );
       check(!runtime.player!.state.playing, 'seek changed intent');
+      await waitFor(
+        () => runtime.frameSource.frameState.value.admission.name == 'blocked',
+      );
+      check(
+        runtime.frameSource.frameState.value.videoSamples == null,
+        'paused seek retained phase samples',
+      );
       return {
         'positionMs': runtime.player!.state.position.inMilliseconds,
         ...await pixels(),

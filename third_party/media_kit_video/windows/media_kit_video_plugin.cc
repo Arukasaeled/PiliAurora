@@ -6,13 +6,14 @@
 // Use of this source code is governed by MIT license that can be found in the
 // LICENSE file.
 #include "media_kit_video_plugin.h"
-#include "utils.h"
 
 #include <Windows.h>
 
 #include <mutex>
 #include <optional>
 #include <vector>
+
+#include "utils.h"
 
 namespace media_kit_video {
 namespace {
@@ -45,6 +46,15 @@ flutter::EncodableMap EncodeOutputOperationToken(
        flutter::EncodableValue(std::to_string(token.output_epoch))},
       {flutter::EncodableValue("configRevision"),
        flutter::EncodableValue(std::to_string(token.config_revision))},
+  };
+}
+
+flutter::EncodableMap EncodeSamplingState(const VideoFrameSamplingEvent& state) {
+  return flutter::EncodableMap{
+    {flutter::EncodableValue("token"), flutter::EncodableValue(EncodeOutputOperationToken(state.token))},
+    {flutter::EncodableValue("samplingGeneration"), flutter::EncodableValue(state.generation)},
+    {flutter::EncodableValue("admission"), flutter::EncodableValue(state.admission)},
+    {flutter::EncodableValue("validAfterUs"), flutter::EncodableValue(state.timestamp_us)},
   };
 }
 
@@ -219,8 +229,62 @@ void MediaKitVideoPlugin::HandleMethodCall(
                 }),
                 nullptr);
           });
+        },
+        [channel_ptr = channel_, post = platform_dispatcher_->post(),
+         handle = handle_value](const VideoFrameSamplingEvent& event) {
+          post([channel_ptr, handle, event]() {
+            flutter::EncodableMap args{
+                {flutter::EncodableValue("handle"),
+                 flutter::EncodableValue(handle)},
+                {flutter::EncodableValue("token"),
+                 flutter::EncodableValue(
+                     EncodeOutputOperationToken(event.token))},
+                {flutter::EncodableValue("samplingGeneration"),
+                 flutter::EncodableValue(event.generation)},
+            };
+            if (!event.admission.empty()) {
+              args[flutter::EncodableValue("admission")] =
+                  flutter::EncodableValue(event.admission);
+              args[flutter::EncodableValue("validAfterUs")] =
+                  flutter::EncodableValue(event.timestamp_us);
+            } else {
+              args[flutter::EncodableValue("kind")] =
+                  flutter::EncodableValue("textureConsumed");
+              args[flutter::EncodableValue("sequence")] =
+                  flutter::EncodableValue(event.sequence);
+              args[flutter::EncodableValue("monotonicUs")] =
+                  flutter::EncodableValue(flutter::EncodableList{
+                      flutter::EncodableValue(event.timestamp_us)});
+            }
+            channel_ptr->InvokeMethod(
+                "VideoOutput.FrameSampling",
+                std::make_unique<flutter::EncodableValue>(args), nullptr);
+          });
         });
     result->Success(flutter::EncodableValue(std::monostate{}));
+  } else if (method_call.method_name() ==
+             "VideoOutputManager.SetFrameSampling") {
+    const auto args = std::get<flutter::EncodableMap>(*method_call.arguments());
+    const auto handle = std::stoll(
+        std::get<std::string>(args.at(flutter::EncodableValue("handle"))));
+    const auto token = ReadOutputOperationToken(std::get<flutter::EncodableMap>(
+        args.at(flutter::EncodableValue("token"))));
+    const auto enabled =
+        std::get<bool>(args.at(flutter::EncodableValue("enabled")));
+    auto completion =
+        std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+            std::move(result));
+    video_output_manager_->SetFrameSampling(
+        handle, token, enabled,
+        [post = platform_dispatcher_->post(), completion](std::optional<VideoFrameSamplingEvent> state) {
+          post([completion, state]() {
+            if (state.has_value())
+              completion->Success(flutter::EncodableValue(EncodeSamplingState(*state)));
+            else
+              completion->Error("sampling-rejected",
+                                "Output generation is unavailable");
+          });
+        });
   } else if (method_call.method_name() ==
              "VideoOutputManager.BeginOutputForLoad") {
     const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());

@@ -45,6 +45,11 @@ Widget _host(Widget child) => Directionality(
   ),
 );
 
+Future<void> _mount(WidgetTester tester, Widget child) async {
+  await tester.pumpWidget(child);
+  await tester.pump();
+}
+
 DanmakuWindowRenderer<void> _renderer() => DanmakuWindowRenderer(
   option: const DanmakuOption(fontSize: 20, duration: 8, safeArea: false),
   size: const Size(320, 120),
@@ -97,7 +102,8 @@ void main() {
         final renderer = _renderer();
         addTearDown(renderer.dispose);
         addTearDown(clock.events.close);
-        await tester.pumpWidget(
+        await _mount(
+          tester,
           _host(
             DanmakuWindowScreen<void>(
               renderer: renderer,
@@ -148,8 +154,9 @@ void main() {
           inInclusiveRange(15800, 17550),
         );
         clock.emit(_anchor(position: 100000, continuity: 1, advancing: false));
+        await tester.pump();
         expect(renderer.presentationTimeUs, 100000);
-        await tester.pumpWidget(const SizedBox.shrink());
+        await _mount(tester, const SizedBox.shrink());
       });
     }
   }
@@ -160,7 +167,8 @@ void main() {
     final renderer = _renderer();
     addTearDown(renderer.dispose);
     addTearDown(clock.events.close);
-    await tester.pumpWidget(
+    await _mount(
+      tester,
       _host(
         DanmakuWindowScreen<void>(
           renderer: renderer,
@@ -182,7 +190,7 @@ void main() {
       renderer.presentationTimeUs - before,
       inInclusiveRange(94000, 106000),
     );
-    await tester.pumpWidget(const SizedBox.shrink());
+    await _mount(tester, const SizedBox.shrink());
   });
 
   for (final rates in [
@@ -199,7 +207,8 @@ void main() {
       final renderer = _renderer();
       addTearDown(renderer.dispose);
       addTearDown(clock.events.close);
-      await tester.pumpWidget(
+      await _mount(
+        tester,
         _host(
           DanmakuWindowScreen<void>(
             renderer: renderer,
@@ -256,7 +265,7 @@ void main() {
           );
         }
       }
-      await tester.pumpWidget(const SizedBox.shrink());
+      await _mount(tester, const SizedBox.shrink());
     });
   }
 
@@ -280,7 +289,8 @@ void main() {
       );
       addTearDown(renderer.dispose);
       addTearDown(clock.events.close);
-      await tester.pumpWidget(
+      await _mount(
+        tester,
         _host(
           DanmakuWindowScreen<void>(
             renderer: renderer,
@@ -328,7 +338,7 @@ void main() {
         if (previousFixed > 0 && fixed == 0) fixedExpiries++;
         previousFixed = fixed;
       }
-      await tester.pumpWidget(const SizedBox.shrink());
+      await _mount(tester, const SizedBox.shrink());
       final steps = [
         for (var i = 1; i < positions.length; i++)
           positions[i] - positions[i - 1],
@@ -362,7 +372,8 @@ void main() {
     final renderer = _renderer();
     addTearDown(renderer.dispose);
     addTearDown(clock.events.close);
-    await tester.pumpWidget(
+    await _mount(
+      tester,
       _host(
         DanmakuWindowScreen<void>(
           renderer: renderer,
@@ -387,7 +398,7 @@ void main() {
       positions.add(renderer.presentationTimeUs);
       lefts.add(renderer.interaction.snapshot.single.bounds.left);
     }
-    await tester.pumpWidget(const SizedBox.shrink());
+    await _mount(tester, const SizedBox.shrink());
     final gaps = [
       for (var i = 1; i < positions.length; i++)
         positions[i] - positions[i - 1],
@@ -421,17 +432,17 @@ void main() {
         prepareFrame: (r, p, {required effectiveRate}) => _prepare(r, p),
       ),
     );
-    await tester.pumpWidget(screen());
+    await _mount(tester, screen());
     final positions = <int>{};
     for (var slot = 1; slot <= 120; slot++) {
       final next = (slot * 1000000 / 120).round();
       await tester.binding.delayed(Duration(microseconds: next - now));
       now = next;
-      await tester.pumpWidget(screen());
+      await _mount(tester, screen());
       positions.add(renderer.presentationTimeUs);
     }
     expect(positions.length, inInclusiveRange(29, 31));
-    await tester.pumpWidget(const SizedBox.shrink());
+    await _mount(tester, const SizedBox.shrink());
   });
 
   for (final refreshRate in [120, 165]) {
@@ -451,7 +462,8 @@ void main() {
             addTearDown(renderer.dispose);
             addTearDown(clock.events.close);
             addTearDown(inputs.close);
-            await tester.pumpWidget(
+            await _mount(
+              tester,
               _host(
                 DanmakuWindowScreen<void>(
                   renderer: renderer,
@@ -510,7 +522,7 @@ void main() {
                 ),
               );
             }
-            await tester.pumpWidget(const SizedBox.shrink());
+            await _mount(tester, const SizedBox.shrink());
           },
         );
       }
@@ -527,7 +539,8 @@ void main() {
         final mediaPositions = <int>[];
         addTearDown(renderer.dispose);
         addTearDown(clock.events.close);
-        await tester.pumpWidget(
+        await _mount(
+          tester,
           _host(
             DanmakuWindowScreen<void>(
               renderer: renderer,
@@ -607,12 +620,13 @@ void main() {
               advancing: false,
             ),
           );
+        await tester.pump();
         expect(
           renderer.interaction.snapshot.single.bounds.left,
           greaterThan(beforeSeek),
           reason: 'a confirmed backward seek must still restore the earlier position',
         );
-        await tester.pumpWidget(const SizedBox.shrink());
+        await _mount(tester, const SizedBox.shrink());
       },
     );
   }
@@ -625,7 +639,8 @@ void main() {
     addTearDown(renderer.dispose);
     addTearDown(clock.events.close);
     final positions = <int>[];
-    await tester.pumpWidget(
+    await _mount(
+      tester,
       _host(
         DanmakuWindowScreen<void>(
           renderer: renderer,
@@ -648,12 +663,14 @@ void main() {
     );
     final generation = renderer.generation;
     clock.emit(_anchor(position: 999000, advancing: false));
+    await tester.pump();
     expect(positions.last, 1000000);
     expect(renderer.generation, generation);
     clock.emit(_anchor(position: 500000, continuity: 1, advancing: false));
+    await tester.pump();
     expect(renderer.validFromUs, 500000);
     expect(renderer.generation, greaterThan(generation));
-    await tester.pumpWidget(const SizedBox.shrink());
+    await _mount(tester, const SizedBox.shrink());
   });
 
   testWidgets(
@@ -673,7 +690,8 @@ void main() {
       addTearDown(clock.events.close);
       var frames = 0;
       int? nextPreparation = 1500000;
-      await tester.pumpWidget(
+      await _mount(
+        tester,
         _host(
           DanmakuWindowScreen<void>(
             renderer: renderer,
@@ -723,7 +741,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       expect(renderer.activeCount, 0);
       expect(tester.hasRunningAnimations, isFalse);
-      await tester.pumpWidget(const SizedBox.shrink());
+      await _mount(tester, const SizedBox.shrink());
     },
   );
 
@@ -733,7 +751,8 @@ void main() {
     addTearDown(renderer.dispose);
     addTearDown(clock.events.close);
     final rates = <double>[];
-    await tester.pumpWidget(
+    await _mount(
+      tester,
       _host(
         DanmakuWindowScreen<void>(
           renderer: renderer,
@@ -750,8 +769,9 @@ void main() {
     );
     expect(rates.last, 2);
     clock.emit(_anchor(rate: .5, advancing: false));
+    await tester.pump();
     expect(rates.last, .5);
-    await tester.pumpWidget(const SizedBox.shrink());
+    await _mount(tester, const SizedBox.shrink());
   });
 
   testWidgets(
@@ -763,7 +783,8 @@ void main() {
       addTearDown(renderer.dispose);
       addTearDown(clock.events.close);
       final positions = <int>[];
-      await tester.pumpWidget(
+      await _mount(
+        tester,
         _host(
           DanmakuWindowScreen<void>(
             renderer: renderer,
@@ -789,7 +810,7 @@ void main() {
       now = 900000;
       await tester.pump(const Duration(seconds: 1));
       expect(positions.last, stoppedAt);
-      expect(positions.length, frames);
+      expect(positions.length, frames + 1);
       final previousHandle = renderer.interaction;
       final layouts = renderer.rasters.layouts;
       clock.emit(null);
@@ -805,8 +826,9 @@ void main() {
       );
       expect(renderer.validFromUs, 0);
       expect(renderer.rasters.layouts, layouts);
+      await tester.pump();
       expect(positions.last, 500000);
-      await tester.pumpWidget(const SizedBox.shrink());
+      await _mount(tester, const SizedBox.shrink());
       expect(clock.events.hasListener, isFalse);
     },
   );
@@ -820,7 +842,8 @@ void main() {
       addTearDown(renderer.dispose);
       addTearDown(clock.events.close);
       final positions = <int>[];
-      await tester.pumpWidget(
+      await _mount(
+        tester,
         _host(
           DanmakuWindowScreen<void>(
             renderer: renderer,
@@ -846,7 +869,7 @@ void main() {
       now += 50000;
       await tester.pump(const Duration(milliseconds: 50));
       expect(positions.last, 1050000);
-      await tester.pumpWidget(const SizedBox.shrink());
+      await _mount(tester, const SizedBox.shrink());
     },
   );
 
@@ -861,7 +884,8 @@ void main() {
       addTearDown(updates.close);
       var ready = false;
       var frames = 0;
-      await tester.pumpWidget(
+      await _mount(
+        tester,
         _host(
           DanmakuWindowScreen<void>(
             renderer: renderer,
@@ -881,11 +905,12 @@ void main() {
       final before = frames;
       ready = true;
       updates.add(null);
+      await tester.pump();
       expect(renderer.activeCount, 1);
       expect(frames, before + 1);
       await tester.pump(const Duration(seconds: 1));
       expect(frames, before + 1);
-      await tester.pumpWidget(const SizedBox.shrink());
+      await _mount(tester, const SizedBox.shrink());
       expect(clock.events.hasListener, isFalse);
       expect(updates.hasListener, isFalse);
     },
@@ -920,27 +945,28 @@ void main() {
               ),
             ),
           );
-      await tester.pumpWidget(screen(first, 1));
-      await tester.pumpWidget(screen(first, 0));
+      await _mount(tester, screen(first, 1));
+      await _mount(tester, screen(first, 0));
       final before = positions.length;
       now = 500000;
       await tester.pump(const Duration(milliseconds: 500));
       expect(positions.length, before);
-      await tester.pumpWidget(screen(first, 1));
+      await _mount(tester, screen(first, 1));
+      await tester.pump();
       expect(positions.last, 500000);
-      await tester.pumpWidget(screen(first, 1, enabled: false));
+      await _mount(tester, screen(first, 1, enabled: false));
       final mutedFrames = positions.length;
       now = 1500000;
       await tester.pump(const Duration(seconds: 1));
       expect(positions.length, mutedFrames);
-      await tester.pumpWidget(screen(first, 1));
+      await _mount(tester, screen(first, 1));
       expect(positions.last, 1500000);
-      await tester.pumpWidget(screen(second, 1));
+      await _mount(tester, screen(second, 1));
       expect(first.events.hasListener, isFalse);
       expect(positions.last, 800000);
       first.emit(null);
       expect(renderer.activeCount, 1);
-      await tester.pumpWidget(const SizedBox.shrink());
+      await _mount(tester, const SizedBox.shrink());
       expect(second.events.hasListener, isFalse);
     },
   );

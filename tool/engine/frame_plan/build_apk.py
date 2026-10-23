@@ -5,7 +5,11 @@ import json
 import os
 import subprocess
 import zipfile
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import engine_identity
 
 ENGINE_REVISION = "af7e796e161ae0bb1ff0758c71a7105418bd9ded"
 
@@ -16,13 +20,18 @@ def sha256(path):
 
 
 def validate_source_identity(identity, *, target, mode, package, apk_hash,
-                             ticker_hash, dart_defines):
-    if (identity["target"] != target or identity["mode"] != mode or
-            identity["package"] != package or identity["engineRevision"] != ENGINE_REVISION or
-            identity["apkSha256"] != apk_hash or identity["tickerSha256"] != ticker_hash or
-            identity.get("contentComposition") is not True or
-            identity.get("dartDefines") != dart_defines):
+                             ticker_hash, dart_defines, engine_digest, source_hash):
+    application = identity.get("application", {})
+    if (application.get("target") != target or identity.get("mode") != mode or
+            application.get("package") != package or identity.get("engineCommit") != ENGINE_REVISION or
+            application.get("apkSha256") != apk_hash or application.get("tickerSha256") != ticker_hash or
+            identity.get("profile") != "androidFramePlan" or
+            identity.get("identityDigest") != engine_digest or
+            engine_identity.identity_digest(identity) != engine_digest or
+            application.get("sourceSha256") != source_hash or
+            application.get("dartDefines") != dart_defines):
         raise ValueError("Source APK identity differs from the requested build configuration")
+
 
 
 def restore_workspace_state(backup):
@@ -44,12 +53,15 @@ def main():
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--source-apk", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--skip-patch", action="store_true")
+    parser.add_argument("--skip-pub-get", action="store_true")
     args = parser.parse_args()
     if args.skip_build != (args.source_apk is not None):
         parser.error("--skip-build and --source-apk must be used together")
-    if any(value.split("=", 1)[0] == "PILIAURORA_CONTENT_COMPOSITION"
-           for value in args.dart_define):
-        parser.error("PILIAURORA_CONTENT_COMPOSITION is set by this frame-plan builder")
+    try:
+        engine_identity.validate_defines(args.dart_define)
+    except ValueError as error:
+        parser.error(str(error))
     repo = Path(__file__).resolve().parents[3]
     sdk = args.flutter_sdk.resolve()
     mode = "release" if args.mode == "dev-release" else "profile"
@@ -59,6 +71,11 @@ def main():
                       "build/android-frame-plan/PiliAurora-frame-plan-arm64-profile.apk")
     output = (repo / (args.output or default_output)).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    library = args.engine_library.resolve()
+    engine = engine_identity.validate_engine(library, profile="androidFramePlan", mode=mode, sdk=sdk)
+    engine_digest = engine_identity.identity_digest(engine)
+    generated_defines = engine_identity.dart_defines("androidFramePlan", engine)
+    source_hash = engine_identity.source_fingerprint(repo, args.target)
     pinned_engine = (sdk / "bin/internal/engine.version").read_text().strip()
     if pinned_engine != ENGINE_REVISION:
         raise ValueError(f"SDK engine mismatch: {pinned_engine}")
@@ -83,7 +100,7 @@ def main():
             identity, target=args.target, mode=mode, package=package,
             apk_hash=sha256(source),
             ticker_hash=sha256(repo / "third_party/canvas_danmaku/lib/frame_rate_ticker.dart"),
-            dart_defines=args.dart_define)
+            dart_defines=args.dart_define, engine_digest=engine_digest, source_hash=source_hash)
     library = args.engine_library.resolve()
     if not library.is_file():
         raise FileNotFoundError(library)
@@ -100,25 +117,35 @@ def main():
 
         try:
             if not args.skip_build:
-                run([flutter, "pub", "get", "--offline", "--enforce-lockfile"])
-                run(["pwsh", "-NoProfile", "-File", "lib/scripts/patch.ps1", "android", "-SkipPubGet"])
+                if not args.skip_pub_get:
+                    run([flutter, "pub", "get", "--offline", "--enforce-lockfile"])
+                if not args.skip_patch:
+                    run(["pwsh", "-NoProfile", "-File", "lib/scripts/patch.ps1", "android", "-SkipPubGet"])
                 run([sdk / "bin/cache/dart-sdk/bin/dart.exe", "--packages=.dart_tool/package_config.json",
                      "tool/check_dependencies.dart"])
                 run([flutter, "build", "apk", f"--{mode}", "--no-pub", "--target-platform=android-arm64",
-                     f"--target={args.target}", "--dart-define=PILIAURORA_CONTENT_COMPOSITION=true",
+                     f"--target={args.target}",
+                     *[f"--dart-define={value}" for value in generated_defines],
                      *[f"--dart-define={value}" for value in args.dart_define]])
-            engine_hash = sha256(library)
+            verified_engine = engine_identity.validate_engine(library, profile="androidFramePlan", mode=mode, sdk=sdk)
+            if engine_identity.identity_digest(verified_engine) != engine_digest:
+                raise ValueError("Engine identity changed during application compilation")
+            if engine_identity.source_fingerprint(repo, args.target) != source_hash:
+                raise ValueError("Application sources changed during compilation")
             intermediate = output.with_suffix(".unsigned.apk")
             with zipfile.ZipFile(source) as src, zipfile.ZipFile(intermediate, "w") as dst:
                 for entry in src.infolist():
                     name = entry.filename
-                    if name.startswith("META-INF/") or name == "lib/arm64-v8a/libflutter.so":
+                    if name.startswith("META-INF/") or name in {"lib/arm64-v8a/libflutter.so", "assets/piliaurora-engine-identity.json"}:
                         continue
                     if name.startswith("lib/") and not name.startswith("lib/arm64-v8a/"):
                         continue
                     if name.endswith(("/libpacing.so", "/wrap.sh")):
                         raise ValueError(f"Unexpected preload probe in input APK: {name}")
                     dst.writestr(entry, src.read(name))
+                dst.writestr("assets/piliaurora-engine-identity.json", json.dumps({
+                    **engine, "identityDigest": engine_digest,
+                }, sort_keys=True))
                 dst.write(library, "lib/arm64-v8a/libflutter.so", compress_type=zipfile.ZIP_DEFLATED)
             tools = args.android_sdk / "build-tools/37.0.0"
             aligned = output.with_suffix(".aligned.apk")
@@ -133,23 +160,16 @@ def main():
                      "--key-pass", "pass:android", "--out", output, aligned])
             run(["java", "--enable-native-access=ALL-UNNAMED", "-jar",
                  tools / "lib/apksigner.jar", "verify", output])
-            with zipfile.ZipFile(output) as apk:
-                embedded_hash = hashlib.sha256(apk.read("lib/arm64-v8a/libflutter.so")).hexdigest()
-                if embedded_hash != engine_hash:
-                    raise ValueError("Packaged engine differs from the built library")
-            manifest_path.write_text(json.dumps({
-                "engineRevision": ENGINE_REVISION,
-                "frameworkRevision": subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=sdk, text=True).strip(),
-                "engineLibrarySha256": engine_hash, "apkSha256": sha256(output),
-                "target": args.target, "mode": mode, "abi": "arm64-v8a",
-                "package": package, "customEngine": True,
-                "contentComposition": True,
-                "dartDefines": args.dart_define,
-                "enginePatchSha256": sha256(Path(__file__).with_name("engine.patch")),
-                "plannerSha256": sha256(Path(__file__).with_name("frame_presentation_plan.h")),
-                "tickerSha256": sha256(repo / "third_party/canvas_danmaku/lib/frame_rate_ticker.dart"),
-            }, indent=2) + "\n", encoding="utf-8")
+            engine_identity.verify_packaged_engine(output, library)
+            engine_identity.write_json(manifest_path, {
+                **engine, "identityDigest": engine_digest,
+                "application": {
+                    "sourceSha256": source_hash, "apkSha256": sha256(output),
+                    "target": args.target, "abi": "arm64-v8a", "package": package,
+                    "dartDefines": args.dart_define,
+                    "tickerSha256": sha256(repo / "third_party/canvas_danmaku/lib/frame_rate_ticker.dart"),
+                },
+            })
         finally:
             restore_workspace_state(backup)
     print(output)

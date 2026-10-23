@@ -1,3 +1,5 @@
+import 'package:pili_aurora/plugin/pl_player/playback/frame_timing.dart';
+
 import 'dart:async' show Completer, StreamSubscription, Timer, unawaited;
 import 'dart:convert' show ascii;
 import 'dart:io' show Platform;
@@ -213,8 +215,7 @@ class PlPlayerController
       _runtime.videoControllerListenable;
   PlaybackOwner? get activePlaybackOwner =>
       _activeOwner?.isActive == true ? _activeOwner : null;
-  ValueListenable<List<int>> get videoFrameTimings =>
-      _runtime.videoFrameTimings;
+  PlaybackFrameSource get frameSource => _runtime.frameSource;
   ValueListenable<bool> get videoFramePresented => _runtime.videoFramePresented;
   ValueListenable<bool> get videoDisplaySyncActive =>
       _runtime.videoDisplaySyncActive;

@@ -212,6 +212,58 @@ abstract final class ImageUtils {
     return src.http2https;
   }
 
+  /// 在 CDN 缩小动画源文件，避免多帧解码忽略本地目标尺寸。
+  static String thumbnailUrlForSize(
+    String? src, {
+    int quality = 1,
+    int? width,
+    int? height,
+    int maxDecodePixels = 1 << 20,
+  }) {
+    final url = thumbnailUrl(src, quality);
+    if (quality == 100 || (width == null && height == null)) return url;
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !(uri.host.endsWith('.hdslb.com') ||
+            uri.host.endsWith('.biliimg.com')) ||
+        !uri.path.startsWith('/bfs/') ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      return url;
+    }
+    final match = _thumbRegex.firstMatch(uri.path);
+    if (match == null) return url;
+    final options = match
+        .group(1)!
+        .substring(1)
+        .split('_')
+        .where((part) => part.isNotEmpty)
+        .toList();
+    // 已指定尺寸或裁剪的源地址沿用原有构图，尺寸补充用于质量型缩略请求。
+    if (options.any((part) => RegExp(r'^\d+[whpec]$').hasMatch(part))) {
+      return url;
+    }
+
+    var targetWidth = width?.clamp(1, 4096);
+    var targetHeight = height?.clamp(1, 4096);
+    targetWidth ??= (maxDecodePixels ~/ targetHeight!).clamp(1, 4096);
+    targetHeight ??= (maxDecodePixels ~/ targetWidth).clamp(1, 4096);
+    final ratio = math.min(
+      1.0,
+      math.sqrt(maxDecodePixels / (targetWidth * targetHeight)),
+    );
+    final boundedWidth = math.max(1, (targetWidth * ratio).floor());
+    final boundedHeight = math.max(1, (targetHeight * ratio).floor());
+    final suffix = options.isEmpty ? '' : '_${options.join('_')}';
+    return uri
+        .replace(
+          path:
+              '${uri.path.substring(0, match.start)}'
+              '@${boundedWidth}w_${boundedHeight}h$suffix${match.group(3) ?? '.webp'}',
+        )
+        .toString();
+  }
+
   static Future<SaveResult?> saveByteImg({
     required Uint8List bytes,
     required String fileName,

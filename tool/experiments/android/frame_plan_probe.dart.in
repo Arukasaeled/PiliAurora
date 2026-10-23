@@ -10,6 +10,7 @@ import 'dart:ui' show FramePhase;
 
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -17,6 +18,8 @@ import 'package:pili_aurora/pages/danmaku/window_renderer.dart';
 import 'frame_plan_window.dart';
 import 'package:pili_aurora/services/diagnostics/diagnostics.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/media_clock.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/frame_timing.dart';
+import 'package:pili_aurora/plugin/pl_player/playback/video_frame_timings.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock.dart';
 import 'package:pili_aurora/plugin/pl_player/playback/native_media_clock_worker.dart';
 import 'package:pili_aurora/plugin/pl_player/utils/android_raster_scheduling.dart';
@@ -49,10 +52,16 @@ Future<void> main() async {
   final player = await Player.create(configuration: const PlayerConfiguration(
     options: {'video-sync': 'display-resample', 'audio': 'no'},
   ));
-  final frames = ValueNotifier<List<int>>(const []);
+  final frames = _FrameSource();
   final video = await VideoController.create(player,
-    configuration: hardwareVideoConfiguration(enabled: true, configured: 'mediacodec',
-      onAndroidFrameTimings: (value) => frames.value = value));
+    configuration: hardwareVideoConfiguration(enabled: true, configured: 'mediacodec'));
+  video.frameEvents.listen(frames.accept);
+  OutputOperationToken? samplingOutput;
+  video.outputProgress.listen((progress) {
+    if (samplingOutput == progress.token) return;
+    samplingOutput = progress.token;
+    unawaited(video.setVideoFrameSampling(progress.token, true));
+  });
   final clock = _Clock(player);
   runApp(MaterialApp(home: _Probe(video, frames, clock)));
   await player.setPlaylistMode(PlaylistMode.loop);
@@ -105,7 +114,7 @@ class _Clock implements PlaybackMediaClock {
 class _Probe extends StatefulWidget {
   const _Probe(this.video, this.frames, this.clock);
   final VideoController video;
-  final ValueNotifier<List<int>> frames;
+  final _FrameSource frames;
   final _Clock clock;
   @override State<_Probe> createState() => _ProbeState();
 }
@@ -272,7 +281,7 @@ class _ProbeState extends State<_Probe> {
       return Stack(fit:StackFit.expand, children:[
         Center(child:FittedBox(child:SimpleVideo(controller:widget.video))),
         DanmakuWindowScreen<void>(key:ValueKey(stage),continuousVideoVsync:probeContinuous,renderer:renderer!,clock:widget.clock,size:constraints.biggest,
-          frameRate:rates[stage],frameTimeUs:plannedFrameUs,videoFrameTimings:probeIndependent?null:widget.frames,videoDisplaySyncActive:probeIndependent?ValueNotifier(false):null,
+          frameRate:rates[stage],frameTimeUs:plannedFrameUs,frameSource:probeIndependent?const EmptyPlaybackFrameSource():widget.frames,
           prepareFrame:(r,p,{required effectiveRate}) => prepare(r,p))]);
     }));
 
@@ -301,4 +310,16 @@ PlaybackMediaAnchor? _readClock(int handle, String path, int continuity) {
   final entry = index == null ? null : int.tryParse(read('playlist/$index/id'));
   if (entry == null) return null;
   return sampleNativeMediaClock(readProperty:read,playlistEntryId:entry,continuity:continuity,monotonicNowUs:()=>Timeline.now);
+}
+
+class _FrameSource implements PlaybackFrameSource {
+  final _timings = PlaybackVideoFrameTimings(useRequestTimings: true);
+  @override ValueListenable<PlaybackFrameState> get frameState => _timings.frameState;
+  void accept(VideoFrameEvent event) {
+    if (_timings.frameState.value.output != event.output) {
+      _timings..beginLoad(event.output, Timeline.now)..setEnabled(true, Timeline.now);
+    }
+    _timings..setFrameTimelineSupported(true)..accept(event);
+  }
+  void dispose() => _timings.dispose();
 }

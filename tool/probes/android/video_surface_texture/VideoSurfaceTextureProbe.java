@@ -3,53 +3,63 @@ package com.alexmercerind.media_kit_video;
 import android.os.Handler;
 import java.util.ArrayList;
 
-/** 使用 Android 回调桩检查实际包装类，不测量 GPU 或显示呈现。 */
+/** 注册、请求、取图及失效交错均调用生产包装类。 */
 public final class VideoSurfaceTextureProbe {
+    static VideoSurfaceTexture.Context context(long generation) {
+        return new VideoSurfaceTexture.Context(new OutputOperationToken(1, 1, 1, 0),
+                generation, 1, System.nanoTime(), 1920, 1080);
+    }
     public static void main(String[] args) {
-        final long[] clock = {1000};
-        final ArrayList<Long> samples = new ArrayList<>();
-        final VideoSurfaceTexture texture = new VideoSurfaceTexture(() -> samples.add(clock[0]));
+        final ArrayList<VideoSurfaceTexture.Sample> samples = new ArrayList<>();
+        final VideoSurfaceTexture texture = new VideoSurfaceTexture(samples::add);
         final Handler handler = new Handler();
         final int[] engineCalls = {0};
-        final long[] requestDelay = {0};
-        texture.setOnFrameAvailableListener(frame -> {
-            check(frame == texture, "engine receives original texture");
-            clock[0] += requestDelay[0];
-            engineCalls[0]++;
-        }, handler);
+        texture.configureSampling(context(1));
+        texture.setOnFrameAvailableListener(frame -> engineCalls[0]++, handler);
         check(texture.handler == handler, "engine handler preserved");
-        for (long cost : new long[] {7000000, 9000000, 17000000, 7000000, 9000000}) {
-            final long availableAt = clock[0];
-            requestDelay[0] = cost;
-            texture.dispatchFrameAvailable();
-            check(samples.get(samples.size() - 1) == availableAt + cost, "sample after engine request");
-            final int sampleCount = samples.size();
-            clock[0] += cost;
+        final var oldListener = texture.queuedListener();
+        texture.configureSampling(context(2));
+        oldListener.onFrameAvailable(texture);
+        texture.timestamp = System.nanoTime();
+        texture.updateTexImage();
+        check(samples.isEmpty() && engineCalls[0] == 1, "queued old registration forwards without sampling");
+        texture.dispatchFrameAvailable();
+        check(samples.isEmpty(), "request alone is not buffer evidence");
+        texture.timestamp = System.nanoTime();
+        texture.updateTexImage();
+        check(samples.size() == 1 && samples.get(0).context.generation == 2, "new registration and buffer admitted");
+        texture.dispatchFrameAvailable();
+        texture.updateTexImage();
+        check(samples.size() == 1, "same buffer finishes ticket without sample");
+        texture.dispatchFrameAvailable();
+        texture.configureSampling(context(3));
+        texture.timestamp = System.nanoTime();
+        texture.updateTexImage();
+        check(samples.size() == 1, "in-flight ticket revoked before acquisition");
+        texture.setOnFrameAvailableListener(frame -> {
+            engineCalls[0]++;
+            texture.timestamp = System.nanoTime();
             texture.updateTexImage();
-            check(samples.size() == sampleCount, "consumption adds no phase sample");
-        }
-        check(engineCalls[0] == 5, "every engine callback forwarded once");
-        texture.setOnFrameAvailableListener(null, handler);
+            texture.configureSampling(context(4));
+        }, handler);
         texture.dispatchFrameAvailable();
-        check(samples.size() == 5 && engineCalls[0] == 5, "unregister stops both callbacks");
-        texture.setOnFrameAvailableListener(frame -> engineCalls[0]++);
+        check(samples.size() == 1, "request completing across reset retains old identity");
+        texture.setOnFrameAvailableListener(frame -> {
+            engineCalls[0]++;
+            texture.timestamp = System.nanoTime();
+            texture.updateTexImage();
+        });
         texture.dispatchFrameAvailable();
-        check(samples.size() == 6 && engineCalls[0] == 6, "one-argument listener wraps once");
+        check(samples.size() == 2 && samples.get(1).context.generation == 4, "acquire before request completion publishes once");
+        texture.configureSampling(null);
+        texture.dispatchFrameAvailable();
+        check(samples.size() == 2, "blocked registration forwards without sampling");
         texture.setOnFrameAvailableListener(null);
+        final int calls = engineCalls[0];
         texture.dispatchFrameAvailable();
-        check(samples.size() == 6 && engineCalls[0] == 6, "one-argument unregister");
-        final RuntimeException failure = new RuntimeException("engine request failed");
-        texture.setOnFrameAvailableListener(frame -> { throw failure; });
-        try {
-            texture.dispatchFrameAvailable();
-            throw new AssertionError("engine failure must propagate");
-        } catch (RuntimeException error) {
-            check(error == failure, "original engine failure preserved");
-        }
-        check(samples.size() == 6, "failed engine listener adds no request sample");
-        System.out.println("PASS: completed request sampling, consumption independence, listener and handler lifecycle");
+        check(engineCalls[0] == calls, "unregister removes forwarding");
+        System.out.println("PASS: immutable registration, request/acquire association, resets and blocking");
     }
-
     private static void check(boolean value, String label) {
         if (!value) throw new AssertionError(label);
     }

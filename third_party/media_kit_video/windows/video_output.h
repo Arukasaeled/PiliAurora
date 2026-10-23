@@ -9,30 +9,30 @@
 #ifndef VIDEO_OUTPUT_H_
 #define VIDEO_OUTPUT_H_
 
-#include <optional>
+#include <client.h>
+#include <flutter/method_channel.h>
+#include <flutter/plugin_registrar_windows.h>
+#include <flutter/standard_method_codec.h>
+#include <render.h>
+#include <render_gl.h>
+
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <functional>
+#include <future>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include <client.h>
-#include <render.h>
-#include <render_gl.h>
-
-#include <future>
-#include <memory>
-
-#include <flutter/method_channel.h>
-#include <flutter/plugin_registrar_windows.h>
-#include <flutter/standard_method_codec.h>
-
 #include "angle_surface_manager.h"
 #include "output_operation_token.h"
 #include "thread_pool.h"
+#include "video_frame_sampling.h"
 
 typedef struct _VideoOutputConfiguration {
   std::optional<int64_t> width;
@@ -81,7 +81,8 @@ class VideoOutput {
                                  int64_t)>
                   output_attached_callback,
               std::function<void(const OutputOperationToken&, int64_t)>
-                  frame_consumed_callback);
+                  frame_consumed_callback,
+              VideoFrameSamplingCallback frame_sampling_callback);
 
   ~VideoOutput();
 
@@ -97,6 +98,10 @@ class VideoOutput {
 
   void ResetRenderer(std::function<void(bool)> on_ready);
 
+  void SetFrameSampling(OutputOperationToken token, bool enabled,
+                        std::function<void(std::optional<VideoFrameSamplingEvent>)>
+        on_complete);
+
   void BeginOutputForLoad(OutputOperationToken token,
                           std::function<void(bool)> on_complete);
 
@@ -110,6 +115,18 @@ class VideoOutput {
                                   std::function<void(bool)> on_complete);
 
  private:
+  void TransitionSampling(const std::string& admission);
+  VideoFrameSamplingCallback frame_sampling_callback_;
+  int64_t sampling_generation_ = 0, sampling_sequence_ = 0;
+  int64_t sampling_valid_after_us_ = 0;
+  bool sampling_enabled_ = false;
+  std::string sampling_admission_ = "blocked";
+  struct TextureFrameIdentity {
+    OutputOperationToken token;
+    int64_t generation, rendered_at_us;
+  };
+  std::unordered_map<int64_t, TextureFrameIdentity> texture_sampling_frames_;
+
   bool CreateRenderContext(int64_t width, int64_t height);
 
   void ReleaseRenderContext();
@@ -142,6 +159,12 @@ class VideoOutput {
   bool IsCurrentToken(const OutputOperationToken& token) const;
 
   void ResetRendererAfterTextureRelease(std::function<void(bool)> on_ready);
+
+  void StartRendererReset(std::function<void(bool)> on_ready);
+
+  void FinishRendererReset(std::function<void(bool)> on_ready, bool success);
+
+  void ProcessPendingTextureOperations();
 
   int64_t GetVideoWidth();
 
@@ -213,6 +236,8 @@ class VideoOutput {
   std::optional<OutputOperationToken> attached_token_notified_ = std::nullopt;
 
   bool resize_in_progress_ = false;
+  bool renderer_reset_in_progress_ = false;
+  std::deque<std::function<void(bool)>> queued_renderer_resets_;
   std::optional<std::pair<int64_t, int64_t>> queued_resize_ = std::nullopt;
   std::vector<std::function<void(bool)>> resize_completions_;
   std::vector<std::function<void(bool)>> queued_resize_completions_;

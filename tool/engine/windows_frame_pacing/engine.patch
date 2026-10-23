@@ -82,18 +82,38 @@ index 64fb765bf54..3d95953cfff 100644
      LogEGLError("Surface creation failed.");
      return nullptr;
 diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc
-index d9f797ca257..80feb9d570f 100644
+index d9f797ca257..57611a61e7a 100644
 --- a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc
 +++ b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.cc
-@@ -718,7 +718,38 @@ void FlutterWindowsEngine::OnVsync(intptr_t baton) {
+@@ -718,7 +718,58 @@ void FlutterWindowsEngine::OnVsync(intptr_t baton) {
    std::chrono::nanoseconds current_time =
        std::chrono::nanoseconds(embedder_api_.GetCurrentTime());
    std::chrono::nanoseconds frame_interval = FrameInterval();
 -  auto next = SnapToNextTick(current_time, start_time_, frame_interval);
 +  auto phase = start_time_;
-+  const auto timing = frame_interval_override_.has_value()
-+                          ? std::nullopt
-+                          : windows_proc_table_->GetDwmFrameTiming();
++  auto timing = frame_interval_override_.has_value() || dwm_pacing_disabled_
++                    ? std::nullopt
++                    : windows_proc_table_->GetDwmFrameTiming();
++  if (timing.has_value()) {
++    const auto& value = timing.value();
++    const double period_seconds =
++        static_cast<double>(value.period) / value.frequency;
++    if (value.frequency <= 0 || value.period <= 0 || value.vblank <= 0 ||
++        value.counter < value.vblank || period_seconds < 0.001 ||
++        period_seconds > 0.1 ||
++        static_cast<double>(value.counter - value.vblank) / value.period > 4) {
++      timing.reset();
++    }
++  }
++  if (!frame_interval_override_.has_value() && !dwm_pacing_disabled_) {
++    if (timing.has_value()) {
++      dwm_timing_failures_ = 0;
++    } else if (++dwm_timing_failures_ >= 3) {
++      // 保留普通 Surface vsync，连续失败后不在两种相位间来回切换。
++      dwm_pacing_disabled_ = true;
++      FML_LOG(WARNING) << "DWM timing unavailable; using standard vsync pacing.";
++    }
++  }
 +  if (timing.has_value()) {
 +    auto ticks_to_ns = [&](int64_t ticks) {
 +      return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -126,24 +146,26 @@ index d9f797ca257..80feb9d570f 100644
                          (next + frame_interval).count());
  }
 diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h
-index 720a65a7dd8..2ec00e4f273 100644
+index 720a65a7dd8..a3ae1ae302c 100644
 --- a/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h
 +++ b/engine/src/flutter/shell/platform/windows/flutter_windows_engine.h
-@@ -501,6 +501,9 @@ class FlutterWindowsEngine {
+@@ -501,6 +501,11 @@ class FlutterWindowsEngine {
    // The start time used to align frames.
    std::chrono::nanoseconds start_time_ = std::chrono::nanoseconds::zero();
  
 +  // Last reserved DWM frame start; a slot can only be delivered once.
 +  std::optional<std::chrono::nanoseconds> last_dwm_vsync_;
++  int dwm_timing_failures_ = 0;
++  bool dwm_pacing_disabled_ = false;
 +
    // An override of the frame interval used by EngineModifier for testing.
    std::optional<std::chrono::nanoseconds> frame_interval_override_ =
        std::nullopt;
 diff --git a/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc b/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc
-index 23e127cbc3d..efe6cb2ce2c 100644
+index 23e127cbc3d..b2e3d354be3 100644
 --- a/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc
 +++ b/engine/src/flutter/shell/platform/windows/flutter_windows_engine_unittests.cc
-@@ -321,6 +321,100 @@ TEST_F(FlutterWindowsEngineTest, ConfiguresFrameVsync) {
+@@ -321,6 +321,144 @@ TEST_F(FlutterWindowsEngineTest, ConfiguresFrameVsync) {
    EXPECT_TRUE(on_vsync_called);
  }
  
@@ -239,6 +261,50 @@ index 23e127cbc3d..efe6cb2ce2c 100644
 +                       }));
 +  EXPECT_CALL(*windows, GetDwmFrameTiming).WillOnce(Return(std::nullopt));
 +  engine->OnVsync(1);
++}
++
++TEST_F(FlutterWindowsEngineTest, UsesVsyncFallbackForBrokenDwmTiming) {
++  for (const auto invalid : {
++           WindowsProcTable::DwmFrameTiming{1000000, 60000, 1000250, 0},
++           WindowsProcTable::DwmFrameTiming{1000000, 0, 1000250, 10000000},
++           WindowsProcTable::DwmFrameTiming{1000000, 60000, 900000, 10000000},
++           WindowsProcTable::DwmFrameTiming{1000000, 60000, 9000000, 10000000}}) {
++    auto windows = std::make_shared<NiceMock<MockWindowsProcTable>>();
++    FlutterWindowsEngineBuilder builder{GetContext()};
++    builder.SetWindowsProcTable(windows);
++    auto engine = builder.Build();
++    EngineModifier modifier(engine.get());
++    modifier.SetStartTime(0);
++    uint64_t now = 100000000;
++    modifier.embedder_api().GetCurrentTime =
++        MOCK_ENGINE_PROC(GetCurrentTime, ([&]() -> uint64_t { return now; }));
++    int callbacks = 0;
++    modifier.embedder_api().OnVsync = MOCK_ENGINE_PROC(
++        OnVsync, ([&](FLUTTER_API_SYMBOL(FlutterEngine), intptr_t,
++                       uint64_t start, uint64_t target) {
++          if (callbacks != 0 && callbacks != 2) {
++            EXPECT_GE(start, now);
++          }
++          EXPECT_GT(target, start);
++          EXPECT_LE(target - start, 100000000u);
++          callbacks++;
++          return kSuccess;
++        }));
++    EXPECT_CALL(*windows, GetDwmFrameTiming)
++        .WillOnce(Return(WindowsProcTable::DwmFrameTiming{
++            1000000, 60000, 1000250, 10000000}))
++        .WillOnce(Return(std::nullopt))
++        .WillOnce(Return(WindowsProcTable::DwmFrameTiming{
++            1000000, 60000, 1000250, 10000000}))
++        .WillOnce(Return(invalid))
++        .WillOnce(Return(invalid))
++        .WillOnce(Return(invalid));
++    for (int i = 0; i < 12; ++i) {
++      engine->OnVsync(i);
++      now += 16666667;
++    }
++    EXPECT_EQ(callbacks, 12);
++  }
 +}
 +
  TEST_F(FlutterWindowsEngineTest, RunSkiaWithoutANGLEUsesSoftware) {

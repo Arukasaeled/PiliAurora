@@ -10,6 +10,9 @@ public class SurfaceTexture {
     }
 
     private OnFrameAvailableListener listener;
+    public long timestamp;
+    public OnFrameAvailableListener queuedListener() { return listener; }
+    public long getTimestamp() { return timestamp; }
     public Handler handler;
     public int updateCalls;
     public RuntimeException updateFailure;
@@ -41,6 +44,7 @@ public class SurfaceTexture {
 
     public void updateTexImage() {
         updateCalls++;
+        if (timestamp == 0) timestamp = System.nanoTime();
         if (updateFailure != null) throw updateFailure;
         updateEntered.countDown();
         if (updateContinue != null) {

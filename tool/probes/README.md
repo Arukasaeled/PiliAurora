@@ -85,6 +85,8 @@ pwsh -NoProfile -File tool/run-native-probes.ps1
 
 入口随后运行 `android/video_output_release_probe.py`：从生产 `VideoOutput.java` 提取释放及回执方法，编译到主机 JVM 夹具，检查 JNI 删除后的即时回执、重复释放、无引用输出和 JNI 删除失败。该探针使用 Python 标准库，产物在 `build/probe-validation/android-release/`；它不执行真实 JNI 或 GPU。
 
+`android/video_output_surface_creation_probe.py` 提取同一生产类的 Surface 重建与释放方法，检查旧 Surface／JNI 引用释放失败时终止重建、保留旧句柄，以及故障解除后的完整释放；另覆盖新 Surface 构造失败、JNI 引用创建失败或返回零、回滚释放失败和重试恢复。产物在 `build/probe-validation/android-surface-creation/`，支持 `--source` 指定生产源码用于对照。
+
 缺失 SDK 源码、编译或断言失败均返回非零退出码；产物留在 `build/probe-validation/android/`。Android 桩位于探针目录，不加入生产编译。探针不创建 GL、原生 Surface 或真实消息循环，也未模拟 platform/UI 合并线程的全部行为。采样顺序与 monitor 等待由主机检查，平台 API 由 Android 构建检查，实际 Scene 与呈现由目标设备检查。
 
 ## Android 帧时间采集
@@ -270,7 +272,10 @@ Windows 的 `nativeTextureAttachReceipt` 表示该 load token 已收到原生纹
 输入为本地样片，不读取账号；音频输出使用 `ao=null`。
 
 构建时传入 `DEVICE_MEDIA`、`DEVICE_REPORT`；可选 `DEVICE_AUDIO`（独立音轨）、
-`DEVICE_SHADER`（Windows 本地 shader）和 `DEVICE_SOAK_SECONDS`（默认 60 秒）。
+`DEVICE_SHADER`（Windows 本地 shader）、`DEVICE_SOAK_SECONDS`（默认 60 秒）和
+`DEVICE_SEEK_MS`（暂停 seek 目标，默认 2400 毫秒）。Android 单视频沿用关键帧跳转策略，
+应先用 `ffprobe` 确认样片关键帧，再将 `DEVICE_SEEK_MS` 设为对应时刻。
+探针等待 seek 完成后核对位置，并检查播放时采样激活、暂停 seek 后相位样本清空。
 Android 可使用独立 debug 包，将样片及报告置于该包的外部私有 `files/` 目录，
 无需授予共享媒体权限；外部目录受设备限制时，可用 `run-as` 将样片及报告放到
 debug 包的内部 `cache/`，并同步修改构建参数中的路径。
@@ -365,3 +370,16 @@ ffmpeg -f lavfi -i "testsrc2=size=640x360:rate=30" -f lavfi -i "sine=frequency=4
 ```
 
 探针使用 `ao=null`，音频时间线断言不验证扬声器声音。历史本机结果与暂停回退现象见[本地 libmpv 记录](../../third_party/media_kit_libs_windows_video/LOCAL_LIBMPV.md#应用超分切换记录)。完成后按[构建与测试](../../doc/build-and-test.md#构建)重新构建应用默认入口。
+
+Windows 采样门控的主机回归可运行 `python tool/probes/windows/windows_frame_sampling_probe.py`（C++17 编译器，默认 `g++`）。该入口抽取生产 render 队列方法，覆盖原始帧身份、开关回执、旧消费通知、准入恢复与同 token 序号连续性。
+
+## Windows 图形资源生命周期探针
+
+以下入口编译生产 ANGLE 与 VideoOutput 类，通过外部资源计数替身检查构造失败回滚、共享 EGLDisplay 的跨线程释放，以及 resize、重建、销毁交错时的纹理注销回执：
+
+```powershell
+python tool/probes/windows/windows_angle_rollback_probe.py
+python tool/probes/windows/windows_renderer_release_probe.py
+```
+
+需要支持 C++17 的 `g++`，可用 `--compiler` 指定路径；`--source-ref` 可选择用于对照的 Git 提交。生成文件位于系统临时目录，运行后清理。

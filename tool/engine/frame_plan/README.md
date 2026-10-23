@@ -13,9 +13,11 @@
 
 Android 33+ 在 UI 更新前选择 FrameTimeline。计划包含 vsync ID、expected、deadline、回调起点及反馈句柄，随 FrameTimingsRecorder 和 FrameItem 到达 Raster、SurfaceFrame 与 EGL。Raster 重试保留原帧和原计划；迟到输出沿用原时间，诊断记录可用于判断错过的槽位。旧系统沿用原 Choreographer 回调。
 
-渲染/GPU 耗时反馈用于选择可达 deadline，预算缓慢回落并受屏幕周期约束。相邻目标至少跨过半个屏幕周期，以排除不同回调对同一显示槽位的预测抖动。EGL 的提交相位余量由 deadline 与屏幕周期计算；提交前回收 GPU fence，达到在途上限时等待最早的 fence。Surface 重建释放所属 fence 与记录。
+渲染/GPU 耗时反馈用于选择可达 deadline，预算缓慢回落并受屏幕周期约束。相邻目标至少跨过半个屏幕周期，以排除不同回调对同一显示槽位的预测抖动。EGL 的提交相位余量由 deadline 与屏幕周期计算；提交前回收 GPU fence，达到在途上限时等待最早的 fence，等待上限为一个屏幕周期。Surface 重建释放所属 fence 与记录。
 
-Raster 比较图层 damage 与纹理的未消费状态，省略内容未变化的输出。Flutter 框架仍执行原有的布局、绘制、语义和 Scene 提交流程。`PILIAURORA_CONTENT_COMPOSITION=true` 让 ticker 通过相同 frameNumber 的 FrameTiming 还原 vsync 起点，在提前的目标时间下保留视频锁相。
+无有效 timeline 时立即交付普通 VSync 帧，连续三次失败后保持旧 Choreographer 回调。FrameTimeline 请求超过 100ms 未交付时，额外请求旧回调确认；旧回调先交付才关闭帧计划，迟到结果按请求序号丢弃。暂停或不可见时两种回调一起停发，等待显示恢复。呈现时间扩展失败、GPU fence 不可用或等待超时、swap 失败同样关闭帧计划，清理在途记录，后续沿用普通 Raster 与 EGL 输出，并保留仍可用的原有呈现时间提交。回退状态随引擎实例保存，通过 `PILI_FRAME_PLAN` 记录原因；重建引擎后重新探测。弹幕收到连续三次旧回调或异常提前量，或三秒缺少同帧 timing 时，保持独立更新节奏，诊断中的 `videoPhaseFallback` 记录原因。
+
+Raster 比较图层 damage 与纹理的未消费状态，省略内容未变化的输出。Flutter 框架仍执行原有的布局、绘制、语义和 Scene 提交流程。`androidFramePlan` 配置与当前 FrameTimeline 支持条件共同启用视频保相位；ticker 通过相同 frameNumber 的 FrameTiming 还原 vsync 起点。配置和二进制身份由[共同构建协议](../README.md)绑定。
 
 原生重绘任务携带图层树的复用身份，使用自身区域快照进行差分。此前没有绘制区域记录的树先建立完整基线；SurfaceTexture 按已发布的新帧标记取图，并在输出重建时重新取得画面。
 
@@ -27,14 +29,13 @@ Raster 比较图层 damage 与纹理的未消费状态，省略内容未变化�
 python tool/engine/frame_plan/apply.py <引擎检出> --framework-sdk <隔离Flutter-SDK>
 ```
 
-从 Linux 引擎的 `engine/src` 目录构建；PATH 包含 depot_tools：
+在 Linux/WSL 中，从固定 DEPS 同步与 hooks 已完成的检出编译，并在连接的 Android 设备运行 `FramePresentationPlanTest.*`：
 
 ```sh
-./flutter/tools/gn --android --android-cpu arm64 --runtime-mode profile --no-lto --stripped --no-build-engine-artifacts
-ninja -C out/android_profile_arm64 -j 8 libflutter.so
+python3 tool/engine/frame_plan/build_engine.py --checkout <引擎检出> --flutter-sdk <Linux隔离SDK> --mode profile
 ```
 
-打包使用 `out/android_profile_arm64/lib.stripped/libflutter.so`。应用 AOT 使用固定 SDK 同提交的预编译编译器；APK 启动验证负责核对快照兼容性。
+入口应用固定补丁、核对源码、编译 arm64 引擎及原生回归，测试成功后在 `out/android_profile_arm64/lib.stripped/` 生成 `engine-identity.json`。Release 改为 `--mode release`；多设备可传 `--device`。复制到 Windows 时，将身份文件和 `libflutter.so` 一起保留。`--skip-tests` 的产物在装配前仍须完成原生回归。
 
 ## 构建 APK
 
@@ -44,9 +45,9 @@ ninja -C out/android_profile_arm64 -j 8 libflutter.so
 python tool/engine/frame_plan/build_apk.py --flutter-sdk <隔离Flutter-SDK> --engine-library <lib.stripped/libflutter.so> --android-sdk <Android-SDK>
 ```
 
-默认输出 `build/android-frame-plan/PiliAurora-frame-plan-arm64-profile.apk`，包名 `io.github.wallpap.piliaurora.profile`，使用本机标准 debug keystore。脚本执行现有依赖验收与补丁流程，构建 arm64 Profile，替换自编引擎，校验签名和包内库摘要，并生成身份 JSON。`--skip-build --source-apk <已构建APK>` 可复用 AOT 产物，重新装配前核对来源 APK 的身份 JSON、目标入口、ticker、内容合成开关、自定义 Dart 编译参数与 APK 摘要。复用时传入与来源构建一致的 `--dart-define`；缺少编译参数登记的旧身份文件需重新构建。`PILIAURORA_CONTENT_COMPOSITION` 由脚本固定启用。输入包含 preload 探针时会报错。
+默认输出 `build/android-frame-plan/PiliAurora-frame-plan-arm64-profile.apk`，包名 `io.github.wallpap.piliaurora.profile`，使用本机标准 debug keystore。脚本执行现有依赖验收与补丁流程，构建 arm64 Profile，替换自编引擎，校验签名和包内库摘要，并生成身份 JSON。`--skip-build --source-apk <已构建APK>` 可复用 AOT 产物，重新装配前核对来源 APK 的身份 JSON、目标入口、当前应用与本地依赖源码、ticker、呈现配置、自定义 Dart 编译参数与 APK 摘要。复用时传入与来源构建一致的 `--dart-define`；缺少编译参数登记的旧身份文件需重新构建。呈现配置与身份摘要由脚本生成。输入包含 preload 探针时会报错。
 
-构建包含帧计划的 dev Release 包时，先将引擎 GN 参数改为 `--runtime-mode release`，构建 `out/android_release_arm64`，再执行：
+构建包含帧计划的 dev Release 包时，先用 `build_engine.py --mode release` 构建并完成原生回归，再执行：
 
 ```powershell
 python tool/engine/frame_plan/build_apk.py --mode dev-release --flutter-sdk <隔离Flutter-SDK> --engine-library <out/android_release_arm64/lib.stripped/libflutter.so> --android-sdk <Android-SDK>

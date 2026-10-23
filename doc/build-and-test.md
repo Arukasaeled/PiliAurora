@@ -41,13 +41,15 @@ Android 默认生成包含所有 ABI 的通用 APK。可使用 `-Abi arm64-v8a`�
 
 Android 帧计划测试包使用[隔离引擎构建入口](../tool/engine/frame_plan/README.md)。`tool/build-android-test.ps1` 使用 FVM 预编译引擎；需要帧计划的 dev 包时，先编译同一运行模式的自定义引擎，再用 `build_apk.py --mode dev-release` 装配，沿用本机 Release 签名。两种 dev 构建均输出到 `build/android-test/`；帧计划产物另有身份 JSON，记录模式、包名、APK、引擎和补丁摘要。隔离 SDK、引擎检出及二进制留在本地，源码补丁与重建步骤随仓库维护。
 
+两端自编引擎共用[身份与呈现配置协议](../tool/engine/README.md)，由 `tool/build.ps1` 分派装配。Android 可传 `-EngineLibrary`、`-FlutterSdk`、`-AndroidSdk` 选择 arm64 Profile；独立 Release 测试包再传 `-DevRelease`。
+
 Windows 帧节奏自编引擎使用[固定补丁与隔离构建入口](../tool/engine/windows_frame_pacing/README.md)。先构建并通过原生回归，再显式装配同模式的 Profile/Release 引擎：
 
 ```powershell
 pwsh -NoProfile -File tool/build.ps1 -Platform windows -Mode profile -WindowsEngineLibrary E:/engine/windows-pacing/flutter/engine/src/out/piliaurora_windows_profile/flutter_windows.dll
 ```
 
-脚本核对固定提交、模式、x64 架构、当前补丁、DLL 摘要及原生回归状态，并在应用输出目录保留 `engine-identity.json`。省略 `-WindowsEngineLibrary` 使用 FVM 引擎并清除旧身份文件；当前发布与 CI 构建仍使用 FVM 引擎。
+脚本核对框架／引擎固定提交、模式、x64 架构、当前补丁／overlay、DLL 摘要及原生回归状态，并在应用输出目录保留 `engine-identity.json`。省略 `-WindowsEngineLibrary` 使用 FVM 引擎并清除旧身份文件；当前发布与 CI 构建仍使用 FVM 引擎。
 
 ## 发布构建与附件
 
@@ -71,7 +73,7 @@ fvm flutter test
 
 常规分析覆盖应用、测试和工具代码。本地依赖包有各自的依赖上下文；更新依赖包时，按[依赖维护流程](../third_party/README.md)单独检查。无路径参数的全仓库分析还可能扫描本地实验和上游源码，其结果需按来源区分。
 
-PR 检查由 `.github/workflows/checks.yml` 独立执行，以只读仓库权限运行依赖验收、CI 测试、Android 主机探针和采集器单元测试。严格分析范围为 `lib/plugin/pl_player lib/pages/danmaku test tool`；全量分析还应手动运行上述命令，当前 `lib/common/widgets/flutter/` 的上游控件副本存在既存提示。
+PR 检查由 `.github/workflows/checks.yml` 独立执行，以只读仓库权限运行依赖验收、CI 测试、Android 主机探针、采集器单元测试、呈现引擎身份与 APK 装配回归及 Windows 采样门控主机探针。严格分析范围为 `lib/plugin/pl_player lib/pages/danmaku test tool`；全量分析还应手动运行上述命令，当前 `lib/common/widgets/flutter/` 的上游控件副本存在既存提示。
 
 ```powershell
 fvm flutter analyze --no-pub lib/plugin/pl_player lib/pages/danmaku test tool

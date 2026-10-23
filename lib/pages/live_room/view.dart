@@ -1129,7 +1129,7 @@ class _LiveDanmakuState extends State<LiveDanmaku> {
           option: DanmakuOptions.get(notFullscreen: widget.notFullscreen),
           size: widget.size,
           frameRate: frameRate,
-          videoDisplaySyncActive: player.videoDisplaySyncActive,
+          frameSource: player.frameSource,
           createdInteraction: (interaction, clear) {
             _binding = DanmakuDisplayBinding(
               interaction: interaction,

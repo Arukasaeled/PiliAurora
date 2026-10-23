@@ -366,11 +366,13 @@ void main() {
           ),
         ),
       );
+      await tester.pump();
       expect(renderer.activeCount, 0);
       expect(coordinator.needsPreparation, isFalse);
       await tester.pump(const Duration(milliseconds: 16));
       expect(tester.hasRunningAnimations, isFalse);
       source.load([for (var i = 0; i < 6; i++) _dm('arrived$i', 0)]);
+      await tester.pump();
       expect(renderer.activeCount, 4);
       expect(coordinator.needsPreparation, isTrue);
       await tester.pumpAndSettle(const Duration(milliseconds: 16));

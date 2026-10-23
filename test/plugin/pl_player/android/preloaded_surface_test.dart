@@ -29,6 +29,12 @@ void main() {
       return switch (call.method) {
         'VideoOutputManager.Create' => {'id': 7},
         'VideoOutputManager.CreateSurface' => {'wid': 123},
+        'VideoOutputManager.SetFrameSampling' => {
+          'token': token.toPlatformArguments(),
+          'samplingGeneration': 100,
+          'admission': 'blocked',
+          'validAfterUs': 5000,
+        },
         'VideoOutputManager.BeginOutputOperation' ||
         'VideoOutputManager.InvalidateOutputGeneration' => true,
         _ => null,
@@ -50,6 +56,82 @@ void main() {
   tearDown(() async {
     await controller.releaseOutput();
     messenger.setMockMethodCallHandler(channel, null);
+  });
+
+  test('平台通道隔离旧 token、旧代次和同输出倒序批次', () async {
+    final received = <VideoFrameEvent>[];
+    final subscription = controller.frameEvents.listen(received.add);
+    addTearDown(subscription.cancel);
+    Future<void> emit(Map<String, Object> data) async {
+      final completed = Completer<void>();
+      ServicesBinding.instance.channelBuffers.push(
+        channel.name,
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall('VideoOutput.FrameSampling', {
+            'handle': player.handle,
+            'token': token.toPlatformArguments(),
+            ...data,
+          }),
+        ),
+        (_) => completed.complete(),
+      );
+      await completed.future;
+    }
+
+    await emit({
+      'samplingGeneration': 1,
+      'admission': 'active',
+      'validAfterUs': 0,
+    });
+    await emit({
+      'samplingGeneration': 1,
+      'kind': 'refreshRequested',
+      'sequence': 10,
+      'monotonicUs': [1000],
+    });
+    await emit({
+      'samplingGeneration': 2,
+      'admission': 'blocked',
+      'validAfterUs': 2000,
+    });
+    await emit({
+      'samplingGeneration': 3,
+      'admission': 'active',
+      'validAfterUs': 3000,
+    });
+    await emit({
+      'samplingGeneration': 1,
+      'kind': 'refreshRequested',
+      'sequence': 11,
+      'monotonicUs': [4000],
+    });
+    await emit({
+      'samplingGeneration': 3,
+      'kind': 'refreshRequested',
+      'sequence': 10,
+      'monotonicUs': [4000],
+    });
+    await emit({
+      'samplingGeneration': 3,
+      'kind': 'refreshRequested',
+      'sequence': 12,
+      'monotonicUs': [4000],
+    });
+    expect(received.whereType<VideoFrameBatch>().map((b) => b.sequence), [
+      10,
+      12,
+    ]);
+    final receipt = await controller.setVideoFrameSampling(token, false);
+    expect(receipt!.output, token);
+    expect(receipt.samplingGeneration, 100);
+    expect(receipt.admission, VideoFrameSamplingAdmission.blocked);
+    await controller.invalidateOutputGeneration(token);
+    await emit({
+      'samplingGeneration': 4,
+      'admission': 'active',
+      'validAfterUs': 5000,
+    });
+    expect(received, hasLength(5));
   });
 
   for (final selectedBeforeDecode in [false, true]) {
@@ -159,6 +241,39 @@ void main() {
     release.complete();
     await Future.wait([disposal, repeated]);
     expect(completed, isTrue);
+  });
+
+  test('Surface 创建失败中止挂载，输出仍可释放', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return switch (call.method) {
+        'VideoOutputManager.CreateSurface' => throw PlatformException(
+          code: 'surface-create-failed',
+        ),
+        'VideoOutputManager.BeginOutputOperation' ||
+        'VideoOutputManager.InvalidateOutputGeneration' => true,
+        _ => null,
+      };
+    });
+    await controller.beginOutputForLoad(
+      const OutputOperationToken(
+        runtimeId: 1,
+        loadId: 2,
+        outputEpoch: 2,
+        configRevision: 0,
+      ),
+    );
+    await expectLater(
+      Future<void>.sync(() async => await player.onLoadHooks.single()),
+      throwsA(isA<PlatformException>()),
+    );
+    expect(player.options, isEmpty);
+    await controller.releaseOutput();
+    expect(player.options, [('vo', 'null'), ('wid', '0')]);
+    expect(
+      calls.where((call) => call.method == 'VideoOutputManager.Dispose'),
+      hasLength(1),
+    );
   });
 
   test('已确认无视频轨的媒体不挂载 Surface', () async {

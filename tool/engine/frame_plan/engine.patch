@@ -2,8 +2,7 @@ diff --git a/engine/src/flutter/common/graphics/texture.h b/engine/src/flutter/c
 index f5b7c0ab362..029fd0dba12 100644
 --- a/engine/src/flutter/common/graphics/texture.h
 +++ b/engine/src/flutter/common/graphics/texture.h
-@@ -55,6 +55,9 @@ class Texture : public ContextListener {
-   // Called on raster thread.
+@@ -56,4 +56,7 @@ class Texture : public ContextListener {
    virtual void MarkNewFrameAvailable() = 0;
 
 +  // 未声明消费状态的纹理沿用原有重绘行为；查询发生在 Raster 线程。
@@ -11,13 +10,11 @@ index f5b7c0ab362..029fd0dba12 100644
 +
    // Called on raster thread.
    virtual void OnTextureUnregistered() = 0;
-
 diff --git a/engine/src/flutter/flow/compositor_context.cc b/engine/src/flutter/flow/compositor_context.cc
 index 5d00fa1b7a5..8ef930b470f 100644
 --- a/engine/src/flutter/flow/compositor_context.cc
 +++ b/engine/src/flutter/flow/compositor_context.cc
-@@ -15,22 +15,37 @@ std::optional<DlRect> FrameDamage::ComputeClipRect(
-     bool has_raster_cache,
+@@ -16,20 +16,35 @@ std::optional<DlRect> FrameDamage::ComputeClipRect(
      bool impeller_enabled) {
    if (layer_tree.root_layer()) {
 -    PaintRegionMap empty_paint_region_map;
@@ -60,34 +57,28 @@ index 5d00fa1b7a5..8ef930b470f 100644
 +        prev_root_layer = previous->root_layer();
        }
        layer_tree.root_layer()->Diff(&context, prev_root_layer);
-     }
 diff --git a/engine/src/flutter/flow/compositor_context.h b/engine/src/flutter/flow/compositor_context.h
 index b21e8fd9b3b..599a0cdb5b5 100644
 --- a/engine/src/flutter/flow/compositor_context.h
 +++ b/engine/src/flutter/flow/compositor_context.h
-@@ -48,6 +48,8 @@ enum class RasterStatus {
-
+@@ -49,4 +49,6 @@ enum class RasterStatus {
  class FrameDamage {
   public:
 +  void SetTextureRegistry(TextureRegistry* textures) { textures_ = textures; }
 +
    // Sets previous layer tree for calculating frame damage. If not set, entire
    // frame will be repainted.
-   void SetPreviousLayerTree(const LayerTree* prev_layer_tree) {
-@@ -94,6 +96,7 @@ class FrameDamage {
-   void Reset() { ignore_damage_ = true; }
+@@ -95,4 +97,5 @@ class FrameDamage {
 
   private:
 +  TextureRegistry* textures_ = nullptr;
    DlIRect additional_damage_;
    std::optional<Damage> damage_;
-   const LayerTree* prev_layer_tree_ = nullptr;
 diff --git a/engine/src/flutter/flow/diff_context.cc b/engine/src/flutter/flow/diff_context.cc
 index 84d084b9e0b..f613a7410ec 100644
 --- a/engine/src/flutter/flow/diff_context.cc
 +++ b/engine/src/flutter/flow/diff_context.cc
-@@ -13,8 +13,10 @@ DiffContext::DiffContext(DlISize frame_size,
-                          PaintRegionMap& this_frame_paint_region_map,
+@@ -14,6 +14,8 @@ DiffContext::DiffContext(DlISize frame_size,
                           const PaintRegionMap& last_frame_paint_region_map,
                           bool has_raster_cache,
 -                         bool impeller_enabled)
@@ -98,21 +89,17 @@ index 84d084b9e0b..f613a7410ec 100644
 +      rects_(std::make_shared<std::vector<DlRect>>()),
        frame_size_(frame_size),
        this_frame_paint_region_map_(this_frame_paint_region_map),
-       last_frame_paint_region_map_(last_frame_paint_region_map),
 diff --git a/engine/src/flutter/flow/diff_context.h b/engine/src/flutter/flow/diff_context.h
 index d51778186ed..73b34f5895a 100644
 --- a/engine/src/flutter/flow/diff_context.h
 +++ b/engine/src/flutter/flow/diff_context.h
-@@ -16,6 +16,7 @@
- namespace flutter {
+@@ -17,4 +17,5 @@ namespace flutter {
 
  class Layer;
 +class TextureRegistry;
 
  // Represents area that needs to be updated in front buffer (frame_damage) and
- // area that is going to be painted to in back buffer (buffer_damage).
-@@ -44,7 +45,10 @@ class DiffContext {
-                        PaintRegionMap& this_frame_paint_region_map,
+@@ -45,5 +46,8 @@ class DiffContext {
                         const PaintRegionMap& last_frame_paint_region_map,
                         bool has_raster_cache,
 -                       bool impeller_enabled);
@@ -122,41 +109,33 @@ index d51778186ed..73b34f5895a 100644
 +  TextureRegistry* textures() const { return textures_; }
 
    // Starts a new subtree.
-   void BeginSubtree();
-@@ -201,6 +205,7 @@ class DiffContext {
-   DlRect MapRect(const DlRect& rect);
+@@ -202,4 +206,5 @@ class DiffContext {
 
   private:
 +  TextureRegistry* textures_ = nullptr;
    struct State {
      State();
-
 diff --git a/engine/src/flutter/flow/frame_timings.cc b/engine/src/flutter/flow/frame_timings.cc
 index 9d451f40cc6..dae6fad661f 100644
 --- a/engine/src/flutter/flow/frame_timings.cc
 +++ b/engine/src/flutter/flow/frame_timings.cc
-@@ -243,6 +243,7 @@ std::unique_ptr<FrameTimingsRecorder> FrameTimingsRecorder::CloneUntil(
-       std::make_unique<FrameTimingsRecorder>(frame_number_);
+@@ -244,4 +244,5 @@ std::unique_ptr<FrameTimingsRecorder> FrameTimingsRecorder::CloneUntil(
    FML_DCHECK(state_ >= state);
    recorder->state_ = state;
 +  recorder->presentation_plan_ = presentation_plan_;
 
    if (state >= State::kVsync) {
-     recorder->vsync_start_ = vsync_start_;
 diff --git a/engine/src/flutter/flow/frame_timings.h b/engine/src/flutter/flow/frame_timings.h
 index ccccd89dddb..21421f8c986 100644
 --- a/engine/src/flutter/flow/frame_timings.h
 +++ b/engine/src/flutter/flow/frame_timings.h
-@@ -6,6 +6,7 @@
- #define FLUTTER_FLOW_FRAME_TIMINGS_H_
+@@ -7,4 +7,5 @@
 
  #include <mutex>
 +#include "flutter/flow/frame_presentation_plan.h"
 
  #include "flutter/common/settings.h"
- #include "flutter/flow/raster_cache.h"
-@@ -90,6 +91,13 @@ class FrameTimingsRecorder {
-   /// Records a vsync event.
+@@ -91,4 +92,11 @@ class FrameTimingsRecorder {
    void RecordVsync(fml::TimePoint vsync_start, fml::TimePoint vsync_target);
 
 +  void SetPresentationPlan(std::shared_ptr<const FramePresentationPlan> plan) {
@@ -168,22 +147,18 @@ index ccccd89dddb..21421f8c986 100644
 +
    /// Records a build start event.
    void RecordBuildStart(fml::TimePoint build_start);
-
-@@ -145,6 +153,8 @@ class FrameTimingsRecorder {
-   const uint64_t frame_number_;
+@@ -146,4 +154,6 @@ class FrameTimingsRecorder {
    const std::string frame_number_trace_arg_val_;
 
 +  std::shared_ptr<const FramePresentationPlan> presentation_plan_;
 +
    fml::TimePoint vsync_start_;
    fml::TimePoint vsync_target_;
-   fml::TimePoint build_start_;
 diff --git a/engine/src/flutter/flow/layers/layer_tree.h b/engine/src/flutter/flow/layers/layer_tree.h
 index 193e0c0af4e..ea3ddba0b08 100644
 --- a/engine/src/flutter/flow/layers/layer_tree.h
 +++ b/engine/src/flutter/flow/layers/layer_tree.h
-@@ -73,10 +73,12 @@ struct LayerTreeTask {
-  public:
+@@ -74,8 +74,10 @@ struct LayerTreeTask {
    LayerTreeTask(int64_t view_id,
                  std::unique_ptr<LayerTree> layer_tree,
 -                float device_pixel_ratio)
@@ -196,22 +171,18 @@ index 193e0c0af4e..ea3ddba0b08 100644
 +        is_redraw(is_redraw) {}
 
    /// The target view to draw to.
-   int64_t view_id;
-@@ -84,6 +86,8 @@ struct LayerTreeTask {
-   std::unique_ptr<LayerTree> layer_tree;
+@@ -85,4 +87,6 @@ struct LayerTreeTask {
    /// The pixel ratio of the target view.
    float device_pixel_ratio;
 +  // 复用已呈现的树时以它自身作为 damage 基线；重试保留该身份。
 +  bool is_redraw;
 
   private:
-   FML_DISALLOW_COPY_AND_ASSIGN(LayerTreeTask);
 diff --git a/engine/src/flutter/flow/layers/texture_layer.cc b/engine/src/flutter/flow/layers/texture_layer.cc
 index 868060a2419..16d22f856ac 100644
 --- a/engine/src/flutter/flow/layers/texture_layer.cc
 +++ b/engine/src/flutter/flow/layers/texture_layer.cc
-@@ -24,9 +24,16 @@ void TextureLayer::Diff(DiffContext* context, const Layer* old_layer) {
-   if (!context->IsSubtreeDirty()) {
+@@ -25,7 +25,14 @@ void TextureLayer::Diff(DiffContext* context, const Layer* old_layer) {
      FML_DCHECK(old_layer);
      auto prev = old_layer->as_texture_layer();
 -    // TODO(knopp) It would be nice to be able to determine that a texture is
@@ -229,33 +200,27 @@ index 868060a2419..16d22f856ac 100644
 +    }
    }
 
-   // Make sure DiffContext knows there is a TextureLayer in this subtree.
 diff --git a/engine/src/flutter/flow/surface_frame.h b/engine/src/flutter/flow/surface_frame.h
 index 6431b94c059..c15444e803c 100644
 --- a/engine/src/flutter/flow/surface_frame.h
 +++ b/engine/src/flutter/flow/surface_frame.h
-@@ -12,6 +12,7 @@
- #include "flutter/display_list/dl_builder.h"
+@@ -13,4 +13,5 @@
  #include "flutter/display_list/skia/dl_sk_canvas.h"
  #include "flutter/fml/macros.h"
 +#include "flutter/flow/frame_presentation_plan.h"
  #include "flutter/fml/time/time_point.h"
 
- #include "third_party/skia/include/core/SkSurface.h"
-@@ -85,6 +86,7 @@ class SurfaceFrame {
-     // Time at which this frame is scheduled to be presented. This is a hint
+@@ -86,4 +87,5 @@ class SurfaceFrame {
      // that can be passed to the platform to drop queued frames.
      std::optional<fml::TimePoint> presentation_time;
 +    std::shared_ptr<const FramePresentationPlan> presentation_plan;
 
      // Whether this surface frame represents the last in a group frames that
-     // were submitted as part of a platform compositor interop step, such as
 diff --git a/engine/src/flutter/impeller/toolkit/android/choreographer.cc b/engine/src/flutter/impeller/toolkit/android/choreographer.cc
 index 89a852ae8ff..2504d527fd8 100644
 --- a/engine/src/flutter/impeller/toolkit/android/choreographer.cc
 +++ b/engine/src/flutter/impeller/toolkit/android/choreographer.cc
-@@ -75,6 +75,26 @@ bool Choreographer::PostFrameCallback(FrameCallback callback) const {
-   return false;
+@@ -76,4 +76,24 @@ bool Choreographer::PostFrameCallback(FrameCallback callback) const {
  }
 
 +bool Choreographer::PostFrameTimelineCallback(
@@ -280,34 +245,28 @@ index 89a852ae8ff..2504d527fd8 100644
 +
  bool Choreographer::IsAvailableOnPlatform() {
    return GetProcTable().AChoreographer_getInstance &&
-          (GetProcTable().AChoreographer_postFrameCallback64 ||
 diff --git a/engine/src/flutter/impeller/toolkit/android/choreographer.h b/engine/src/flutter/impeller/toolkit/android/choreographer.h
 index a4b781df853..eaa68bd2c0c 100644
 --- a/engine/src/flutter/impeller/toolkit/android/choreographer.h
 +++ b/engine/src/flutter/impeller/toolkit/android/choreographer.h
-@@ -72,6 +72,8 @@ class Choreographer {
-   ///             See `IsAvailableOnPlatform`.
+@@ -73,4 +73,6 @@ class Choreographer {
    ///
    bool PostFrameCallback(FrameCallback callback) const;
 +  bool PostFrameTimelineCallback(
 +      std::function<void(const AChoreographerFrameCallbackData*)> callback) const;
 
   private:
-   AChoreographer* instance_ = nullptr;
 diff --git a/engine/src/flutter/impeller/toolkit/android/proc_table.h b/engine/src/flutter/impeller/toolkit/android/proc_table.h
 index 2011521f64b..9f59a90db29 100644
 --- a/engine/src/flutter/impeller/toolkit/android/proc_table.h
 +++ b/engine/src/flutter/impeller/toolkit/android/proc_table.h
-@@ -9,6 +9,7 @@
- #define EGL_EGLEXT_PROTOTYPES
+@@ -10,4 +10,5 @@
  #include <EGL/eglext.h>
  #include <android/api-level.h>
 +#include <android/choreographer.h>
  #include <android/hardware_buffer.h>
  #include <android/hardware_buffer_jni.h>
- #include <android/surface_control.h>
-@@ -45,6 +46,12 @@ ASurfaceTransaction* ASurfaceTransaction_fromJava(JNIEnv* env,
-   INVOKE(AChoreographer_postFrameCallback, 24)                     \
+@@ -46,4 +47,10 @@ ASurfaceTransaction* ASurfaceTransaction_fromJava(JNIEnv* env,
    _Pragma("GCC diagnostic pop")                                    \
    INVOKE(AChoreographer_postFrameCallback64, 29)                   \
 +  INVOKE(AChoreographer_postVsyncCallback, 33) \
@@ -318,21 +277,17 @@ index 2011521f64b..9f59a90db29 100644
 +  INVOKE(AChoreographerFrameCallbackData_getFrameTimelineDeadlineNanos, 33) \
    INVOKE(AHardwareBuffer_acquire, 26)                              \
    INVOKE(AHardwareBuffer_allocate, 26)                             \
-   INVOKE(AHardwareBuffer_describe, 26)                             \
 diff --git a/engine/src/flutter/shell/common/rasterizer.cc b/engine/src/flutter/shell/common/rasterizer.cc
-index 6af8bfc91d5..cf200269463 100644
+index 6af8bfc91d5..d71e0de6758 100644
 --- a/engine/src/flutter/shell/common/rasterizer.cc
 +++ b/engine/src/flutter/shell/common/rasterizer.cc
-@@ -224,6 +224,7 @@ void Rasterizer::DrawLastLayerTrees(
-   std::vector<std::unique_ptr<LayerTreeTask>> tasks;
+@@ -225,4 +225,5 @@ void Rasterizer::DrawLastLayerTrees(
    for (auto& [view_id, view_record] : view_records_) {
      if (view_record.last_successful_task) {
 +      view_record.last_successful_task->is_redraw = true;
        tasks.push_back(std::move(view_record.last_successful_task));
      }
-   }
-@@ -696,7 +697,8 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
-     float device_pixel_ratio = task->device_pixel_ratio;
+@@ -697,5 +698,6 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
 
      DrawSurfaceStatus status = DrawToSurfaceUnsafe(
 -        view_id, *layer_tree, device_pixel_ratio, presentation_time);
@@ -340,18 +295,14 @@ index 6af8bfc91d5..cf200269463 100644
 +        frame_timings_recorder.GetPresentationPlan(), task->is_redraw);
      FML_DCHECK(status != DrawSurfaceStatus::kDiscarded);
 
-     auto& view_record = EnsureViewRecord(task->view_id);
-@@ -706,7 +708,7 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
-           view_id, std::move(layer_tree), device_pixel_ratio);
+@@ -707,5 +709,5 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
      } else if (status == DrawSurfaceStatus::kRetry) {
        resubmitted_tasks.push_back(std::make_unique<LayerTreeTask>(
 -          view_id, std::move(layer_tree), device_pixel_ratio));
 +          view_id, std::move(layer_tree), device_pixel_ratio, task->is_redraw));
      }
    }
-   // TODO(dkwingsmt): Pass in raster cache(s) for all views.
-@@ -714,6 +716,10 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
-   frame_timings_recorder.RecordRasterEnd(
+@@ -715,4 +717,8 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
        NOT_SLIMPELLER(&compositor_context_->raster_cache()));
 
 +  if (const auto& plan = frame_timings_recorder.GetPresentationPlan()) {
@@ -360,9 +311,7 @@ index 6af8bfc91d5..cf200269463 100644
 +  }
    FireNextFrameCallbackIfPresent();
 
- #if !SLIMPELLER
-@@ -737,9 +743,27 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
-     int64_t view_id,
+@@ -738,7 +744,28 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
      flutter::LayerTree& layer_tree,
      float device_pixel_ratio,
 -    std::optional<fml::TimePoint> presentation_time) {
@@ -371,6 +320,9 @@ index 6af8bfc91d5..cf200269463 100644
 +    bool is_redraw) {
    FML_DCHECK(surface_);
 
++  if (plan && !plan->feedback->IsEnabled()) {
++    plan.reset();
++  }
 +  if (plan) {
 +    // 比较 Scene 的真实内容；纹理已被较早的 Raster 消费时不重复输出。
 +    // Surface 重建后没有上一棵树，完整 damage 会保留必要的首帧。
@@ -389,9 +341,7 @@ index 6af8bfc91d5..cf200269463 100644
 +
    DlCanvas* embedder_root_canvas = nullptr;
    if (external_view_embedder_) {
-     external_view_embedder_->PrepareFlutterView(layer_tree.frame_size(),
-@@ -818,6 +842,11 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
-
+@@ -819,4 +846,9 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
      SurfaceFrame::SubmitInfo submit_info;
      submit_info.presentation_time = presentation_time;
 +    submit_info.presentation_plan = plan;
@@ -401,13 +351,11 @@ index 6af8bfc91d5..cf200269463 100644
 +    }
      if (damage) {
        submit_info.frame_damage = damage->GetFrameDamage();
-       submit_info.buffer_damage = damage->GetBufferDamage();
 diff --git a/engine/src/flutter/shell/common/rasterizer.h b/engine/src/flutter/shell/common/rasterizer.h
 index 998d95cede8..777a6b22d7f 100644
 --- a/engine/src/flutter/shell/common/rasterizer.h
 +++ b/engine/src/flutter/shell/common/rasterizer.h
-@@ -774,7 +774,9 @@ class Rasterizer final : public SnapshotDelegate,
-       int64_t view_id,
+@@ -775,5 +775,7 @@ class Rasterizer final : public SnapshotDelegate,
        flutter::LayerTree& layer_tree,
        float device_pixel_ratio,
 -      std::optional<fml::TimePoint> presentation_time);
@@ -416,13 +364,11 @@ index 998d95cede8..777a6b22d7f 100644
 +      bool is_redraw = false);
 
    ViewRecord& EnsureViewRecord(int64_t view_id);
-
 diff --git a/engine/src/flutter/shell/common/vsync_waiter.cc b/engine/src/flutter/shell/common/vsync_waiter.cc
 index 5aa60e92fce..ecb3266b985 100644
 --- a/engine/src/flutter/shell/common/vsync_waiter.cc
 +++ b/engine/src/flutter/shell/common/vsync_waiter.cc
-@@ -86,7 +86,8 @@ void VsyncWaiter::ScheduleSecondaryCallback(uintptr_t id,
-
+@@ -87,5 +87,6 @@ void VsyncWaiter::ScheduleSecondaryCallback(uintptr_t id,
  void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
                                 fml::TimePoint frame_target_time,
 -                               bool pause_secondary_tasks) {
@@ -430,30 +376,24 @@ index 5aa60e92fce..ecb3266b985 100644
 +                               std::shared_ptr<const FramePresentationPlan> plan) {
    FML_DCHECK(fml::TimePoint::Now() >= frame_start_time);
 
-   Callback callback;
-@@ -129,7 +130,7 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
-         task_runners_.GetUITaskRunner()->GetTaskQueueId();
+@@ -130,5 +131,5 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
      task_runners_.GetUITaskRunner()->PostTask(
          [ui_task_queue_id, callback, flow_identifier, frame_start_time,
 -         frame_target_time, pause_secondary_tasks]() {
 +         frame_target_time, pause_secondary_tasks, plan]() {
            FML_TRACE_EVENT_WITH_FLOW_IDS(
                "flutter", kVsyncTraceName, /*flow_id_count=*/1,
-               /*flow_ids=*/&flow_identifier, "StartTime", frame_start_time,
-@@ -138,6 +139,7 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
-               std::make_unique<FrameTimingsRecorder>();
+@@ -139,4 +140,5 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
            frame_timings_recorder->RecordVsync(frame_start_time,
                                                frame_target_time);
 +          frame_timings_recorder->SetPresentationPlan(plan);
            callback(std::move(frame_timings_recorder));
            TRACE_FLOW_END("flutter", kVsyncFlowName, flow_identifier);
-           if (pause_secondary_tasks) {
 diff --git a/engine/src/flutter/shell/common/vsync_waiter.h b/engine/src/flutter/shell/common/vsync_waiter.h
 index fa644f63bb0..77a298e5be4 100644
 --- a/engine/src/flutter/shell/common/vsync_waiter.h
 +++ b/engine/src/flutter/shell/common/vsync_waiter.h
-@@ -72,7 +72,8 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
-   // to the `frame_start_time` as possible.
+@@ -73,5 +73,6 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
    void FireCallback(fml::TimePoint frame_start_time,
                      fml::TimePoint frame_target_time,
 -                    bool pause_secondary_tasks = true);
@@ -461,58 +401,48 @@ index fa644f63bb0..77a298e5be4 100644
 +                    std::shared_ptr<const FramePresentationPlan> plan = nullptr);
 
   private:
-   std::mutex callback_mutex_;
 diff --git a/engine/src/flutter/shell/gpu/gpu_surface_gl_delegate.h b/engine/src/flutter/shell/gpu/gpu_surface_gl_delegate.h
 index 808cb97e9d1..687779d171c 100644
 --- a/engine/src/flutter/shell/gpu/gpu_surface_gl_delegate.h
 +++ b/engine/src/flutter/shell/gpu/gpu_surface_gl_delegate.h
-@@ -50,6 +50,7 @@ struct GLPresentInfo {
-   // The buffer damage refers to the region that needs to be set as damaged
+@@ -51,4 +51,5 @@ struct GLPresentInfo {
    // within the frame buffer.
    const std::optional<DlIRect>& buffer_damage;
 +  std::shared_ptr<const FramePresentationPlan> presentation_plan = nullptr;
  };
 
- class GPUSurfaceGLDelegate {
 diff --git a/engine/src/flutter/shell/gpu/gpu_surface_gl_skia.cc b/engine/src/flutter/shell/gpu/gpu_surface_gl_skia.cc
 index eebdc2e7be2..a4f150a2bc7 100644
 --- a/engine/src/flutter/shell/gpu/gpu_surface_gl_skia.cc
 +++ b/engine/src/flutter/shell/gpu/gpu_surface_gl_skia.cc
-@@ -283,6 +283,7 @@ bool GPUSurfaceGLSkia::PresentSurface(const SurfaceFrame& frame) {
-       .frame_damage = frame.submit_info().frame_damage,
+@@ -284,4 +284,5 @@ bool GPUSurfaceGLSkia::PresentSurface(const SurfaceFrame& frame) {
        .presentation_time = frame.submit_info().presentation_time,
        .buffer_damage = frame.submit_info().buffer_damage,
 +      .presentation_plan = frame.submit_info().presentation_plan,
    };
    if (!delegate_->GLContextPresent(present_info)) {
-     return false;
 diff --git a/engine/src/flutter/shell/platform/android/BUILD.gn b/engine/src/flutter/shell/platform/android/BUILD.gn
 index 40c209ca925..7460b834675 100644
 --- a/engine/src/flutter/shell/platform/android/BUILD.gn
 +++ b/engine/src/flutter/shell/platform/android/BUILD.gn
-@@ -48,6 +48,7 @@ executable("flutter_shell_native_unittests") {
-     "android_shell_holder_unittests.cc",
+@@ -49,4 +49,5 @@ executable("flutter_shell_native_unittests") {
      "apk_asset_provider_unittests.cc",
      "flutter_shell_native_unittests.cc",
 +    "frame_presentation_plan_unittests.cc",
      "image_lru_unittests.cc",
      "platform_view_android_jni_impl_unittests.cc",
-     "platform_view_android_unittests.cc",
 diff --git a/engine/src/flutter/shell/platform/android/android_egl_surface.cc b/engine/src/flutter/shell/platform/android/android_egl_surface.cc
-index e088e80b25a..d9e7bf62fd6 100644
+index e088e80b25a..5f2e391b4b0 100644
 --- a/engine/src/flutter/shell/platform/android/android_egl_surface.cc
 +++ b/engine/src/flutter/shell/platform/android/android_egl_surface.cc
-@@ -8,6 +8,8 @@
- #include <sys/system_properties.h>
+@@ -9,4 +9,6 @@
 
  #include <array>
 +#include <cstring>
 +#include <android/log.h>
  #include <list>
 
- #include "flutter/fml/trace_event.h"
-@@ -91,9 +93,30 @@ AndroidEGLSurface::AndroidEGLSurface(EGLSurface surface,
-       context_(context),
+@@ -92,7 +94,22 @@ AndroidEGLSurface::AndroidEGLSurface(EGLSurface surface,
        damage_(std::make_unique<AndroidEGLSurfaceDamage>()) {
    damage_->init(display_, context);
 +  presentation_time_proc_ = reinterpret_cast<PFNEGLPRESENTATIONTIMEANDROIDPROC>(
@@ -532,27 +462,36 @@ index e088e80b25a..d9e7bf62fd6 100644
  }
 
  AndroidEGLSurface::~AndroidEGLSurface() {
-+  if (destroy_sync_) {
-+    for (auto& frame : pending_frames_) {
-+      if (frame.fence != EGL_NO_SYNC_KHR) {
-+        destroy_sync_(display_, frame.fence);
-+      }
-+    }
-+  }
++  ClearPendingFrames();
    [[maybe_unused]] auto result = eglDestroySurface(display_, surface_);
    FML_DCHECK(result == EGL_TRUE);
- }
-@@ -145,7 +168,7 @@ void AndroidEGLSurface::SetDamageRegion(
-
+@@ -146,10 +163,20 @@ void AndroidEGLSurface::SetDamageRegion(
  bool AndroidEGLSurface::SetPresentationTime(
      const fml::TimePoint& presentation_time) {
 -  if (presentation_time_proc_) {
-+  if (presentation_plan_ && presentation_time_proc_) {
-     const auto time_ns = presentation_time.ToEpochDelta().ToNanoseconds();
-     return presentation_time_proc_(display_, surface_, time_ns);
-   } else {
-@@ -156,7 +179,81 @@ bool AndroidEGLSurface::SetPresentationTime(
- bool AndroidEGLSurface::SwapBuffers(
+-    const auto time_ns = presentation_time.ToEpochDelta().ToNanoseconds();
+-    return presentation_time_proc_(display_, surface_, time_ns);
+-  } else {
+-    return false;
++  const auto time_ns = presentation_time.ToEpochDelta().ToNanoseconds();
++  if (!presentation_plan_) {
++    // 兼容路径沿用 Flutter 原有呈现时间，保留 Surface 的稳定提交节奏。
++    return presentation_time_proc_ &&
++           presentation_time_proc_(display_, surface_, time_ns) == EGL_TRUE;
++  }
++  if (presentation_time_proc_ &&
++      presentation_time_proc_(display_, surface_, time_ns) == EGL_TRUE) {
++    return true;
+   }
++  presentation_plan_->feedback->Disable("presentationTimeUnavailable");
++  presentation_time_proc_ = nullptr;
++  presentation_plan_.reset();
++  ClearPendingFrames();
++  eglGetError();
++  return false;
+ }
+
+@@ -157,5 +184,119 @@ bool AndroidEGLSurface::SwapBuffers(
      const std::optional<DlIRect>& surface_damage) {
    TRACE_EVENT0("flutter", "AndroidContextGL::SwapBuffers");
 -  return damage_->SwapBuffersWithDamage(display_, surface_, surface_damage);
@@ -560,6 +499,11 @@ index e088e80b25a..d9e7bf62fd6 100644
 +    return damage_->SwapBuffersWithDamage(display_, surface_, surface_damage);
 +  }
 +  CollectCompletedFrames(pending_frames_.size() >= 2);
++  if (!presentation_plan_->feedback->IsEnabled()) {
++    presentation_plan_.reset();
++    ClearPendingFrames();
++    return damage_->SwapBuffersWithDamage(display_, surface_, surface_damage);
++  }
 +  PendingFrame pending;
 +  pending.plan = std::move(presentation_plan_);
 +  if (frame_timestamps_enabled_) {
@@ -567,6 +511,12 @@ index e088e80b25a..d9e7bf62fd6 100644
 +  }
 +  if (create_sync_ && destroy_sync_ && wait_sync_) {
 +    pending.fence = create_sync_(display_, EGL_SYNC_FENCE_KHR, nullptr);
++  }
++  if (pending.fence == EGL_NO_SYNC_KHR) {
++    pending.plan->feedback->Disable("gpuFenceUnavailable");
++    ClearPendingFrames();
++    eglGetError();
++    return damage_->SwapBuffersWithDamage(display_, surface_, surface_damage);
 +  }
 +  const auto start = fml::TimePoint::Now().ToEpochDelta().ToNanoseconds();
 +  const auto result = damage_->SwapBuffersWithDamage(display_, surface_, surface_damage);
@@ -581,23 +531,52 @@ index e088e80b25a..d9e7bf62fd6 100644
 +        static_cast<long long>(pending.plan->deadline_ns),
 +        static_cast<long long>(start), static_cast<long long>(end), result);
 +  }
++  if (!result) {
++    pending.plan->feedback->Disable("swapFailed");
++    destroy_sync_(display_, pending.fence);
++    ClearPendingFrames();
++    return false;
++  }
 +  pending_frames_.push_back(std::move(pending));
-+  return result;
++  return true;
 +}
 +
 +void AndroidEGLSurface::SetFramePresentationPlan(
 +    std::shared_ptr<const FramePresentationPlan> plan) {
++  if (plan && !plan->feedback->IsEnabled()) {
++    plan.reset();
++  }
++  if (!plan) {
++    ClearPendingFrames();
++  }
 +  presentation_plan_ = std::move(plan);
++}
++
++void AndroidEGLSurface::ClearPendingFrames() {
++  for (auto& frame : pending_frames_) {
++    if (frame.fence != EGL_NO_SYNC_KHR) {
++      destroy_sync_(display_, frame.fence);
++    }
++  }
++  pending_frames_.clear();
 +}
 +
 +void AndroidEGLSurface::CollectCompletedFrames(bool wait_for_oldest) {
 +  for (auto it = pending_frames_.begin(); it != pending_frames_.end();) {
 +    bool gpu_complete = it->fence == EGL_NO_SYNC_KHR;
 +    if (!gpu_complete) {
-+      const auto timeout = wait_for_oldest ? EGL_FOREVER_KHR : 0;
++      // 超过一屏仍未完成即退出主动排队，交还驱动的普通 swap 节奏。
++      const auto timeout = wait_for_oldest ? it->plan->period_ns : 0;
 +      const auto status = wait_sync_(display_, it->fence,
 +          wait_for_oldest ? EGL_SYNC_FLUSH_COMMANDS_BIT_KHR : 0, timeout);
-+      gpu_complete = status == EGL_CONDITION_SATISFIED_KHR || status == EGL_FALSE;
++      if (status == EGL_FALSE ||
++          (wait_for_oldest && status == EGL_TIMEOUT_EXPIRED_KHR)) {
++        it->plan->feedback->Disable("gpuFenceTimeout");
++        ClearPendingFrames();
++        eglGetError();
++        return;
++      }
++      gpu_complete = status == EGL_CONDITION_SATISFIED_KHR;
 +      wait_for_oldest = false;
 +      if (gpu_complete) {
 +        destroy_sync_(display_, it->fence);
@@ -633,22 +612,18 @@ index e088e80b25a..d9e7bf62fd6 100644
 +  }
  }
 
- bool AndroidEGLSurface::SupportsPartialRepaint() const {
 diff --git a/engine/src/flutter/shell/platform/android/android_egl_surface.h b/engine/src/flutter/shell/platform/android/android_egl_surface.h
-index 0c1d4f9fc0a..6d3a649eebb 100644
+index 0c1d4f9fc0a..5dc72830d12 100644
 --- a/engine/src/flutter/shell/platform/android/android_egl_surface.h
 +++ b/engine/src/flutter/shell/platform/android/android_egl_surface.h
-@@ -9,6 +9,8 @@
- #include <EGL/eglext.h>
+@@ -10,4 +10,6 @@
  #include <KHR/khrplatform.h>
  #include <optional>
 +#include <deque>
 +#include "flutter/flow/frame_presentation_plan.h"
 
  #include "flutter/display_list/geometry/dl_geometry_types.h"
- #include "flutter/fml/macros.h"
-@@ -99,6 +101,26 @@ class AndroidEGLSurface {
-   /// @return     The size of an `EGLSurface`.
+@@ -100,4 +102,25 @@ class AndroidEGLSurface {
    ///
    DlISize GetSize() const;
 +  void SetFramePresentationPlan(std::shared_ptr<const FramePresentationPlan> plan);
@@ -660,6 +635,7 @@ index 0c1d4f9fc0a..6d3a649eebb 100644
 +    std::shared_ptr<const FramePresentationPlan> plan;
 +  };
 +  void CollectCompletedFrames(bool wait_for_oldest);
++  void ClearPendingFrames();
 +  std::shared_ptr<const FramePresentationPlan> presentation_plan_;
 +  std::deque<PendingFrame> pending_frames_;
 +  PFNEGLCREATESYNCKHRPROC create_sync_ = nullptr;
@@ -673,25 +649,21 @@ index 0c1d4f9fc0a..6d3a649eebb 100644
 + public:
 
   private:
-   /// Returns true if the EGLContext held is current for the display and surface
 diff --git a/engine/src/flutter/shell/platform/android/android_surface_gl_skia.cc b/engine/src/flutter/shell/platform/android/android_surface_gl_skia.cc
 index 9edcab6fc0b..5511ce5c4ca 100644
 --- a/engine/src/flutter/shell/platform/android/android_surface_gl_skia.cc
 +++ b/engine/src/flutter/shell/platform/android/android_surface_gl_skia.cc
-@@ -156,6 +156,7 @@ void AndroidSurfaceGLSkia::GLContextSetDamageRegion(
- bool AndroidSurfaceGLSkia::GLContextPresent(const GLPresentInfo& present_info) {
+@@ -157,4 +157,5 @@ bool AndroidSurfaceGLSkia::GLContextPresent(const GLPresentInfo& present_info) {
    FML_DCHECK(IsValid());
    FML_DCHECK(onscreen_surface_);
 +  onscreen_surface_->SetFramePresentationPlan(present_info.presentation_plan);
    if (present_info.presentation_time) {
      onscreen_surface_->SetPresentationTime(*present_info.presentation_time);
-   }
 diff --git a/engine/src/flutter/shell/platform/android/surface_texture_external_texture.cc b/engine/src/flutter/shell/platform/android/surface_texture_external_texture.cc
 index 0fd7331ee1e..4fc5b033ae0 100644
 --- a/engine/src/flutter/shell/platform/android/surface_texture_external_texture.cc
 +++ b/engine/src/flutter/shell/platform/android/surface_texture_external_texture.cc
-@@ -42,8 +42,8 @@ void SurfaceTextureExternalTexture::Paint(PaintContext& context,
-   if (state_ == AttachmentState::kDetached) {
+@@ -43,6 +43,6 @@ void SurfaceTextureExternalTexture::Paint(PaintContext& context,
      return;
    }
 -  const bool should_process_frame =
@@ -700,13 +672,11 @@ index 0fd7331ee1e..4fc5b033ae0 100644
 +  const bool should_process_frame = HasNewFrame();
    if (should_process_frame) {
      ProcessFrame(context, ToSkRect(bounds));
-   }
 diff --git a/engine/src/flutter/shell/platform/android/surface_texture_external_texture.h b/engine/src/flutter/shell/platform/android/surface_texture_external_texture.h
 index 97ba37ee90f..763110f36d1 100644
 --- a/engine/src/flutter/shell/platform/android/surface_texture_external_texture.h
 +++ b/engine/src/flutter/shell/platform/android/surface_texture_external_texture.h
-@@ -40,6 +40,10 @@ class SurfaceTextureExternalTexture : public flutter::Texture {
-   // |Texture|
+@@ -41,4 +41,8 @@ class SurfaceTextureExternalTexture : public flutter::Texture {
    ~SurfaceTextureExternalTexture() override;
 
 +  bool HasNewFrame() override {
@@ -715,29 +685,81 @@ index 97ba37ee90f..763110f36d1 100644
 +
   protected:
    //----------------------------------------------------------------------------
-   /// @brief      Subclasses override this method to bind the OpenGL texture
 diff --git a/engine/src/flutter/shell/platform/android/vsync_waiter_android.cc b/engine/src/flutter/shell/platform/android/vsync_waiter_android.cc
-index bf7d0922881..123eb5bff77 100644
+index bf7d0922881..7cc2b1fe896 100644
 --- a/engine/src/flutter/shell/platform/android/vsync_waiter_android.cc
 +++ b/engine/src/flutter/shell/platform/android/vsync_waiter_android.cc
-@@ -36,6 +36,15 @@ void VsyncWaiterAndroid::AwaitVSync() {
-         task_runners_.GetUITaskRunner(), [weak_this]() {
+@@ -5,4 +5,5 @@
+ #include "flutter/shell/platform/android/vsync_waiter_android.h"
+
++#include <android/log.h>
+ #include <cmath>
+ #include <utility>
+@@ -37,4 +38,63 @@ void VsyncWaiterAndroid::AwaitVSync() {
            const auto& choreographer =
                impeller::android::Choreographer::GetInstance();
-+          if (choreographer.PostFrameTimelineCallback([weak_this](auto data) {
++          auto self = weak_this->lock();
++          if (!self) {
++            delete weak_this;
++            return;
++          }
++          auto* waiter = static_cast<VsyncWaiterAndroid*>(self.get());
++          if (!waiter->feedback_->IsEnabled() && !waiter->fallback_logged_) {
++            waiter->fallback_logged_ = true;
++            __android_log_print(ANDROID_LOG_WARN, "PILI_FRAME_PLAN",
++                                "fallback %s", waiter->feedback_->FallbackReason());
++          }
++          const auto request = ++waiter->frame_timeline_request_;
++          waiter->pending_frame_timeline_ = request;
++          if (waiter->feedback_->IsEnabled() &&
++              choreographer.PostFrameTimelineCallback([weak_this, request](auto data) {
 +                auto self = weak_this->lock();
 +                delete weak_this;
 +                if (self) {
-+                  static_cast<VsyncWaiterAndroid*>(self.get())->OnFrameTimeline(data);
++                  auto* waiter = static_cast<VsyncWaiterAndroid*>(self.get());
++                  if (waiter->pending_frame_timeline_ != request) {
++                    return;
++                  }
++                  waiter->pending_frame_timeline_ = 0;
++                  waiter->OnFrameTimeline(data);
 +                }
 +              })) {
++            // 暂停或不可见时两种回调都会停发；用旧回调实际交付来确认
++            // FrameTimeline 已失效，避免把正常的显示空档当成故障。
++            std::weak_ptr<VsyncWaiter> weak = self;
++            waiter->task_runners_.GetUITaskRunner()->PostDelayedTask(
++                [weak, request]() {
++                  if (auto self = weak.lock()) {
++                    auto* waiter = static_cast<VsyncWaiterAndroid*>(self.get());
++                    if (waiter->pending_frame_timeline_ != request) {
++                      return;
++                    }
++                    impeller::android::Choreographer::GetInstance().PostFrameCallback(
++                        [weak, request](auto time) {
++                          auto self = weak.lock();
++                          if (!self) {
++                            return;
++                          }
++                          auto* waiter = static_cast<VsyncWaiterAndroid*>(self.get());
++                          if (waiter->pending_frame_timeline_ != request) {
++                            return;
++                          }
++                          waiter->pending_frame_timeline_ = 0;
++                          waiter->feedback_->Disable("frameTimelineTimeout");
++                          const auto time_ns =
++                              std::chrono::time_point_cast<std::chrono::nanoseconds>(time)
++                                  .time_since_epoch().count();
++                          OnVsyncFromNDK(time_ns, new std::weak_ptr<VsyncWaiter>(self));
++                        });
++                  }
++                }, fml::TimeDelta::FromMilliseconds(100));
 +            return;
 +          }
++          waiter->pending_frame_timeline_ = 0;
++          waiter->feedback_->Disable("frameTimelineUnavailable");
            choreographer.PostFrameCallback([weak_this](auto time) {
              auto time_ns =
-                 std::chrono::time_point_cast<std::chrono::nanoseconds>(time)
-@@ -60,6 +69,36 @@ void VsyncWaiterAndroid::AwaitVSync() {
-   }
+@@ -61,4 +121,39 @@ void VsyncWaiterAndroid::AwaitVSync() {
  }
 
 +void VsyncWaiterAndroid::OnFrameTimeline(
@@ -758,7 +780,12 @@ index bf7d0922881..123eb5bff77 100644
 +      static_cast<int64_t>(1000000000.0 / g_refresh_rate_), timelines, feedback_,
 +      last_expected_ns_);
 +  if (!plan) {
-+    AwaitVSync();
++    // 当前回调立即交付普通帧，避免无效 timeline 让 UI 一直等待。
++    const auto start = fml::TimePoint::FromEpochDelta(
++        fml::TimeDelta::FromNanoseconds(std::min(start_ns, now_ns)));
++    const auto target = start + fml::TimeDelta::FromNanoseconds(
++        static_cast<int64_t>(1000000000.0 / g_refresh_rate_));
++    FireCallback(start, target);
 +    return;
 +  }
 +  last_expected_ns_ = plan->expected_ns;
@@ -772,26 +799,25 @@ index bf7d0922881..123eb5bff77 100644
 +
  // static
  void VsyncWaiterAndroid::OnVsyncFromNDK(int64_t frame_nanos, void* data) {
-   auto frame_time = fml::TimePoint::FromEpochDelta(
 diff --git a/engine/src/flutter/shell/platform/android/vsync_waiter_android.h b/engine/src/flutter/shell/platform/android/vsync_waiter_android.h
-index 7129bb94305..e7c1d692100 100644
+index 7129bb94305..26aa4184c0b 100644
 --- a/engine/src/flutter/shell/platform/android/vsync_waiter_android.h
 +++ b/engine/src/flutter/shell/platform/android/vsync_waiter_android.h
-@@ -6,6 +6,7 @@
- #define FLUTTER_SHELL_PLATFORM_ANDROID_VSYNC_WAITER_ANDROID_H_
+@@ -7,4 +7,5 @@
 
  #include <jni.h>
 +#include <android/choreographer.h>
 
  #include <memory>
-
-@@ -25,5 +26,10 @@ class VsyncWaiterAndroid final : public VsyncWaiter {
-   ~VsyncWaiterAndroid() override;
+@@ -26,4 +27,12 @@ class VsyncWaiterAndroid final : public VsyncWaiter {
 
   private:
 +  std::shared_ptr<FramePresentationFeedback> feedback_ =
 +      std::make_shared<FramePresentationFeedback>();
 +  int64_t last_expected_ns_ = 0;
++  bool fallback_logged_ = false;
++  uint64_t frame_timeline_request_ = 0;
++  uint64_t pending_frame_timeline_ = 0;
 +  void OnFrameTimeline(const AChoreographerFrameCallbackData* data);
 +
    // |VsyncWaiter|

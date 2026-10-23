@@ -23,6 +23,56 @@ class ContentTexture final : public Texture {
 };
 }  // namespace
 
+TEST(FramePresentationPlanTest, InvalidTimelineFallsBackWithoutOscillation) {
+  constexpr int64_t period = 8'000'000;
+  auto feedback = std::make_shared<FramePresentationFeedback>();
+  const std::vector<FrameTimeline> valid{{1, period * 4, period * 3}};
+  EXPECT_FALSE(SelectFramePresentationPlan(0, 0, period, {}, feedback));
+  EXPECT_TRUE(feedback->IsEnabled());
+  EXPECT_TRUE(SelectFramePresentationPlan(0, 0, period, valid, feedback));
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_FALSE(SelectFramePresentationPlan(0, 0, period, {}, feedback));
+  }
+  EXPECT_FALSE(feedback->IsEnabled());
+  EXPECT_STREQ(feedback->FallbackReason(), "invalidFrameTimeline");
+  EXPECT_FALSE(SelectFramePresentationPlan(0, 0, period, valid, feedback));
+  // 新引擎拥有独立反馈，不继承其它实例的故障状态。
+  EXPECT_TRUE(SelectFramePresentationPlan(
+      0, 0, period, valid, std::make_shared<FramePresentationFeedback>()));
+}
+
+TEST(FramePresentationPlanTest, RejectsInvalidAndFarFutureTimelines) {
+  constexpr int64_t period = 8'000'000;
+  auto feedback = std::make_shared<FramePresentationFeedback>();
+  EXPECT_FALSE(SelectFramePresentationPlan(
+      0, 0, period, {{0, period * 3, period * 2}}, feedback));
+  EXPECT_FALSE(SelectFramePresentationPlan(
+      0, 0, period, {{1, period * 3, period * 4}}, feedback));
+  EXPECT_FALSE(SelectFramePresentationPlan(
+      0, 0, period, {{1, period * 100, period * 99}}, feedback));
+  EXPECT_FALSE(feedback->IsEnabled());
+}
+
+TEST(FramePresentationPlanTest, EglFailureDisablesQueuedAndNewPlans) {
+  constexpr int64_t period = 8'000'000;
+  for (const char* reason : {"presentationTimeUnavailable", "gpuFenceUnavailable",
+                             "gpuFenceTimeout", "swapFailed"}) {
+    auto feedback = std::make_shared<FramePresentationFeedback>();
+    auto plan = SelectFramePresentationPlan(
+        0, 0, period, {{1, period * 4, period * 3}}, feedback);
+    ASSERT_TRUE(plan);
+    feedback->Disable(reason);
+    EXPECT_FALSE(plan->feedback->IsEnabled());
+    EXPECT_STREQ(feedback->FallbackReason(), reason);
+    feedback->RecordSelection(true);
+    feedback->Observe(period);
+    EXPECT_FALSE(SelectFramePresentationPlan(
+        0, 0, period, {{1, period * 4, period * 3}}, feedback));
+    feedback->Disable("laterFailure");
+    EXPECT_STREQ(feedback->FallbackReason(), reason);
+  }
+}
+
 TEST(FramePresentationPlanTest, RasterRetryRetainsFrameAndTimelineIdentity) {
   FrameTimingsRecorder recorder;
   const auto now = fml::TimePoint::Now();

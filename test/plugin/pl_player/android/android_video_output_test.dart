@@ -34,6 +34,10 @@ void main() {
         expect(player.options, isEmpty);
         return true;
       }
+      if (call.method == 'VideoOutputManager.ConfirmSurfaceConfigured') {
+        expect(player.options, [('android-surface-size', '960x540')]);
+        return null;
+      }
       expect(call.method, 'VideoOutputManager.SetSurfaceTextureSize');
       expect(player.options, isEmpty);
       return null;
@@ -46,8 +50,9 @@ void main() {
     expect(calls.map((call) => call.method), [
       'VideoOutputManager.BeginOutputOperation',
       'VideoOutputManager.SetSurfaceTextureSize',
+      'VideoOutputManager.ConfirmSurfaceConfigured',
     ]);
-    expect(calls.last.arguments, {
+    expect(calls[1].arguments, {
       'handle': '42',
       'width': '960',
       'height': '540',
@@ -163,12 +168,15 @@ void main() {
         if (call.method == 'VideoOutputManager.BeginOutputOperation') {
           return true;
         }
-        if (calls
-                .where(
-                  (c) => c.method == 'VideoOutputManager.SetSurfaceTextureSize',
-                )
-                .length ==
-            1) {
+        if (call.method == 'VideoOutputManager.SetSurfaceTextureSize' &&
+            calls
+                    .where(
+                      (c) =>
+                          c.method ==
+                          'VideoOutputManager.SetSurfaceTextureSize',
+                    )
+                    .length ==
+                1) {
           entered.complete();
           await gate.future;
         }
@@ -194,8 +202,10 @@ void main() {
       expect(calls.map((call) => call.method), [
         'VideoOutputManager.BeginOutputOperation',
         'VideoOutputManager.SetSurfaceTextureSize',
+        'VideoOutputManager.ConfirmSurfaceConfigured',
         'VideoOutputManager.BeginOutputOperation',
         'VideoOutputManager.SetSurfaceTextureSize',
+        'VideoOutputManager.ConfirmSurfaceConfigured',
       ]);
       expect(player.options, [
         ('android-surface-size', '960x540'),
@@ -253,7 +263,8 @@ void main() {
         ('wid', '123'),
         ('vo', 'gpu'),
       ]);
-      expect((calls.last.arguments as Map)['width'], '1920');
+      expect((calls[calls.length - 2].arguments as Map)['width'], '1920');
+      expect(calls.last.method, 'VideoOutputManager.ConfirmSurfaceConfigured');
     },
   );
 

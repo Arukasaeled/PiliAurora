@@ -125,10 +125,10 @@ class HomeController extends GetxController
   }
 
   @override
-  void dispose() {
+  void onClose() {
     _unregisterPageDiagnostics();
     tabController.dispose();
-    super.dispose();
+    super.onClose();
   }
 
   Future<void> querySearchDefault() async {

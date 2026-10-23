@@ -5,7 +5,7 @@ import io.flutter.embedding.engine.renderer.SurfaceTextureWrapper;
 /** 通过真实 Flutter wrapper 重放 30 FPS 视频叠加 120 FPS 弹幕的取图调用。 */
 public final class VideoSurfaceTextureAcquireProbe {
     public static void main(String[] args) {
-        final VideoSurfaceTexture texture = new VideoSurfaceTexture(() -> {});
+        final VideoSurfaceTexture texture = new VideoSurfaceTexture(sample -> {});
         final SurfaceTextureWrapper wrapper = new SurfaceTextureWrapper(texture);
         texture.setOnFrameAvailableListener(frame -> wrapper.markDirty());
         wrapper.attachToGLContext(1);

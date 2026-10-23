@@ -16,8 +16,9 @@
 #include <string>
 #include <unordered_map>
 
-#include "thread_pool.h"
 #include "output_operation_token.h"
+#include "thread_pool.h"
+#include "video_frame_sampling.h"
 #include "video_output.h"
 
 // Creates & disposes |VideoOutput| instances for video embedding.
@@ -40,10 +41,14 @@ class VideoOutputManager {
                          int64_t)>
           output_attached_callback,
       std::function<void(const OutputOperationToken&, int64_t)>
-          frame_consumed_callback);
+          frame_consumed_callback,
+      VideoFrameSamplingCallback frame_sampling_callback);
 
-  void BeginOutputForLoad(int64_t handle,
-                          OutputOperationToken token,
+  void SetFrameSampling(int64_t handle, OutputOperationToken token,
+                        bool enabled, std::function<void(std::optional<VideoFrameSamplingEvent>)>
+        on_complete);
+
+  void BeginOutputForLoad(int64_t handle, OutputOperationToken token,
                           std::function<void(bool)> on_complete);
 
   void PrepareForLoad(int64_t handle,

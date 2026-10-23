@@ -93,6 +93,20 @@ public class VideoOutputManager {
         }
     }
 
+    public HashMap<String, Object> setFrameSampling(long handle, OutputOperationToken token, boolean enabled) {
+        synchronized (lock) {
+            final VideoOutput output = videoOutputs.get(handle);
+            return output == null ? null : output.setFrameSampling(token, enabled);
+        }
+    }
+
+    public void confirmSurfaceConfigured(long handle, OutputOperationToken token) {
+        synchronized (lock) {
+            final VideoOutput output = videoOutputs.get(handle);
+            if (output != null) output.confirmSurfaceConfigured(token);
+        }
+    }
+
     public long createSurface(long handle, OutputOperationToken token) {
         synchronized (lock) {
             Log.i("media_kit", String.format(Locale.ENGLISH, "com.alexmercerind.media_kit_video.VideoOutputManager.createSurface: %d", handle));

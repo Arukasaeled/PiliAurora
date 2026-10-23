@@ -50,7 +50,7 @@
     },
     {
       "name": "canvas_danmaku",
-      "version": "0.2.6+piliaurora.9",
+      "version": "0.2.6+piliaurora.10",
       "upstream_version": "0.2.6",
       "path": "third_party/canvas_danmaku",
       "source": {
@@ -170,7 +170,7 @@
     },
     {
       "name": "get",
-      "version": "4.7.2+piliaurora.1",
+      "version": "4.7.2+piliaurora.2",
       "upstream_version": "4.7.2",
       "path": "third_party/get",
       "source": {
@@ -245,7 +245,7 @@
     },
     {
       "name": "media_kit_video",
-      "version": "1.2.5+piliaurora.7",
+      "version": "1.2.5+piliaurora.11",
       "upstream_version": "1.2.5",
       "path": "third_party/media_kit_video",
       "source": {

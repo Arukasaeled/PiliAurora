@@ -4,6 +4,7 @@
 /// All rights reserved.
 /// Use of this source code is governed by MIT license that can be found in the LICENSE file.
 import 'dart:io';
+import 'package:media_kit_video/src/video_controller/video_frame_sampling.dart';
 import 'dart:ffi';
 import 'dart:async';
 import 'dart:collection';
@@ -147,6 +148,7 @@ class NativeVideoController extends PlatformVideoController {
     }
     _completeOtherWaitersUnknown(token);
     _highWaterToken = token;
+    bindFrameOutput(token);
     _operationToken = token;
     _selectedTrackId = null;
     _selectedTrackMetadata = null;
@@ -479,6 +481,7 @@ class NativeVideoController extends PlatformVideoController {
 
   @override
   Future<void> invalidateOutputGeneration(OutputOperationToken token) async {
+    if (token == _operationToken) bindFrameOutput(null);
     if (_operationToken == token) _operationToken = null;
     _completeOutputAttachUnknown(token);
     final acknowledged = await _channel.invokeMethod<bool>(
@@ -491,6 +494,25 @@ class NativeVideoController extends PlatformVideoController {
     if (acknowledged != true) {
       throw StateError('Native output did not acknowledge generation revoke');
     }
+  }
+
+  @override
+  Future<VideoFrameSamplingState?> setVideoFrameSampling(
+    OutputOperationToken token,
+    bool enabled,
+  ) async {
+    final args = await _channel.invokeMapMethod<Object?, Object?>(
+      'VideoOutputManager.SetFrameSampling',
+      {
+        'handle': player.handle.toString(),
+        'token': token.toPlatformArguments(),
+        'enabled': enabled,
+      },
+    );
+    return args == null
+        ? null
+        : VideoFrameEvent.fromPlatformArguments(args)
+              as VideoFrameSamplingState;
   }
 
   @override
@@ -689,9 +711,22 @@ class NativeVideoController extends PlatformVideoController {
         ..setMethodCallHandler((MethodCall call) {
           try {
             final Map args = call.arguments;
-            debugPrint(call.method.toString());
-            debugPrint(args.toString());
+            if (call.method != 'VideoOutput.FrameSampling') {
+              debugPrint(call.method.toString());
+              debugPrint(args.toString());
+            }
             switch (call.method) {
+              case 'VideoOutput.FrameSampling':
+                final args = call.arguments as Map;
+                final controller =
+                    _controllers[int.parse(args['handle'].toString())];
+                if (controller != null && controller._disposeFuture == null) {
+                  controller.emitFrameEvent(
+                    VideoFrameEvent.fromPlatformArguments(args),
+                  );
+                }
+                break;
+
               case 'VideoOutput.Resize':
                 {
                   // Notify about updated texture ID & [Rect].

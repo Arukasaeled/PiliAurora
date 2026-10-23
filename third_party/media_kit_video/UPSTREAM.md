@@ -1,6 +1,6 @@
 # media_kit_video 本地版本
 
-- 本地版本：`1.2.5+piliaurora.4`；来源包版本：`1.2.5`。
+- 本地版本：`1.2.5+piliaurora.11`；来源包版本：`1.2.5`。
 - 来源仓库：https://github.com/My-Responsitories/media-kit.git
 - 来源提交：`73771ec38176be2d984a3049c28177bce23b54a0`。
 - 来源子目录：`media_kit_video`。
@@ -41,3 +41,16 @@ Windows 支持在创建输出时指定固定尺寸。初始纹理 ID 与视频�
 2026-10-17（piliaurora.6）：Android 单视频轨的 demux 宽高有效时，在 preloaded 阶段挂载 Surface。裁剪、PAR 或旋转未确认时先使用临时缓冲区，并继续由 FILE_LOADED 核对轨道和最终几何；同尺寸复用已挂载的输出，尺寸变化沿用 VO 更新缓冲区，避免直播从 null 输出切到 GPU 后重建解码器、触发不可 seek 错误和音画偏移。完整的 preloaded 几何证据仍须满足原有确认条件。主机回归覆盖实际控制器的挂载顺序、同尺寸复用与显示几何修正；MediaCodec、首帧延迟和音画同步仍需 Android 真机验收。
 
 2026-10-17（piliaurora.7）：修正 on_preloaded 早于 mpv 选轨的时序：写入 vid 后核对唯一候选轨道，FILE_LOADED 再核对实际 selected 与几何。Android 释放时同步设置 vo=null、wid=0 后删除 JNI Surface 全局引用，去掉原有固定 5000ms 延迟；释放回执仍等待真实 JNI 删除，失败继续隔离资源。回归覆盖未选轨启动、释放顺序和待回执重入；主机 Java 探针运行生产释放方法，检查即时回执及删除失败。MediaCodec 启动、GPU 与 JNI 并发行为仍需 Android 真机复测。
+
+2026-10-22：新增带输出 token、采样代次、阶段和序号的视频帧通道。Android 监听注册冻结身份，请求完成与实际新 buffer 取图共同确认候选；重配、暂停和 seek 关闭采样，恢复点后的新帧确认再开启活动代次。Windows 消费回调携带已渲染纹理的身份与采样代次，经 render 队列验证后发布。首帧和健康证据继续走独立消费进度入口。同 token 重配保留批次序号，移除旧的无类型 Android 请求回调。
+
+2026-10-23：采样开关回执返回 render／Surface 临界区冻结的代次状态。运行时等待当前操作回执，隔离先前开关的迟到状态；活动状态早于回执交付时按代次保留并在确认后处理。seek 完成后等待该 seek 的媒体时钟确认，再进入平台新帧预备窗口。Windows 新 token 重置采样准入，序号仍在同 token 重配期间连续。
+
+2026-10-23（piliaurora.8）：Windows ANGLE 构造失败时回滚 mutex、D3D device/context、纹理与已初始化的 EGL 资源；纹理交由 ComPtr 单引用持有，旧 Windows adapter/factory 使用作用域回收并核对创建结果。共享 EGLDisplay 按 display 计数，不同插件输出线程通过同一把锁协调初始化、登记和最后终止。`tool/probes/windows/windows_angle_rollback_probe.py` 编译生产类与方法，注入各创建阶段失败，核对共享／独立 display、跨线程实例和 resize 后的资源回收。
+
+
+2026-10-23（piliaurora.9）：Windows resize 与 ResetRenderer 共用持续到 Flutter 纹理注销回执完成的操作屏障；重建请求依次排队，尺寸请求继续合并，重建持有操作槽直到新后端配置完成。连续重建、失败和销毁均排空已接受请求的回执。`tool/probes/windows/windows_renderer_release_probe.py` 使用完整生产 VideoOutput 与线程池，通过延迟注销回执检查双向交错、连续重建、resize 失败、软件回退及销毁后的回调次数和资源释放。
+
+2026-10-23（piliaurora.10）：Android 重建 Surface 时，旧 Surface 或 JNI 全局引用释放失败会终止重建，并向平台通道传播错误。未确认删除的旧引用继续由输出持有，后续释放可继续回收，避免新引用覆盖旧句柄。主机故障探针覆盖旧资源释放失败、复合故障与后续完整释放。
+
+2026-10-23（piliaurora.11）：Android Surface 与 JNI 全局引用完整创建后再登记到输出；构造失败、JNI 引用创建抛错或返回零句柄时，回收本次新建的 Surface 并向平台通道传播错误。回滚释放失败时保留 Surface 所有权与原始错误，后续输出释放继续回收。主机故障探针补齐创建失败、零句柄、回滚失败与重试恢复。

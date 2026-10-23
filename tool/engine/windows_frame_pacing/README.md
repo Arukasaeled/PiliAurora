@@ -7,8 +7,9 @@
 补丁在 ANGLE 支持时使用 DirectComposition 翻转式呈现，创建失败时记录错误并回退
 原有窗口 Surface；两条路径均保留 Surface vsync。它以 DWM 的 QPC vblank 相位、刷新周期和当前
 计数器校准引擎时间。绘制在当前周期开始，Surface 提交等待下一次 vblank；相位校准的
-微小抖动不会重复占用同一周期。引擎启动时间不再决定正常 DWM 路径的帧相位；DWM 数据不可用或
-测试指定周期时沿用原有回退。计时线程在截止时间提前后重新进入等待，兼容按值保存
+微小抖动不会重复占用同一周期。引擎启动时间不再决定正常 DWM 路径的帧相位；DWM 数据不可用、周期异常、相位过期或
+测试指定周期时沿用原有回退。连续三次 DWM 数据失效后，该引擎实例保持普通 VSync 调度；Surface 同步继续开启。
+计时线程在截止时间提前后重新进入等待，兼容按值保存
 `wait_until` 截止时间的 C++ 标准库，避免继续等待旧截止时间。
 对应引擎回归覆盖启动相位、刷新率变化、Surface 同步，以及计时线程唤醒与重排。
 ANGLE D3D11 设备同时将最大排队帧数设为一帧，限制呈现积压；设置失败时记录
@@ -37,7 +38,7 @@ Windows SDK 默认读取安装登记；非默认位置也可传 `--windows-sdk E
 
 输出目录为 `flutter/engine/src/out/piliaurora_windows_profile/` 或对应 Release 目录，
 包含 `flutter_windows.dll` 与 `engine-identity.json`。身份文件登记源码提交、补丁摘要、
-DLL 摘要、运行模式、架构和原生测试状态。
+DLL 摘要、运行模式、架构和原生测试状态，格式遵循[共同身份协议](../README.md)。
 
 ## 对照采集
 
@@ -45,7 +46,7 @@ DLL 摘要、运行模式、架构和原生测试状态。
 pwsh -NoProfile -File tool/probes/windows/measure_danmaku.ps1 -PresentMonPath E:/tools/PresentMon-2.5.1-x64.exe -EngineLibrary E:/engine/windows-pacing/flutter/engine/src/out/piliaurora_windows_profile/flutter_windows.dll
 ```
 
-采集入口检查 Profile/x64 和摘要，临时替换本次生成的探针 DLL，并在结束后恢复。
+采集入口通过统一构建脚本生成对应配置的探针，检查 Profile/x64、应用配置和引擎身份；`-SkipBuild` 复用相同身份的输出。
 添加 `-Media <本地视频>` 测量视频合成负载。原始数据、引擎身份、同帧关联与
 ±1/±2/±3 汇总保存在独立采集目录；完整流程见[平台探针](../../probes/README.md#windows-弹幕帧节奏探针)。
 
