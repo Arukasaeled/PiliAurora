@@ -71,7 +71,12 @@ class NetworkImgLayer extends StatelessWidget {
       memCacheHeight = height.cacheSize(context);
     }
     return CachedImage(
-      imageUrl: ImageUtils.thumbnailUrl(src, quality),
+      imageUrl: ImageUtils.thumbnailUrlForSize(
+        src,
+        quality: quality,
+        width: memCacheWidth,
+        height: memCacheHeight,
+      ),
       width: width,
       height: height,
       memCacheWidth: memCacheWidth,

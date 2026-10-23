@@ -55,6 +55,7 @@ flowchart TD
 - 推荐和热门功能受响应结构、分页及登录状态影响；改动后先检查对应领域的测试。
 - 推荐与热门列表通过 `lib/common/widgets/feed_pagination.dart` 按实际滚动范围分页：首屏补足可视区，滚动后按页面指定的预取距离加载，避免预加载区构建末项时连续请求。对应测试为 `test/common/widgets/feed_pagination_test.dart`。
 - 主导航、首页与排行通过 `TabActivity` / `TickerMode` 标记活动标签。`CachedImage` 在隐藏时卸载图片，页面数据和滚动位置继续保留；解码器创建与首帧交付共用两个并发名额，原生请求完成后归还名额。内存 LRU 仍为 64 MiB / 256 项，实际 RSS 与帧耗时需实机测量。
+- `NetworkImgLayer` 按卡片物理尺寸与 1 Mi 像素预算为 B 站 CDN 的质量型缩略请求补充宽高，让动图源文件同步缩小；已有尺寸或裁剪参数的请求继续沿用原构图，原图查看与下载沿用原地址。
 
 ## 视频、文章、番剧与音频
 
