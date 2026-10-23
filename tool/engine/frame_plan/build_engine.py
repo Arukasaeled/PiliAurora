@@ -26,7 +26,9 @@ def main() -> None:
     subprocess.run([sys.executable, Path(__file__).with_name("apply.py"), checkout,
                     "--framework-sdk", sdk], check=True)
     source = Path(__file__).resolve().parent
-    if apply.git(checkout, "diff", "--binary").stdout.strip() != (source / "engine.patch").read_text().strip():
+    if not engine_identity.patch_matches(
+            apply.git(checkout, "diff", "--binary").stdout,
+            (source / "engine.patch").read_text(encoding="utf-8")):
         raise ValueError("Engine checkout contains changes outside the registered patch")
     for name, destination in {
         "frame_presentation_plan.h": "flow/frame_presentation_plan.h",

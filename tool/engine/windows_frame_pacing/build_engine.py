@@ -84,7 +84,7 @@ def prepare(root, sdk, env, jobs, skip_sync):
              env=env, capture=True, check=False).returncode != 0:
         raise ValueError('引擎补丁与当前文件冲突；已有修改已保留。')
     diff = run(['git', 'diff', '--binary'], cwd=checkout, env=env, capture=True).stdout
-    if diff.strip() != PATCH.read_text(encoding='utf-8').strip():
+    if not engine_identity.patch_matches(diff, PATCH.read_text(encoding='utf-8')):
         raise ValueError('引擎还包含补丁之外的修改，无法登记准确的构建身份。')
     return checkout, depot
 

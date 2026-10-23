@@ -6,6 +6,8 @@
 
 `engine_identity.py` 校验编译阶段产生的 `engine-identity.json`：`schemaVersion`、`profile`、`frameworkCommit`、`engineCommit`、`patchSha256`、`overlaySha256`、`binarySha256`、`mode`、`architecture`、`nativeTestsPassed`。二进制架构另按 ELF/PE 头检查，补丁与 overlay 摘要按当前仓库重算。
 
+补丁与 overlay 源文件固定使用 LF 换行，保证 Windows 与 WSL 检出的构建材料摘要一致。
+
 装配入口生成 `PILIAURORA_PRESENTATION_PROFILE` 与 `PILIAURORA_ENGINE_IDENTITY`，摘要绑定整份引擎身份。应用启动读取配置，弹幕调度根据配置及当前平台支持条件选择策略。自编装配要求原生回归通过；`--skip-tests` 产生的身份可用于继续开发，装配前须重新编译并完成回归。
 
 Windows 输出目录保留身份和应用产物摘要。Android APK 内的 `assets/piliaurora-engine-identity.json` 保留引擎身份，APK 旁的 JSON 另在 `application` 中登记应用来源、编译参数和 APK 摘要。APK 复用会核对当前 Dart 来源与本地依赖源码、入口、引擎身份、参数和 APK 摘要。标准构建核对包内引擎与 FVM 产物，再移除该输出的旧自编身份。

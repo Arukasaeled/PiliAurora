@@ -124,6 +124,14 @@ class EngineIdentityTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 protocol.validate_sdk(self.root)
 
+    def test_patch_comparison_accepts_git_empty_context_and_preserves_changes(self):
+        registered = "diff --git a/test b/test\nindex 123..456 100644\n@@ -1,2 +1,2 @@\n\n-old\n+new\n"
+        actual = registered.replace("@@ -1,2 +1,2 @@\n\n", "@@ -1,3 +1,3 @@\n \n") + " \n"
+        self.assertTrue(protocol.patch_matches(actual, registered))
+        self.assertFalse(protocol.patch_matches(actual.replace("+new", "+new "), registered))
+        self.assertFalse(protocol.patch_matches(actual + "+extra\n", registered))
+        self.assertFalse(protocol.patch_matches(actual.replace("123..456", "123..789"), registered))
+
 
 if __name__ == "__main__":
     unittest.main()

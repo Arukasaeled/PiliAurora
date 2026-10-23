@@ -1,1 +1,3 @@
 *.patch text eol=lf
+tool/engine/frame_plan/frame_presentation_plan.h text eol=lf
+tool/engine/frame_plan/frame_presentation_plan_unittests.cc text eol=lf

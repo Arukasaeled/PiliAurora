@@ -32,6 +32,14 @@ def sha256(path: Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def patch_matches(actual: str, registered: str) -> bool:
+    # 文件 blob 身份和增删行绑定实际修改；上下文与 hunk 范围可随 Git 输出变化。
+    def normalize(value: str) -> str:
+        return "\n".join(line for line in value.splitlines()
+                         if line and not line.startswith((" ", "@@ ")))
+    return normalize(actual) == normalize(registered)
+
+
 def digest_json(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
                                      ensure_ascii=True).encode()).hexdigest()
