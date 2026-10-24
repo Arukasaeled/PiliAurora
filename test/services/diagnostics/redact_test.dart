@@ -4,6 +4,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pili_aurora/services/diagnostics/redact.dart';
 
 void main() {
+  test('redaction remains stable through error and toast boundaries', () {
+    final once = DiagnosticRedactor.text(
+      'GET https://user:pass@example.test:8443/path?access_key=secret#private',
+    );
+    expect(DiagnosticRedactor.text(once), once);
+    expect(once, 'GET https://example.test:8443/path?<redacted>');
+  });
   test('redacts signatures, auth parameters and websocket credentials', () {
     final output = jsonEncode(DiagnosticRedactor.clean({
       'sign': 'map-sign-secret',

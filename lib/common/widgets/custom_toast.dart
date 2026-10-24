@@ -58,7 +58,10 @@ class LoadingWidget extends StatelessWidget {
             valueColor: AlwaysStoppedAnimation(onSurfaceVariant),
           ),
           //msg
-          Text(DiagnosticRedactor.text(msg), style: TextStyle(color: onSurfaceVariant)),
+          Text(
+            DiagnosticRedactor.text(msg),
+            style: TextStyle(color: onSurfaceVariant),
+          ),
         ],
       ),
     );
@@ -89,7 +92,10 @@ class NotifyWarning extends StatelessWidget {
             size: 22,
             color: onSurfaceVariant,
           ),
-          Text(DiagnosticRedactor.text(msg), style: TextStyle(color: onSurfaceVariant)),
+          Text(
+            DiagnosticRedactor.text(msg),
+            style: TextStyle(color: onSurfaceVariant),
+          ),
         ],
       ),
     );

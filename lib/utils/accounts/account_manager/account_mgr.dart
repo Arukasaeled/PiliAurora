@@ -164,10 +164,12 @@ class AccountManager extends Interceptor {
     if (isExpectedHttpFailure(err)) return;
     final url = DiagnosticRedactor.text(err.requestOptions.uri);
     final status = err.response?.statusCode;
-    dioError(err).then((res) => SmartDialog.showToast(
-      '$res\n${err.requestOptions.method} $url'
-      '${status == null ? '' : ' (HTTP $status)'}',
-    ));
+    dioError(err).then(
+      (res) => SmartDialog.showToast(
+        '$res\n${err.requestOptions.method} $url'
+        '${status == null ? '' : ' (HTTP $status)'}',
+      ),
+    );
   }
 
   static Future<void> _saveCookies(Account account, Response response) async {

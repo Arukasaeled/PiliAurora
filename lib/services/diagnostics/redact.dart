@@ -4,7 +4,10 @@ abstract final class DiagnosticRedactor {
     r'authorization|cookie|token|password|passwd|secret|credential|private.?key|api.?key|access.?key|sessdata|bili_jct|csrf|buvid|dedeuserid|identifierforvendor|android.?id|device.?id|fingerprint|signature|^sign$|^w_rid$|^upsig$|auth.?code|auth.?key|ticket',
     caseSensitive: false,
   );
-  static final _url = RegExp(r'(?:https?|wss?)://[^\s<>"\x27]+', caseSensitive: false);
+  static final _url = RegExp(
+    r'(?:https?|wss?)://[^\s<>"\x27]+(?:<redacted>)?',
+    caseSensitive: false,
+  );
   // mpv 的音轨标题可能只含文件名和签名查询串，没有 URL scheme。
   // 整段查询一并移除，不能只枚举已知 token 名称而漏掉其他签名参数。
   static final _query = RegExp(r'''\?[^\s<>"']+''');
@@ -12,7 +15,10 @@ abstract final class DiagnosticRedactor {
     r'''((?:authorization|cookie|set-cookie|[\w-]*token|access[_-]?key|api[_-]?key|password|passwd|secret|credential|private[_-]?key|SESSDATA|bili_jct|csrf|buvid\w*|DedeUserID|sign(?:ature)?|w_rid|upsig|auth[_-]?(?:code|key)|ticket)["']?\s*[=:]\s*)([^\r\n,;}]+)''',
     caseSensitive: false,
   );
-  static final _bearer = RegExp(r'\b(?:Bearer|Basic)\s+[^\s,;]+', caseSensitive: false);
+  static final _bearer = RegExp(
+    r'\b(?:Bearer|Basic)\s+[^\s,;]+',
+    caseSensitive: false,
+  );
   static final _header = RegExp(
     r'''((?:authorization|cookie|set-cookie)["']?\s*[:=]\s*)[^\r\n]+''',
     caseSensitive: false,
@@ -39,7 +45,10 @@ abstract final class DiagnosticRedactor {
         .replaceAll(_query, '?<redacted>')
         .replaceAllMapped(_header, (match) => '${match[1]}<redacted>')
         .replaceAllMapped(_assignment, (match) => '${match[1]}<redacted>')
-        .replaceAllMapped(_bearer, (match) => '${match[0]!.split(' ').first} <redacted>');
+        .replaceAllMapped(
+          _bearer,
+          (match) => '${match[0]!.split(RegExp(r'\s')).first} <redacted>',
+        );
     // 本机用户名及目录不是诊断指标。
     result = result.replaceAll(
       RegExp(r'\b[A-Za-z]:[\\/][^\r\n"<>]+'),
