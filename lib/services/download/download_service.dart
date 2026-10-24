@@ -62,6 +62,14 @@ class DownloadService extends GetxService {
 
   DownloadManager? _downloadManager;
   DownloadManager? _audioDownloadManager;
+  final _completing = <BiliDownloadEntryInfo>{};
+
+  void _saveProgress(BiliDownloadEntryInfo entry) {
+    unawaited(_repository.save(entry).catchError((Object error, StackTrace stack) {
+      logger.e('下载进度保存失败', error: error, stackTrace: stack);
+      SmartDialog.showToast('下载进度保存失败，请检查磁盘空间和目录权限');
+    }));
+  }
 
   late Future<void> waitForInitialization;
 
@@ -77,6 +85,14 @@ class DownloadService extends GetxService {
 
   Future<void> _readDownloadList() async {
     final entries = await _repository.load();
+    for (final entry in entries.where((entry) => !entry.isCompleted)) {
+      final name = entry.mediaType == 1
+          ? PathUtils.videoNameType1
+          : PathUtils.videoNameType2;
+      final file = File(path.join(entry.entryDirPath, entry.typeTag, name));
+      // 续传以真实文件长度为准，进程异常退出不依赖最后一次 UI 进度。
+      entry.downloadedBytes = await file.exists() ? await file.length() : 0;
+    }
     downloadList
       ..clear()
       ..addAll(entries.where((entry) => entry.isCompleted))
@@ -243,6 +259,7 @@ class DownloadService extends GetxService {
         if (curEntry.status.isDownloading) {
           curEntry.status = DownloadStatus.pause;
         }
+        await _repository.save(curEntry);
       }
 
       _curCid = entry.cid;
@@ -348,6 +365,17 @@ class DownloadService extends GetxService {
         return;
       }
 
+      if (mediaFileInfo is Type2) {
+        final first = mediaFileInfo.video.first;
+        entry.pageData
+          ?..width = first.width
+          ..height = first.height;
+        entry.ep
+          ?..width = first.width
+          ..height = first.height;
+      }
+      await _repository.save(entry);
+
       switch (mediaFileInfo) {
         case Type1 mediaFileInfo:
           final first = mediaFileInfo.segmentList.first;
@@ -378,14 +406,6 @@ class DownloadService extends GetxService {
               onDone: _onAudioDone,
             );
           }
-          late final first = mediaFileInfo.video.first;
-          entry.pageData
-            ?..width = first.width
-            ..height = first.height;
-          entry.ep
-            ?..width = first.width
-            ..height = first.height;
-          _repository.save(entry);
           break;
         default:
           break;
@@ -398,12 +418,13 @@ class DownloadService extends GetxService {
 
   void _onReceive(int progress, int total) {
     if (curDownload.value case final entry?) {
-      if (progress == 0 && total != 0) {
-        _repository.save(entry..totalBytes = total);
-      }
       entry
         ..downloadedBytes = progress
         ..status = DownloadStatus.downloading;
+      if (total > 0 && entry.totalBytes != total) {
+        entry.totalBytes = total;
+        _saveProgress(entry);
+      }
       curDownload.refresh();
     }
   }
@@ -411,6 +432,7 @@ class DownloadService extends GetxService {
   void _onDone([Object? error]) {
     if (error != null) {
       _updateCurStatus(_downloadManager?.status ?? DownloadStatus.pause);
+      if (curDownload.value case final entry?) _saveProgress(entry);
       return;
     }
 
@@ -426,7 +448,7 @@ class DownloadService extends GetxService {
       if (status == DownloadStatus.completed) {
         _completeDownload();
       } else {
-        _repository.save(curEntryInfo);
+        _saveProgress(curEntryInfo);
       }
     }
   }
@@ -442,28 +464,43 @@ class DownloadService extends GetxService {
               ? DownloadStatus.failDownloadAudio
               : status,
         );
+        if (curDownload.value case final entry?) _saveProgress(entry);
       }
     }
   }
 
   Future<void> _completeDownload() async {
     final entry = curDownload.value;
-    if (entry == null) {
+    if (entry == null || !_completing.add(entry)) {
       return;
     }
     // 视频与可选音轨都完成后才落完成标记，再从待下载队列移除。
     entry
       ..downloadedBytes = entry.totalBytes
       ..isCompleted = true;
-    await _repository.save(entry);
-    waitDownloadQueue.remove(entry);
-    downloadList.insert(0, entry);
-    flagNotifier.refresh();
-    _curCid = null;
-    curDownload.value = null;
-    _downloadManager = null;
-    _audioDownloadManager = null;
-    nextDownload();
+    try {
+      await _repository.save(entry);
+      final queued = waitDownloadQueue.remove(entry);
+      if (queued && !downloadList.contains(entry)) downloadList.insert(0, entry);
+      flagNotifier.refresh();
+      // 保存期间可能已切换任务，旧完成回调不能清空新任务。
+      if (identical(curDownload.value, entry)) {
+        _curCid = null;
+        curDownload.value = null;
+        _downloadManager = null;
+        _audioDownloadManager = null;
+        nextDownload();
+      }
+    } catch (error, stack) {
+      entry
+        ..isCompleted = false
+        ..status = DownloadStatus.failDownload;
+      curDownload.refresh();
+      logger.e('下载完成记录保存失败', error: error, stackTrace: stack);
+      SmartDialog.showToast('下载文件已保留，但完成记录保存失败，请检查磁盘后重试');
+    } finally {
+      _completing.remove(entry);
+    }
   }
 
   void nextDownload() {

@@ -110,7 +110,7 @@ Future<void> _bootstrapApplication(List<String> arguments) async {
         repository: DownloadRepository(
           rootPath: () => downloadPath,
           onReadError: (path, error, stackTrace) => logger.w(
-            '忽略损坏的下载记录: $path',
+            '下载元数据读取或恢复异常: $path',
             error: error,
             stackTrace: stackTrace,
           ),

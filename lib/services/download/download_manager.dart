@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:pili_aurora/models/remote/download/bili_download_entry_info.dart';
 import 'package:pili_aurora/services/download/response_adapter.dart';
 import 'package:pili_aurora/services/download/stream_writer.dart';
-import 'package:pili_aurora/utils/extension/file_ext.dart';
 import 'package:pili_aurora/utils/extension/string_ext.dart';
 import 'package:dio/dio.dart';
 
@@ -36,6 +35,18 @@ class DownloadManager {
   }
 
   Future<void> _start() async {
+    try {
+      await _transfer();
+    } catch (error) {
+      if (!_cancelToken.isCancelled) _cancelToken.cancel(error);
+      if (_status == DownloadStatus.downloading) {
+        _status = DownloadStatus.failDownload;
+      }
+      onDone(error);
+    }
+  }
+
+  Future<void> _transfer() async {
     int received;
 
     final file = File(path);
@@ -50,7 +61,7 @@ class DownloadManager {
       mode: received == 0 ? FileMode.writeOnly : FileMode.writeOnlyAppend,
     );
 
-    Future<void> onError(Object e, {bool delete = false}) async {
+    Future<void> onError(Object e) async {
       // 消费者失败时仅取消 Dio 输出订阅不足以释放底层网络源。
       if (!_cancelToken.isCancelled) _cancelToken.cancel(e);
       try {
@@ -58,9 +69,6 @@ class DownloadManager {
       } catch (_) {}
       if (_status == DownloadStatus.downloading) {
         _status = DownloadStatus.failDownload;
-        if (delete && file.existsSync()) {
-          await file.tryDel();
-        }
       }
       onDone(e);
     }
@@ -80,15 +88,38 @@ class DownloadManager {
         cancelToken: _cancelToken,
       );
     } on DioException catch (e) {
-      await onError(e, delete: true);
+      await onError(e);
       return;
     }
     final data = response.data!;
+    final range = response.headers.value('content-range');
+    // 拒绝忽略 Range 的响应，不能把完整媒体追加到已有片段后。
+    // 416 只有在服务端确认本地长度恰好等于总长时才代表完成。
+    if ((received > 0 && response.statusCode == 200) ||
+        (response.statusCode == 206 &&
+            !RegExp('^bytes $received-').hasMatch(range ?? '')) ||
+        (response.statusCode == 416 &&
+            (received == 0 || range != 'bytes */$received'))) {
+      await onError(StateError('服务器未返回匹配的下载范围，已保留本地文件'));
+      return;
+    }
+    if (response.statusCode == 416) {
+      try {
+        await data.stream.drain<void>();
+        await sink.close();
+        if (!_cancelToken.isCancelled) {
+          _status = DownloadStatus.completed;
+          onReceiveProgress?.call(received, received);
+          onDone();
+        }
+      } catch (error) {
+        await onError(error);
+      }
+      return;
+    }
     final contentLength = data.contentLength + received;
 
-    if (received == 0) {
-      onReceiveProgress?.call(0, contentLength);
-    }
+    onReceiveProgress?.call(received, contentLength);
 
     try {
       if (onReceiveProgress == null) {
