@@ -100,7 +100,7 @@ void main() {
     await file.writeAsString('{interrupted');
     final restored = (await repository.load()).single;
     expect(restored.downloadedBytes, 10);
-    expect(jsonDecode(await file.readAsString()), restored.toJson());
+    expect(jsonDecode(file.readAsStringSync()), restored.toJson());
     expect(corruptPaths, contains(file.path));
   });
 
@@ -119,7 +119,7 @@ void main() {
     final file = File(path.join(entry.entryDirPath, 'entry.json'));
     await file.rename('${file.path}.tmp');
     expect((await repository.load()).single.cid, entry.cid);
-    expect(await file.exists(), isTrue);
+    expect(file.existsSync(), isTrue);
   });
 
   test('failed replacement preserves the committed record and media', () async {

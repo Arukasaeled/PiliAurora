@@ -91,7 +91,7 @@ class DownloadService extends GetxService {
           : PathUtils.videoNameType2;
       final file = File(path.join(entry.entryDirPath, entry.typeTag, name));
       // 续传以真实文件长度为准，进程异常退出不依赖最后一次 UI 进度。
-      entry.downloadedBytes = await file.exists() ? await file.length() : 0;
+      entry.downloadedBytes = file.existsSync() ? file.lengthSync() : 0;
     }
     downloadList
       ..clear()

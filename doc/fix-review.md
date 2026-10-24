@@ -1,6 +1,6 @@
 # fix 分支审查说明
 
-日期：2026-10-24。工作目录：`D:\Anything\PR\Piliaurora`。
+日期：2026-10-24。工作目录：PR head 的独立审查 worktree。
 
 目录开始时为空，克隆后从远程最新 `main`（`7b29f73b8d5be089532882aa8e072cb4c80b2290`）创建 `fix`。交付前再次读取远程引用，`main` 未变化。全部修改与提交均在 `fix`；未推送、创建 PR、合并或改写历史。依赖、CI、账号存储格式均未改动。
 
@@ -31,7 +31,7 @@
 
 已阅读仓库指令、相关文档和调用链，并完成逐领域差异审查。`git diff --check main..fix` 无输出；交付前工作区无未提交文件。此证据仅证明源码审查和差异检查完成。
 
-按任务要求，**未运行测试、Flutter/Dart analyzer、编译、构建、打包、应用或设备探针**。新增/调整的用例尚未执行，位于 `test/services/diagnostics/redact_test.dart`、`test/services/settings/webdav_client_test.dart`、`test/services/download/download_repository_test.dart`、`download_manager_test.dart` 和 `test/app/desktop_theme_test.dart`。
+已运行涉及文件的 `fvm flutter analyze --no-pub`，无问题；已运行定向回归测试，覆盖 `test/services/diagnostics/redact_test.dart`、`test/services/settings/webdav_client_test.dart`、`webdav_sync_test.dart`、`test/services/download/download_repository_test.dart`、`download_manager_test.dart` 和 `test/app/desktop_theme_test.dart`，全部通过。仍未运行应用构建、打包或设备探针。
 
 仍需验证的实际边界：
 

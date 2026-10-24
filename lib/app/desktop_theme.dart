@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:pili_aurora/common/assets.dart';
 import 'package:pili_aurora/services/logger.dart';
@@ -54,7 +55,14 @@ class _DesktopWindowThemeState extends State<DesktopWindowTheme>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (mounted) setState(() => _lifecycle = state);
+    if (!mounted) return;
+    setState(() => _lifecycle = state);
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      // SchedulerBinding 会在这些状态下禁止普通 frame；强制提交一次
+      // TickerMode 更新，让子树及时释放视觉订阅和显示资源。
+      SchedulerBinding.instance.scheduleForcedFrame();
+    }
   }
 
   @override

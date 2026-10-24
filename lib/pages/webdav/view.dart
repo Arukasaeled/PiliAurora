@@ -135,14 +135,14 @@ class _WebDavSettingPageState extends State<WebDavSettingPage> {
             onPressed: () async {
               // 先校验草稿，不用无效/远程明文地址覆盖已有配置。
               try {
+                if (_usernameCtr.text.contains(':')) {
+                  throw ArgumentError('WebDAV Basic Auth 用户名不能包含冒号');
+                }
                 if (_uriCtr.text.trim().isNotEmpty) {
                   WebDavSettingsClient.validateEndpoint(
                     Uri.parse(_uriCtr.text.trim()),
                     allowInsecureLoopback: true,
                   );
-                  if (_usernameCtr.text.contains(':')) {
-                    throw ArgumentError('WebDAV Basic Auth 用户名不能包含冒号');
-                  }
                 }
               } catch (error) {
                 SmartDialog.showToast('配置失败: ${DiagnosticRedactor.text(error)}');

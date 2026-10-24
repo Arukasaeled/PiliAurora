@@ -98,6 +98,28 @@ void main() {
     expect(await File(manager.path).readAsBytes(), [1, 2, 3]);
   });
 
+  test('unknown response length is not marked complete', () async {
+    client.httpClientAdapter = _Adapter(
+      (_) async => ResponseBody(
+        Stream.value(Uint8List.fromList([1, 2, 3])),
+        200,
+      ),
+    );
+    final errors = <Object?>[];
+    final manager = DownloadManager(
+      url: 'https://example.test/video',
+      path: '${directory.path}/unknown-length.bin',
+      client: client,
+      onReceiveProgress: null,
+      onDone: ([error]) => errors.add(error),
+    );
+    await manager.task;
+    expect(manager.status, DownloadStatus.failDownload);
+    expect(errors, hasLength(1));
+    expect(errors.single, isNotNull);
+    expect(await File(manager.path).readAsBytes(), [1, 2, 3]);
+  });
+
   test('stream error keeps partial data and reports failure once', () async {
     Stream<Uint8List> source() async* {
       yield Uint8List.fromList([1, 2, 3]);

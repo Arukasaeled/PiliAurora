@@ -38,8 +38,8 @@ class DownloadManager {
     IOSink? sink;
     try {
       final file = File(path);
-      final received = await file.exists() ? await file.length() : 0;
-      if (!await file.exists()) await file.create(recursive: true);
+      final received = file.existsSync() ? file.lengthSync() : 0;
+      if (!file.existsSync()) file.createSync(recursive: true);
       sink = file.openWrite(
         mode: received == 0 ? FileMode.writeOnly : FileMode.writeOnlyAppend,
       );
@@ -58,15 +58,21 @@ class DownloadManager {
       final range = response.headers.value('content-range');
       final partial = RegExp(r'^bytes (\d+)-(\d+)/(\d+|\*)$')
           .firstMatch(range ?? '');
+      final rangeStart = partial == null ? -1 : int.parse(partial[1]!);
+      final rangeEnd = partial == null ? -1 : int.parse(partial[2]!);
+      final declaredTotal = partial == null ? null : int.tryParse(partial[3]!);
       // 不匹配的范围不能追加到已有媒体；416 只有长度一致才表示已完成。
       if ((received > 0 && response.statusCode == 200) ||
           (response.statusCode == 206 &&
-              (partial == null || int.parse(partial[1]!) != received)) ||
+              (partial == null ||
+                  rangeStart != received ||
+                  rangeEnd < rangeStart ||
+                  (data.contentLength >= 0 &&
+                      data.contentLength != rangeEnd - rangeStart + 1))) ||
           (response.statusCode == 416 &&
               (received == 0 || range != 'bytes */$received'))) {
         throw StateError('服务器未返回匹配的下载范围，已保留本地文件');
       }
-      final declaredTotal = partial == null ? null : int.tryParse(partial[3]!);
       final total = response.statusCode == 416
           ? received
           : declaredTotal ??
@@ -94,6 +100,9 @@ class DownloadManager {
       await sink.close();
       sink = null;
       if (_cancelToken.isCancelled) throw _cancelToken.cancelError!;
+      if (response.statusCode != 416 && total <= 0) {
+        throw StateError('服务器未声明可验证的下载长度，已保留本地文件');
+      }
       if (total > 0 && written != total) {
         throw StateError('下载长度与服务器声明不一致，已保留本地文件');
       }
@@ -103,16 +112,13 @@ class DownloadManager {
     } catch (error) {
       // 保留所有已写入字节；失败与暂停都等待文件关闭后再通知状态所有者。
       if (!_cancelToken.isCancelled) _cancelToken.cancel(error);
-      Object failure = error;
       try {
         await sink?.close();
-      } catch (closeError) {
-        failure = StateError('下载失败: $error；关闭下载文件失败: $closeError');
-      }
+      } catch (_) {}
       if (_status == DownloadStatus.downloading) {
         _status = DownloadStatus.failDownload;
       }
-      onDone(failure);
+      onDone(error);
     }
   }
 

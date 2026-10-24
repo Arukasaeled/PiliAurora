@@ -99,6 +99,10 @@ class DownloadRepository {
 
   /// 临时文件与目标位于同一目录，flush/close 后才重命名。
   /// Windows 文件占用或替换失败时直接报错，绝不先删除正式文件。
+  void _writeString(File file, String contents) {
+    file.writeAsStringSync(contents, flush: true);
+  }
+
   Future<void> _writeJson(
     File file,
     String contents,
@@ -106,11 +110,11 @@ class DownloadRepository {
   ) async {
     decode(jsonDecode(contents) as Map<String, dynamic>);
     final temporary = File('${file.path}.tmp');
-    await temporary.writeAsString(contents, flush: true);
-    if (await file.exists()) {
+    _writeString(temporary, contents);
+    if (file.existsSync()) {
       String? previous;
       try {
-        final candidate = await file.readAsString();
+        final candidate = file.readAsStringSync();
         decode(jsonDecode(candidate) as Map<String, dynamic>);
         previous = candidate;
       } catch (error, stack) {
@@ -119,7 +123,7 @@ class DownloadRepository {
       // 损坏的正式文件不能覆盖上次可恢复的备份。
       if (previous != null) {
         final backup = File('${file.path}.bak.tmp');
-        await backup.writeAsString(previous, flush: true);
+        _writeString(backup, previous);
         await backup.rename('${file.path}.bak');
       }
     }
@@ -136,11 +140,11 @@ class DownloadRepository {
       File('${file.path}.bak'),
       File('${file.path}.tmp'),
     ]) {
-      if (!await candidate.exists()) continue;
+      if (!candidate.existsSync()) continue;
       late final String contents;
       late final T record;
       try {
-        contents = await candidate.readAsString();
+        contents = candidate.readAsStringSync();
         record = decode(jsonDecode(contents) as Map<String, dynamic>);
       } catch (error, stack) {
         _onReadError?.call(candidate.path, error, stack);
@@ -149,7 +153,7 @@ class DownloadRepository {
       if (candidate.path != file.path) {
         try {
           final recovery = File('${file.path}.recover');
-          await recovery.writeAsString(contents, flush: true);
+          _writeString(recovery, contents);
           await recovery.rename(file.path);
         } catch (error, stack) {
           // 可读记录仍可用于恢复队列，但不能把落盘失败伪装成成功。
