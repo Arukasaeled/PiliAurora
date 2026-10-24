@@ -35,7 +35,10 @@ class WebDavSettingsClient {
       endpoint.scheme == 'http' &&
       const {'127.0.0.1', '::1'}.contains(endpoint.host);
 
-  static void validateEndpoint(Uri endpoint, {bool allowInsecureLoopback = false}) {
+  static void validateEndpoint(
+    Uri endpoint, {
+    bool allowInsecureLoopback = false,
+  }) {
     if (!const {'http', 'https'}.contains(endpoint.scheme) ||
         endpoint.host.isEmpty ||
         endpoint.userInfo.isNotEmpty ||
@@ -130,7 +133,7 @@ class WebDavSettingsClient {
       );
     } on DioException catch (error) {
       // 不向 UI 暴露 Dio 的请求头、响应正文或可能含凭据的完整 URL。
-      throw WebDavRequestException(method, error.response?.statusCode);
+      throw WebDavRequestException(method, error.response?.statusCode, error.type);
     }
   }
 
@@ -139,13 +142,14 @@ class WebDavSettingsClient {
 }
 
 class WebDavRequestException implements Exception {
-  const WebDavRequestException(this.method, this.statusCode);
+  const WebDavRequestException(this.method, this.statusCode, [this.type]);
 
   final String method;
   final int? statusCode;
+  final DioExceptionType? type;
 
   @override
   String toString() => statusCode == null
-      ? 'WebDAV $method 网络请求未完成'
+      ? 'WebDAV $method 网络请求未完成${type == null ? '' : '（${type!.name}）'}'
       : 'WebDAV $method 失败（HTTP $statusCode）';
 }

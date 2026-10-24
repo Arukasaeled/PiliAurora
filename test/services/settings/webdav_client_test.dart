@@ -220,7 +220,7 @@ void main() {
         failure.having(
           (error) => error.toString(),
           'safe error',
-          'WebDAV GET 网络请求未完成',
+          'WebDAV GET 网络请求未完成（connectionTimeout）',
         ),
       ),
     );
@@ -277,6 +277,32 @@ void main() {
       ),
       throwsArgumentError,
     );
+  });
+
+  test('loopback opt-in cannot authorize remote or DNS-based HTTP', () {
+    for (final endpoint in [
+      'http://example.test/dav',
+      'http://192.168.1.2/dav',
+      'http://localhost/dav',
+      'http://127.0.0.1.example.test/dav',
+    ]) {
+      expect(
+        () => WebDavSettingsClient.validateEndpoint(
+          Uri.parse(endpoint),
+          allowInsecureLoopback: true,
+        ),
+        throwsArgumentError,
+      );
+    }
+    for (final endpoint in ['http://127.0.0.1/dav', 'http://[::1]/dav']) {
+      expect(
+        () => WebDavSettingsClient.validateEndpoint(
+          Uri.parse(endpoint),
+          allowInsecureLoopback: true,
+        ),
+        returnsNormally,
+      );
+    }
   });
 
   test(

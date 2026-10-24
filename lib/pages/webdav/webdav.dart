@@ -23,11 +23,15 @@ class WebDav {
     var allowInsecureLoopback = false;
     if (WebDavSettingsClient.isLoopbackHttp(endpoint)) {
       final context = Get.context;
-      if (context == null || !await showConfirmDialog(
-        context: context,
-        title: const Text('本次允许本机 WebDAV 明文连接？'),
-        content: const Text('仅连接 127.0.0.1 或 ::1。认证信息与备份将以明文传输；请确认本机服务可信。此授权不会保存。'),
-      )) {
+      if (context == null ||
+          !await showConfirmDialog(
+            context: context,
+            title: const Text('本次允许本机 WebDAV 明文连接？'),
+            content: const Text(
+              '仅连接 127.0.0.1 或 ::1。认证信息与备份将以明文传输；'
+              '请确认本机服务可信。此授权不会保存。',
+            ),
+          )) {
         throw StateError('已取消不安全的 WebDAV 连接，请配置 HTTPS');
       }
       allowInsecureLoopback = true;
