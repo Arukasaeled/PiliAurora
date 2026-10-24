@@ -250,6 +250,7 @@ class DownloadService extends GetxService {
 
   Future<void> startDownload(BiliDownloadEntryInfo entry) {
     return _lock.synchronized(() async {
+      if (entry.isCompleted || !waitDownloadQueue.contains(entry)) return;
       // 切换当前项前等待旧音视频流退出，避免两个任务同时写入同一状态。
       await _downloadManager?.cancel(isDelete: false);
       await _audioDownloadManager?.cancel(isDelete: false);
@@ -439,7 +440,9 @@ class DownloadService extends GetxService {
     final status = switch (_audioDownloadManager?.status) {
       DownloadStatus.downloading => DownloadStatus.audioDownloading,
       DownloadStatus.failDownload => DownloadStatus.failDownloadAudio,
-      _ => _downloadManager?.status ?? DownloadStatus.pause,
+      null || DownloadStatus.completed =>
+        _downloadManager?.status ?? DownloadStatus.pause,
+      _ => DownloadStatus.pause,
     };
     _updateCurStatus(status);
 
@@ -474,33 +477,39 @@ class DownloadService extends GetxService {
     if (entry == null || !_completing.add(entry)) {
       return;
     }
-    // 视频与可选音轨都完成后才落完成标记，再从待下载队列移除。
-    entry
-      ..downloadedBytes = entry.totalBytes
-      ..isCompleted = true;
-    try {
-      await _repository.save(entry);
-      final queued = waitDownloadQueue.remove(entry);
-      if (queued && !downloadList.contains(entry)) downloadList.insert(0, entry);
-      flagNotifier.refresh();
-      // 保存期间可能已切换任务，旧完成回调不能清空新任务。
-      if (identical(curDownload.value, entry)) {
-        _curCid = null;
-        curDownload.value = null;
-        _downloadManager = null;
-        _audioDownloadManager = null;
-        nextDownload();
+    await _lock.synchronized(() async {
+      if (!waitDownloadQueue.contains(entry)) {
+        _completing.remove(entry);
+        return;
       }
-    } catch (error, stack) {
+      // 视频与可选音轨都完成后才落完成标记，再从待下载队列移除。
       entry
-        ..isCompleted = false
-        ..status = DownloadStatus.failDownload;
-      curDownload.refresh();
-      logger.e('下载完成记录保存失败', error: error, stackTrace: stack);
-      SmartDialog.showToast('下载文件已保留，但完成记录保存失败，请检查磁盘后重试');
-    } finally {
-      _completing.remove(entry);
-    }
+        ..downloadedBytes = entry.totalBytes
+        ..isCompleted = true;
+      try {
+        await _repository.save(entry);
+        final queued = waitDownloadQueue.remove(entry);
+        if (queued && !downloadList.contains(entry)) downloadList.insert(0, entry);
+        flagNotifier.refresh();
+        // 保存期间可能已切换任务，旧完成回调不能清空新任务。
+        if (identical(curDownload.value, entry)) {
+          _curCid = null;
+          curDownload.value = null;
+          _downloadManager = null;
+          _audioDownloadManager = null;
+          nextDownload();
+        }
+      } catch (error, stack) {
+        entry
+          ..isCompleted = false
+          ..status = DownloadStatus.failDownload;
+        curDownload.refresh();
+        logger.e('下载完成记录保存失败', error: error, stackTrace: stack);
+        SmartDialog.showToast('下载文件已保留，但完成记录保存失败，请检查磁盘后重试');
+      } finally {
+        _completing.remove(entry);
+      }
+    });
   }
 
   void nextDownload() {
@@ -538,6 +547,10 @@ class DownloadService extends GetxService {
     required String pageDirPath,
     bool refresh = true,
   }) async {
+    waitDownloadQueue.removeWhere((entry) => entry.pageDirPath == pageDirPath);
+    if (curDownload.value?.pageDirPath == pageDirPath) {
+      await cancelDownload(isDelete: true, downloadNext: false);
+    }
     await _repository.removePage(pageDirPath);
     downloadList.removeWhere((e) => e.pageDirPath == pageDirPath);
     if (refresh) {
@@ -548,7 +561,7 @@ class DownloadService extends GetxService {
   Future<void> cancelDownload({
     required bool isDelete,
     bool downloadNext = true,
-  }) async {
+  }) => _lock.synchronized(() async {
     await _downloadManager?.cancel(isDelete: isDelete);
     await _audioDownloadManager?.cancel(isDelete: isDelete);
     _downloadManager = null;
@@ -569,7 +582,7 @@ class DownloadService extends GetxService {
     if (downloadNext) {
       nextDownload();
     }
-  }
+  });
 }
 
 typedef SetNotifier = Set<VoidCallback>;

@@ -75,7 +75,9 @@ class DownloadRepository {
     // 在排队前拍下当前状态，避免可变模型在等待期间改变本次写入的含义。
     final contents = jsonEncode(entry.toJson());
     final file = File(path.join(entry.entryDirPath, _entryFile));
-    return _lock.synchronized(() => _writeJson(file, contents));
+    return _lock.synchronized(
+      () => _writeJson(file, contents, BiliDownloadEntryInfo.fromJson),
+    );
   }
 
   Future<String> saveMediaInfo(
@@ -86,21 +88,30 @@ class DownloadRepository {
     final directory = Directory(path.join(entry.entryDirPath, entry.typeTag));
     await _lock.synchronized(() async {
       await directory.create(recursive: true);
-      await _writeJson(File(path.join(directory.path, _indexFile)), contents);
+      await _writeJson(
+        File(path.join(directory.path, _indexFile)),
+        contents,
+        media is Type1 ? Type1.fromJson : Type2.fromJson,
+      );
     });
     return directory.path;
   }
 
   /// 临时文件与目标位于同一目录，flush/close 后才重命名。
   /// Windows 文件占用或替换失败时直接报错，绝不先删除正式文件。
-  Future<void> _writeJson(File file, String contents) async {
+  Future<void> _writeJson(
+    File file,
+    String contents,
+    Object Function(Map<String, dynamic>) decode,
+  ) async {
+    decode(jsonDecode(contents) as Map<String, dynamic>);
     final temporary = File('${file.path}.tmp');
     await temporary.writeAsString(contents, flush: true);
     if (await file.exists()) {
       String? previous;
       try {
         final candidate = await file.readAsString();
-        jsonDecode(candidate) as Map<String, dynamic>;
+        decode(jsonDecode(candidate) as Map<String, dynamic>);
         previous = candidate;
       } catch (error, stack) {
         _onReadError?.call(file.path, error, stack);
@@ -120,7 +131,11 @@ class DownloadRepository {
     T Function(Map<String, dynamic>) decode,
   ) async {
     // 已提交的正式文件优先，其次是旧记录，最后才是首次写入的临时文件。
-    for (final candidate in [file, File('${file.path}.bak'), File('${file.path}.tmp')]) {
+    for (final candidate in [
+      file,
+      File('${file.path}.bak'),
+      File('${file.path}.tmp'),
+    ]) {
       if (!await candidate.exists()) continue;
       late final String contents;
       late final T record;

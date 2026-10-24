@@ -99,7 +99,7 @@ void main() {
     final file = File(path.join(entry.entryDirPath, 'entry.json'));
     await file.writeAsString('{interrupted');
     final restored = (await repository.load()).single;
-    expect(restored.downloadedBytes, 0);
+    expect(restored.downloadedBytes, 10);
     expect(jsonDecode(await file.readAsString()), restored.toJson());
     expect(corruptPaths, contains(file.path));
   });

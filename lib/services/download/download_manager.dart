@@ -35,125 +35,84 @@ class DownloadManager {
   }
 
   Future<void> _start() async {
+    IOSink? sink;
     try {
-      await _transfer();
-    } catch (error) {
-      if (!_cancelToken.isCancelled) _cancelToken.cancel(error);
-      if (_status == DownloadStatus.downloading) {
-        _status = DownloadStatus.failDownload;
-      }
-      onDone(error);
-    }
-  }
-
-  Future<void> _transfer() async {
-    int received;
-
-    final file = File(path);
-    if (file.existsSync()) {
-      received = await file.length();
-    } else {
-      file.createSync(recursive: true);
-      received = 0;
-    }
-
-    final sink = file.openWrite(
-      mode: received == 0 ? FileMode.writeOnly : FileMode.writeOnlyAppend,
-    );
-
-    Future<void> onError(Object e) async {
-      // 消费者失败时仅取消 Dio 输出订阅不足以释放底层网络源。
-      if (!_cancelToken.isCancelled) _cancelToken.cancel(e);
-      try {
-        await sink.close();
-      } catch (_) {}
-      if (_status == DownloadStatus.downloading) {
-        _status = DownloadStatus.failDownload;
-      }
-      onDone(e);
-    }
-
-    Response<ResponseBody> response;
-    try {
-      response = await client.get<ResponseBody>(
+      final file = File(path);
+      final received = await file.exists() ? await file.length() : 0;
+      if (!await file.exists()) await file.create(recursive: true);
+      sink = file.openWrite(
+        mode: received == 0 ? FileMode.writeOnly : FileMode.writeOnlyAppend,
+      );
+      final response = await client.get<ResponseBody>(
         url.http2https,
         options: Options(
           headers: {'range': 'bytes=$received-'},
           extra: {DownloadResponseAdapter.pauseAwareTimeoutKey: true},
           responseType: ResponseType.stream,
           validateStatus: (status) =>
-              status != null &&
-              (status == 416 || (status >= 200 && status < 300)),
+              status == 200 || status == 206 || status == 416,
         ),
         cancelToken: _cancelToken,
       );
-    } on DioException catch (e) {
-      await onError(e);
-      return;
-    }
-    final data = response.data!;
-    final range = response.headers.value('content-range');
-    // 拒绝忽略 Range 的响应，不能把完整媒体追加到已有片段后。
-    // 416 只有在服务端确认本地长度恰好等于总长时才代表完成。
-    if ((received > 0 && response.statusCode == 200) ||
-        (response.statusCode == 206 &&
-            !RegExp('^bytes $received-').hasMatch(range ?? '')) ||
-        (response.statusCode == 416 &&
-            (received == 0 || range != 'bytes */$received'))) {
-      await onError(StateError('服务器未返回匹配的下载范围，已保留本地文件'));
-      return;
-    }
-    if (response.statusCode == 416) {
-      try {
-        await data.stream.drain<void>();
-        await sink.close();
-        if (!_cancelToken.isCancelled) {
-          _status = DownloadStatus.completed;
-          onReceiveProgress?.call(received, received);
-          onDone();
-        }
-      } catch (error) {
-        await onError(error);
+      final data = response.data!;
+      final range = response.headers.value('content-range');
+      final partial = RegExp(r'^bytes (\d+)-(\d+)/(\d+|\*)$')
+          .firstMatch(range ?? '');
+      // 不匹配的范围不能追加到已有媒体；416 只有长度一致才表示已完成。
+      if ((received > 0 && response.statusCode == 200) ||
+          (response.statusCode == 206 &&
+              (partial == null || int.parse(partial[1]!) != received)) ||
+          (response.statusCode == 416 &&
+              (received == 0 || range != 'bytes */$received'))) {
+        throw StateError('服务器未返回匹配的下载范围，已保留本地文件');
       }
-      return;
-    }
-    final contentLength = data.contentLength + received;
-
-    onReceiveProgress?.call(received, contentLength);
-
-    try {
-      if (onReceiveProgress == null) {
-        await sink.addStream(data.stream);
+      final declaredTotal = partial == null ? null : int.tryParse(partial[3]!);
+      final total = response.statusCode == 416
+          ? received
+          : declaredTotal ??
+              (data.contentLength >= 0 ? received + data.contentLength : 0);
+      onReceiveProgress?.call(received, total);
+      var written = received;
+      if (response.statusCode == 416) {
+        await data.stream.drain<void>();
       } else {
         int? last;
-        await writeDownloadStream(
+        written = await writeDownloadStream(
           data.stream,
           sink,
           initialBytes: received,
-          onProgress: (received) {
+          onProgress: (count) {
             final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
             if (last != now) {
               last = now;
-              onReceiveProgress!(received, contentLength);
+              onReceiveProgress?.call(count, total);
             }
           },
         );
       }
+      await sink.flush();
       await sink.close();
-      if (_cancelToken.isCancelled) {
-        onDone(
-          DioException.requestCancelled(
-            requestOptions: response.requestOptions,
-            reason: _cancelToken.cancelError,
-          ),
-        );
-        return;
+      sink = null;
+      if (_cancelToken.isCancelled) throw _cancelToken.cancelError!;
+      if (total > 0 && written != total) {
+        throw StateError('下载长度与服务器声明不一致，已保留本地文件');
       }
+      onReceiveProgress?.call(written, written);
       _status = DownloadStatus.completed;
       onDone();
-    } catch (e) {
-      await onError(e);
-      return;
+    } catch (error) {
+      // 保留所有已写入字节；失败与暂停都等待文件关闭后再通知状态所有者。
+      if (!_cancelToken.isCancelled) _cancelToken.cancel(error);
+      Object failure = error;
+      try {
+        await sink?.close();
+      } catch (closeError) {
+        failure = StateError('下载失败: $error；关闭下载文件失败: $closeError');
+      }
+      if (_status == DownloadStatus.downloading) {
+        _status = DownloadStatus.failDownload;
+      }
+      onDone(failure);
     }
   }
 
