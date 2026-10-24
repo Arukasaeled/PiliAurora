@@ -248,6 +248,8 @@ void main() {
 
   for (final endpoint in [
     'file:///backup',
+    'http://example.test/dav',
+    'http://127.0.0.1/dav',
     'ftp://example.test/dav',
     '/dav',
     'https://user:fixture-password@example.test/dav',
@@ -300,6 +302,7 @@ void main() {
       });
       final local = WebDavSettingsClient(
         endpoint: Uri.parse('http://127.0.0.1:${server.port}/dav/'),
+        allowInsecureLoopback: true,
         username: '',
         password: '',
       );
